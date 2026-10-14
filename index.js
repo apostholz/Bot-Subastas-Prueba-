@@ -34,7 +34,10 @@ function guardarDB(db) {
 
 function leerCSVInicial() {
     if (!fs.existsSync(CSV_FILE)) return;
-    if (fs.existsSync(DB_FILE)) return; // ya fue cargado antes
+    if (fs.existsSync(DB_FILE)) {
+        const dbActual = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        if (dbActual.compras && dbActual.compras.length > 0) return;
+    }
 
     console.log('Cargando CSV inicial...');
     const contenido = fs.readFileSync(CSV_FILE, 'utf8');
