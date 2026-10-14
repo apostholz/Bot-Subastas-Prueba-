@@ -13,7 +13,7 @@ const {
 
 const DATA_DIR = '/app/data';
 const DB_FILE = path.join(DATA_DIR, 'compras.json');
-const CSV_FILE = path.join(DATA_DIR, 'historial.csv');
+const CSV_FILE = path.join(__dirname, 'historial.csv');
 
 // Asegurar que la carpeta existe
 if (!fs.existsSync(DATA_DIR)) {
