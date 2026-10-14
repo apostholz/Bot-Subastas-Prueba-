@@ -15,12 +15,10 @@ const DATA_DIR = '/app/data';
 const DB_FILE = path.join(DATA_DIR, 'compras.json');
 const CSV_FILE = path.join(__dirname, 'historial.csv');
 
-// Asegurar que la carpeta existe
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// --- Base de datos ---
 function cargarDB() {
     if (fs.existsSync(DB_FILE)) {
         return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
@@ -30,6 +28,27 @@ function cargarDB() {
 
 function guardarDB(db) {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+}
+
+// --- NUEVO: cuenta cuántos se llevó un jugador en una entrada ---
+function contarGanador(ganadores, jugador) {
+    for (const g of ganadores) {
+        const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
+        if (match && match[1].trim().toLowerCase() === jugador.toLowerCase()) {
+            return match[2] ? parseInt(match[2]) : 1;
+        }
+    }
+    return 0;
+}
+
+// --- NUEVO: extrae nombre y cantidad de "Nombre x2" ---
+function parsearGanador(g) {
+    const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
+    if (!match) return { nombre: g, cantidad: 1 };
+    return {
+        nombre: match[1].trim(),
+        cantidad: match[2] ? parseInt(match[2]) : 1
+    };
 }
 
 function leerCSVInicial() {
@@ -72,13 +91,11 @@ function leerCSVInicial() {
     console.log(`Cargadas ${db.compras.length} entradas del CSV.`);
 }
 
-// --- Fechas ---
 function convertirFecha(fecha) {
     if (!fecha) return null;
     if (fecha.toLowerCase() === 'hoy') {
         return new Date().toISOString().split('T')[0];
     }
-    // DD/MM/YY -> YYYY-MM-DD
     const partes = fecha.split('/');
     if (partes.length !== 3) return null;
     const [dia, mes, anio] = partes;
@@ -92,13 +109,6 @@ function formatearFecha(iso) {
     return `${dia}/${mes}/${anio.slice(2)}`;
 }
 
-function diasDesde(iso) {
-    if (!iso) return '?';
-    const diff = Date.now() - new Date(iso).getTime();
-    return Math.floor(diff / (1000 * 60 * 60 * 24));
-}
-
-// --- Lógica de categorías ---
 const CATEGORIAS = [
     'Cajas 20k',
     'Caja 10k',
@@ -109,7 +119,6 @@ const CATEGORIAS = [
     'Accesorios'
 ];
 
-// --- Cliente ---
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -121,7 +130,6 @@ client.once(Events.ClientReady, async (c) => {
     console.log(`Bot listo como ${c.user.tag}`);
     leerCSVInicial();
 
-    // Registrar comandos automáticamente
     try {
         const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
         const commandsData = [
@@ -180,7 +188,6 @@ client.once(Events.ClientReady, async (c) => {
     }
 });
 
-// --- Manejo de comandos ---
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
@@ -232,7 +239,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.commandName === 'historial') {
             const jugador = interaction.options.getString('jugador');
             const filtradas = db.compras
-                .filter(c => c.ganadores.includes(jugador))
+                .filter(c => contarGanador(c.ganadores, jugador) > 0)
                 .sort((a, b) => b.fecha.localeCompare(a.fecha))
                 .slice(0, 10);
 
@@ -240,9 +247,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.reply({ content: `No hay compras registradas para **${jugador}**.`, ephemeral: true });
             }
 
-            const lineas = filtradas.map(c =>
-                `#${c.id} · ${formatearFecha(c.fecha)} · ${c.cantidad}x ${c.objeto} (${c.categoria})`
-            ).join('\n');
+            const lineas = filtradas.map(c => {
+                const n = contarGanador(c.ganadores, jugador);
+                return `#${c.id} · ${formatearFecha(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})`;
+            }).join('\n');
 
             return interaction.reply({ content: `📜 **Últimas compras de ${jugador}:**\n${lineas}`, ephemeral: false });
         }
@@ -253,10 +261,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             for (const cat of CATEGORIAS) totales[cat] = 0;
 
             for (const c of db.compras) {
-                if (c.ganadores.includes(jugador)) {
-                    if (totales[c.categoria] !== undefined) {
-                        totales[c.categoria] += c.cantidad;
-                    }
+                const n = contarGanador(c.ganadores, jugador);
+                if (n > 0 && totales[c.categoria] !== undefined) {
+                    totales[c.categoria] += n;
                 }
             }
 
@@ -275,13 +282,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const ranking = {};
             for (const c of db.compras) {
                 for (const g of c.ganadores) {
-                    if (!ranking[g]) {
-                        ranking[g] = { total: 0 };
-                        for (const cat of CATEGORIAS) ranking[g][cat] = 0;
+                    const { nombre, cantidad } = parsearGanador(g);
+                    if (!ranking[nombre]) {
+                        ranking[nombre] = { total: 0 };
+                        for (const cat of CATEGORIAS) ranking[nombre][cat] = 0;
                     }
-                    if (ranking[g][c.categoria] !== undefined) {
-                        ranking[g][c.categoria] += c.cantidad;
-                        ranking[g].total += c.cantidad;
+                    if (ranking[nombre][c.categoria] !== undefined) {
+                        ranking[nombre][c.categoria] += cantidad;
+                        ranking[nombre].total += cantidad;
                     }
                 }
             }
