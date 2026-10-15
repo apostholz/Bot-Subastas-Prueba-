@@ -45,6 +45,12 @@ function parsearGanador(g) {
     if (!match) return { nombre: g, cantidad: 1 };
     return { nombre: match[1].trim(), cantidad: match[2] ? parseInt(match[2]) : 1 };
 }
+function buscarJugadorEnLista(lista, nombre) {
+    return lista.findIndex(g => {
+        const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
+        return match && match[1].trim().toLowerCase() === nombre.toLowerCase();
+    });
+}
 
 // ====== NORMALIZAR TEXTO ======
 function normalizar(s) {
@@ -221,6 +227,15 @@ function ordenCategoria(evento, categoria) {
     return idx === -1 ? 999 : idx;
 }
 
+function bloqueDeCategoria(evento, categoria) {
+    const esBanquete = normalizar(evento).includes('banquete');
+    if (!esBanquete) return null;
+    if (categoria === 'Equipo') return 'Equipo';
+    if (categoria === 'Accesorios') return 'Accesorios';
+    if ((categoria || '').startsWith('Emblemas')) return 'Emblemas';
+    return null;
+}
+
 // ====== CLIENTE ======
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
@@ -301,6 +316,40 @@ client.once(Events.ClientReady, async (c) => {
                 .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true)),
 
             new SlashCommandBuilder()
+                .setName('editar')
+                .setDescription('Editar una entrada existente (agregar/quitar ganador o perdedor, nota)')
+                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+                .addSubcommand(sub => sub
+                    .setName('agregar-ganador')
+                    .setDescription('Agregar un ganador a una entrada')
+                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true)))
+                .addSubcommand(sub => sub
+                    .setName('quitar-ganador')
+                    .setDescription('Quitar un ganador de una entrada')
+                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true)))
+                .addSubcommand(sub => sub
+                    .setName('agregar-perdedor')
+                    .setDescription('Agregar un perdedor a una entrada')
+                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true)))
+                .addSubcommand(sub => sub
+                    .setName('quitar-perdedor')
+                    .setDescription('Quitar un perdedor de una entrada')
+                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true)))
+                .addSubcommand(sub => sub
+                    .setName('set-nota')
+                    .setDescription('Establecer la nota de una entrada')
+                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+                    .addStringOption(o => o.setName('nota').setDescription('Texto de la nota').setRequired(true)))
+                .addSubcommand(sub => sub
+                    .setName('borrar-nota')
+                    .setDescription('Borrar la nota de una entrada')
+                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))),
+
+            new SlashCommandBuilder()
                 .setName('importar')
                 .setDescription('Importar entradas nuevas desde historial.csv')
                 .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -331,7 +380,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     const db = cargarDB();
 
-    const comandosLider = ['borrar', 'importar'];
+    const comandosLider = ['borrar', 'importar', 'editar'];
     const comandosEscritura = ['sub', 'subf'];
 
     if (comandosLider.includes(interaction.commandName) || comandosEscritura.includes(interaction.commandName)) {
@@ -353,6 +402,77 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     try {
+        // ---------- /editar ----------
+        if (interaction.commandName === 'editar') {
+            const sub = interaction.options.getSubcommand();
+            const id = interaction.options.getInteger('id');
+            const idx = db.compras.findIndex(c => c.id === id);
+            if (idx === -1) {
+                return interaction.reply({ content: `❌ No existe entrada #${id}.`, ephemeral: true });
+            }
+            const e = db.compras[idx];
+            let mensaje = '';
+
+            if (sub === 'agregar-ganador') {
+                const jugador = interaction.options.getString('jugador').trim();
+                if (buscarJugadorEnLista(e.ganadores, jugador) !== -1) {
+                    return interaction.reply({ content: `ℹ️ **${jugador}** ya está en ganadores de #${id}.`, ephemeral: true });
+                }
+                e.ganadores.push(jugador);
+                mensaje = `✅ Agregado **${jugador}** a ganadores de #${id}.`;
+            }
+            else if (sub === 'quitar-ganador') {
+                const jugador = interaction.options.getString('jugador').trim();
+                const pos = buscarJugadorEnLista(e.ganadores, jugador);
+                if (pos === -1) {
+                    return interaction.reply({ content: `ℹ️ **${jugador}** no está en ganadores de #${id}.`, ephemeral: true });
+                }
+                e.ganadores.splice(pos, 1);
+                mensaje = `🗑️ Quitado **${jugador}** de ganadores de #${id}.`;
+            }
+            else if (sub === 'agregar-perdedor') {
+                const jugador = interaction.options.getString('jugador').trim();
+                if (buscarJugadorEnLista(e.perdedores, jugador) !== -1) {
+                    return interaction.reply({ content: `ℹ️ **${jugador}** ya está en perdedores de #${id}.`, ephemeral: true });
+                }
+                e.perdedores.push(jugador);
+                mensaje = `✅ Agregado **${jugador}** a perdedores de #${id}.`;
+            }
+            else if (sub === 'quitar-perdedor') {
+                const jugador = interaction.options.getString('jugador').trim();
+                const pos = buscarJugadorEnLista(e.perdedores, jugador);
+                if (pos === -1) {
+                    return interaction.reply({ content: `ℹ️ **${jugador}** no está en perdedores de #${id}.`, ephemeral: true });
+                }
+                e.perdedores.splice(pos, 1);
+                mensaje = `🗑️ Quitado **${jugador}** de perdedores de #${id}.`;
+            }
+            else if (sub === 'set-nota') {
+                const nota = interaction.options.getString('nota');
+                e.notas = nota;
+                mensaje = `📝 Nota actualizada en #${id}.`;
+            }
+            else if (sub === 'borrar-nota') {
+                e.notas = '';
+                mensaje = `📝 Nota borrada en #${id}.`;
+            }
+            else {
+                return interaction.reply({ content: '❌ Subcomando desconocido.', ephemeral: true });
+            }
+
+            guardarDB(db);
+            let respuesta = `${mensaje}\n\n`;
+            respuesta += `#${e.id} · ${formatearFecha(e.fecha)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
+            respuesta += `🏆 ${e.ganadores.join(', ') || 'nadie'}\n`;
+            if (e.perdedores && e.perdedores.length > 0) {
+                respuesta += `💔 ${e.perdedores.join(', ')}\n`;
+            }
+            if (e.notas) {
+                respuesta += `📝 ${e.notas}`;
+            }
+            return interaction.reply({ content: respuesta });
+        }
+
         // ---------- /importar ----------
         if (interaction.commandName === 'importar') {
             if (!fs.existsSync(CSV_FILE)) {
@@ -440,7 +560,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.reply({ content: `📅 No hay compras registradas para el ${formatearFecha(fecha)}.` });
             }
 
-            // Agrupar por evento
             const grupos = {};
             for (const c of comprasDia) {
                 const ev = c.evento || 'Sin evento';
@@ -448,7 +567,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 grupos[ev].push(c);
             }
 
-            // Ordenar eventos: Invasión diurna, Invasión nocturna, Banquete
             const eventosOrdenados = Object.keys(grupos).sort((a, b) => {
                 const oa = ordenEvento(a);
                 const ob = ordenEvento(b);
@@ -465,7 +583,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     if (oa !== ob) return oa - ob;
                     return a.id - b.id;
                 });
+                let bloqueActual = null;
                 for (const c of lista) {
+                    const bloque = bloqueDeCategoria(ev, c.categoria);
+                    if (bloque && bloque !== bloqueActual) {
+                        out += `\n__**${bloque}**__\n`;
+                        bloqueActual = bloque;
+                    }
                     out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
                     out += `   🏆 ${c.ganadores.join(', ') || 'nadie'}\n`;
                     if (c.perdedores && c.perdedores.length > 0) {
@@ -753,7 +877,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (varios jugadores)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/importar\` · importar nuevas filas desde el CSV\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (varios jugadores)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/editar\` · editar entrada (ganadores, perdedores, nota)\n\`/importar\` · importar nuevas filas desde el CSV\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
