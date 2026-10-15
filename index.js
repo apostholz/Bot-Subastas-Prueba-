@@ -30,11 +30,21 @@ function guardarDB(db) {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
+// ====== NORMALIZAR ======
+function normalizar(s) {
+    return (s || '').toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+function normalizarNombre(s) {
+    return normalizar(s);
+}
+
 // ====== GANADORES ======
 function contarGanador(ganadores, jugador) {
+    const jn = normalizarNombre(jugador);
     for (const g of ganadores) {
         const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
-        if (match && match[1].trim().toLowerCase() === jugador.toLowerCase()) {
+        if (match && normalizarNombre(match[1]) === jn) {
             return match[2] ? parseInt(match[2]) : 1;
         }
     }
@@ -46,16 +56,11 @@ function parsearGanador(g) {
     return { nombre: match[1].trim(), cantidad: match[2] ? parseInt(match[2]) : 1 };
 }
 function buscarJugadorEnLista(lista, nombre) {
+    const nn = normalizarNombre(nombre);
     return lista.findIndex(g => {
         const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
-        return match && match[1].trim().toLowerCase() === nombre.toLowerCase();
+        return match && normalizarNombre(match[1]) === nn;
     });
-}
-
-// ====== NORMALIZAR TEXTO ======
-function normalizar(s) {
-    return (s || '').toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
 
 // ====== HUELLA PARA DEDUPLICAR ======
@@ -138,6 +143,27 @@ function etiquetaDias(iso) {
     if (d <= 0) return '(hoy)';
     if (d === 1) return '(ayer)';
     return `(${d} días)`;
+}
+
+// ====== RESPUESTA LARGA ======
+async function responderLargo(interaction, texto, ephemeral = false) {
+    const chunks = [];
+    let current = '';
+    for (const linea of texto.split('\n')) {
+        if (current.length + linea.length + 1 > 1900) {
+            chunks.push(current);
+            current = linea;
+        } else {
+            current += (current ? '\n' : '') + linea;
+        }
+    }
+    if (current) chunks.push(current);
+    if (chunks.length === 0) chunks.push(' ');
+
+    await interaction.reply({ content: chunks[0], ephemeral });
+    for (let i = 1; i < chunks.length; i++) {
+        await interaction.followUp({ content: chunks[i], ephemeral });
+    }
 }
 
 // ====== CATEGORÍAS ======
@@ -309,8 +335,8 @@ client.once(Events.ClientReady, async (c) => {
 
             new SlashCommandBuilder()
                 .setName('total')
-                .setDescription('Totales por categoría de un jugador')
-                .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true)),
+                .setDescription('Totales por categoría de uno o varios jugadores')
+                .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true)),
 
             new SlashCommandBuilder()
                 .setName('ranking')
@@ -608,22 +634,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
             }
 
-            const chunks = [];
-            let current = '';
-            for (const linea of out.split('\n')) {
-                if (current.length + linea.length + 1 > 1900) {
-                    chunks.push(current);
-                    current = linea;
-                } else {
-                    current += (current ? '\n' : '') + linea;
-                }
-            }
-            if (current) chunks.push(current);
-
-            await interaction.reply({ content: chunks[0] });
-            for (let i = 1; i < chunks.length; i++) {
-                await interaction.followUp({ content: chunks[i] });
-            }
+            await responderLargo(interaction, out);
             return;
         }
 
@@ -664,19 +675,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     }
                     bloques.push(bloque);
                 }
-
-                const chunks = [];
-                let current = '';
-                for (const b of bloques) {
-                    if (current.length + b.length > 1900) { chunks.push(current); current = b; }
-                    else { current += '\n' + b; }
-                }
-                if (current) chunks.push(current);
-
-                await interaction.reply({ content: chunks[0] });
-                for (let i = 1; i < chunks.length; i++) {
-                    await interaction.followUp({ content: chunks[i] });
-                }
+                const out = bloques.join('\n');
+                await responderLargo(interaction, out);
                 return;
             }
 
@@ -700,19 +700,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 bloques.push(bloque);
             }
-
-            const chunks = [];
-            let current = '';
-            for (const b of bloques) {
-                if (current.length + b.length > 1900) { chunks.push(current); current = b; }
-                else { current += '\n' + b; }
-            }
-            if (current) chunks.push(current);
-
-            await interaction.reply({ content: chunks[0], ephemeral: true });
-            for (let i = 1; i < chunks.length; i++) {
-                await interaction.followUp({ content: chunks[i], ephemeral: true });
-            }
+            const out = bloques.join('\n');
+            await responderLargo(interaction, out, true);
             return;
         }
 
@@ -748,39 +737,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
             }
 
-            const chunks = [];
-            let current = '';
-            for (const linea of out.split('\n')) {
-                if (current.length + linea.length + 1 > 1900) {
-                    chunks.push(current);
-                    current = linea;
-                } else {
-                    current += (current ? '\n' : '') + linea;
-                }
-            }
-            if (current) chunks.push(current);
-
-            await interaction.reply({ content: chunks[0] });
-            for (let i = 1; i < chunks.length; i++) {
-                await interaction.followUp({ content: chunks[i] });
-            }
+            await responderLargo(interaction, out);
             return;
         }
 
         // ---------- /total ----------
         if (interaction.commandName === 'total') {
-            const jugador = interaction.options.getString('jugador');
-            const totales = {};
-            for (const cat of CATEGORIAS) totales[cat] = 0;
-            for (const c of db.compras) {
-                const n = contarGanador(c.ganadores, jugador);
-                if (n > 0 && totales[c.categoria] !== undefined) totales[c.categoria] += n;
+            const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
+            let out = '';
+            for (const j of jugadores) {
+                const totales = {};
+                for (const cat of CATEGORIAS) totales[cat] = 0;
+                for (const c of db.compras) {
+                    const n = contarGanador(c.ganadores, j);
+                    if (n > 0 && totales[c.categoria] !== undefined) totales[c.categoria] += n;
+                }
+                const total = Object.values(totales).reduce((a, b) => a + b, 0);
+                const lineas = Object.entries(totales).map(([cat, n]) => `${cat}: ${n}`).join('\n');
+                out += `📊 **Total de ${j}**\n${lineas}\n────────────\n**TOTAL:** ${total}\n\n`;
             }
-            const total = Object.values(totales).reduce((a, b) => a + b, 0);
-            const lineas = Object.entries(totales).map(([cat, n]) => `${cat}: ${n}`).join('\n');
-            return interaction.reply({
-                content: `📊 **Total de ${jugador}**\n${lineas}\n────────────\n**TOTAL:** ${total}`
-            });
+            await responderLargo(interaction, out.trimEnd());
+            return;
         }
 
         // ---------- /ranking ----------
@@ -789,21 +766,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
             for (const c of db.compras) {
                 for (const g of c.ganadores) {
                     const { nombre, cantidad } = parsearGanador(g);
-                    if (!ranking[nombre]) {
-                        ranking[nombre] = { total: 0 };
-                        for (const cat of CATEGORIAS) ranking[nombre][cat] = 0;
+                    const key = normalizarNombre(nombre);
+                    if (!ranking[key]) {
+                        ranking[key] = { nombre, total: 0 };
+                        for (const cat of CATEGORIAS) ranking[key][cat] = 0;
                     }
-                    if (ranking[nombre][c.categoria] !== undefined) {
-                        ranking[nombre][c.categoria] += cantidad;
-                        ranking[nombre].total += cantidad;
+                    if (ranking[key][c.categoria] !== undefined) {
+                        ranking[key][c.categoria] += cantidad;
+                        ranking[key].total += cantidad;
                     }
                 }
             }
-            const ordenado = Object.entries(ranking).sort((a, b) => b[1].total - a[1].total).slice(0, 30);
-            const lineas = ordenado.map(([jug, d], i) =>
-                `${i + 1}. **${jug}** · Total: ${d.total} | 20k: ${d['Cajas 20k']} | Únicos: ${d['Emblemas Únicos']} | Equipo: ${d['Equipo']} | Acc: ${d['Accesorios']}`
+            const ordenado = Object.values(ranking).sort((a, b) => b.total - a.total).slice(0, 50);
+            const lineas = ordenado.map((d, i) =>
+                `${i + 1}. **${d.nombre}** · ${d.total} | 20k: ${d['Cajas 20k']} | Ún: ${d['Emblemas Únicos']} | Gen: ${d['Emblemas Generales']} | Eq: ${d['Equipo']} | Acc: ${d['Accesorios']}`
             ).join('\n');
-            return interaction.reply({ content: `🏆 **Ranking general**\n${lineas}` });
+            await responderLargo(interaction, `🏆 **Ranking general**\n${lineas}`);
+            return;
         }
 
         // ---------- /prioridad ----------
@@ -852,22 +831,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             });
             out += `\n**Recomendación:** ${resultados[0].jugador}`;
 
-            const chunks = [];
-            let current = '';
-            for (const linea of out.split('\n')) {
-                if (current.length + linea.length + 1 > 1900) {
-                    chunks.push(current);
-                    current = linea;
-                } else {
-                    current += (current ? '\n' : '') + linea;
-                }
-            }
-            if (current) chunks.push(current);
-
-            await interaction.reply({ content: chunks[0] });
-            for (let i = 1; i < chunks.length; i++) {
-                await interaction.followUp({ content: chunks[i] });
-            }
+            await responderLargo(interaction, out);
             return;
         }
 
@@ -884,7 +848,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (varios jugadores)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/editar\` · editar entrada (ganadores, perdedores, nota)\n\`/importar\` · importar nuevas filas desde el CSV\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (varios jugadores)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/editar\` · editar entrada (ganadores, perdedores, nota)\n\`/importar\` · importar nuevas filas desde el CSV\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
