@@ -342,12 +342,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 for (const j of jugadores) {
                     const comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j) > 0);
                     const porCat = {};
+                    let totalUnidades = 0;
                     for (const c of comprasJ) {
                         const n = contarGanador(c.ganadores, j);
+                        totalUnidades += n;
                         porCat[c.categoria] = (porCat[c.categoria] || 0) + n;
                     }
                     const desglose = CATEGORIAS.map(cat => porCat[cat] ? `${porCat[cat]} ${cat}` : null).filter(Boolean).join(', ');
-                    out += `**${j}**: ${comprasJ.length} compras${desglose ? ` | ${desglose}` : ''}\n`;
+                    out += `**${j}**: ${totalUnidades} unidades${desglose ? ` | ${desglose}` : ''}\n`;
                 }
                 return interaction.reply({ content: out });
             }
