@@ -99,6 +99,17 @@ function convertirFecha(fecha) {
     const anioCompleto = anio.length === 2 ? '20' + anio : anio;
     return `${anioCompleto}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
 }
+function convertirFechaDia(fecha) {
+    if (!fecha) return null;
+    const f = fecha.toLowerCase().trim();
+    if (f === 'hoy') return new Date().toISOString().split('T')[0];
+    if (f === 'ayer') {
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        return d.toISOString().split('T')[0];
+    }
+    return convertirFecha(fecha);
+}
 function formatearFecha(iso) {
     if (!iso) return '?';
     const [anio, mes, dia] = iso.split('-');
@@ -247,6 +258,11 @@ client.once(Events.ClientReady, async (c) => {
                     )),
 
             new SlashCommandBuilder()
+                .setName('dia')
+                .setDescription('Ver todas las compras de un día específico')
+                .addStringOption(o => o.setName('fecha').setDescription('DD/MM/YY, "hoy" o "ayer"').setRequired(true)),
+
+            new SlashCommandBuilder()
                 .setName('total')
                 .setDescription('Totales por categoría de un jugador')
                 .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true)),
@@ -385,6 +401,74 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.reply({
                 content: `✅ #${entrada.id} · 📅 ${formatearFecha(fecha)}\n📦 ${cantidad}x ${objeto} (${categoria})\n🏆 ${ganadores.join(', ') || 'nadie'}${perdedores.length ? `\n💔 Perdieron: ${perdedores.join(', ')}` : ''}`
             });
+        }
+
+        // ---------- /dia ----------
+        if (interaction.commandName === 'dia') {
+            const fechaStr = interaction.options.getString('fecha');
+            const fecha = convertirFechaDia(fechaStr);
+
+            if (!fecha) {
+                return interaction.reply({ content: '❌ Fecha inválida. Usa DD/MM/YY, "hoy" o "ayer".', ephemeral: true });
+            }
+
+            const comprasDia = db.compras.filter(c => c.fecha === fecha);
+            if (comprasDia.length === 0) {
+                return interaction.reply({ content: `📅 No hay compras registradas para el ${formatearFecha(fecha)}.` });
+            }
+
+            // Agrupar por evento
+            const grupos = {};
+            for (const c of comprasDia) {
+                const ev = c.evento || 'Sin evento';
+                if (!grupos[ev]) grupos[ev] = [];
+                grupos[ev].push(c);
+            }
+
+            // Ordenar eventos con preferencia
+            const ordenEventos = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
+            const eventosOrdenados = Object.keys(grupos).sort((a, b) => {
+                const ia = ordenEventos.indexOf(a);
+                const ib = ordenEventos.indexOf(b);
+                if (ia === -1 && ib === -1) return a.localeCompare(b);
+                if (ia === -1) return 1;
+                if (ib === -1) return -1;
+                return ia - ib;
+            });
+
+            let out = `📅 **Compras del ${formatearFecha(fecha)}**\n`;
+            for (const ev of eventosOrdenados) {
+                out += `\n**${ev}**\n`;
+                const lista = grupos[ev].sort((a, b) => a.id - b.id);
+                for (const c of lista) {
+                    out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
+                    out += `   🏆 ${c.ganadores.join(', ') || 'nadie'}\n`;
+                    if (c.perdedores && c.perdedores.length > 0) {
+                        out += `   💔 ${c.perdedores.join(', ')}\n`;
+                    }
+                    if (c.notas) {
+                        out += `   📝 ${c.notas}\n`;
+                    }
+                }
+            }
+
+            const chunks = [];
+            let current = '';
+            for (const linea of out.split('\n')) {
+                if (current.length + linea.length + 1 > 1900) {
+                    chunks.push(current);
+                    current = linea;
+                } else {
+                    current += (current ? '\n' : '') + linea;
+                }
+            }
+            if (current) chunks.push(current);
+
+            await interaction.reply({ content: chunks[0] });
+            for (let i = 1; i < chunks.length; i++) {
+                await interaction.followUp({ content: chunks[i] });
+            }
+            return;
         }
 
         // ---------- /historial ----------
@@ -644,7 +728,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (varios jugadores)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/importar\` · importar nuevas filas desde el CSV\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (varios jugadores)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/importar\` · importar nuevas filas desde el CSV\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
