@@ -14,6 +14,7 @@ const {
 
 const DATA_DIR = '/app/data';
 const DB_FILE = path.join(DATA_DIR, 'compras_v2.json');
+const MIEMBROS_FILE = path.join(DATA_DIR, 'miembros.json');
 const CSV_FILE = path.join(__dirname, 'historial.csv');
 
 const ROL_LIDER = '1547712440593031249';
@@ -30,6 +31,22 @@ function guardarDB(db) {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
+// ====== MIEMBROS ======
+function cargarMiembros() {
+    if (fs.existsSync(MIEMBROS_FILE)) {
+        try {
+            const m = JSON.parse(fs.readFileSync(MIEMBROS_FILE, 'utf8'));
+            if (!m.excluidos) m.excluidos = [];
+            if (!m.canonicos) m.canonicos = {};
+            return m;
+        } catch (e) { /* ignorar */ }
+    }
+    return { excluidos: [], canonicos: {} };
+}
+function guardarMiembros(m) {
+    fs.writeFileSync(MIEMBROS_FILE, JSON.stringify(m, null, 2));
+}
+
 // ====== NORMALIZAR ======
 function normalizar(s) {
     return (s || '').toLowerCase()
@@ -39,12 +56,39 @@ function normalizarNombre(s) {
     return normalizar(s);
 }
 
+// ====== CLAVE DE JUGADOR (OPCIÓN B) ======
+function claveJugador(nombre, miembros) {
+    if (!nombre) return '';
+    const norm = normalizarNombre(nombre);
+    if (miembros && miembros.canonicos && miembros.canonicos[norm]) {
+        return normalizarNombre(miembros.canonicos[norm]);
+    }
+    return norm;
+}
+function aplicarCanonico(nombre, miembros) {
+    if (!nombre) return nombre;
+    const key = claveJugador(nombre, miembros);
+    // Buscar algún canónico cuyo valor normalizado coincida con la clave
+    for (const v of Object.values(miembros.canonicos || {})) {
+        if (normalizarNombre(v) === key) return v;
+    }
+    // Si el nombre exacto tiene canónico, devolverlo
+    const direct = miembros.canonicos && miembros.canonicos[normalizarNombre(nombre)];
+    if (direct) return direct;
+    return nombre;
+}
+function esExcluido(nombre, miembros) {
+    if (!nombre || !miembros.excluidos) return false;
+    const key = claveJugador(nombre, miembros);
+    return miembros.excluidos.some(e => claveJugador(e, miembros) === key);
+}
+
 // ====== GANADORES ======
-function contarGanador(ganadores, jugador) {
-    const jn = normalizarNombre(jugador);
+function contarGanador(ganadores, jugador, miembros) {
+    const jk = claveJugador(jugador, miembros);
     for (const g of ganadores) {
         const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
-        if (match && normalizarNombre(match[1]) === jn) {
+        if (match && claveJugador(match[1], miembros) === jk) {
             return match[2] ? parseInt(match[2]) : 1;
         }
     }
@@ -55,11 +99,11 @@ function parsearGanador(g) {
     if (!match) return { nombre: g, cantidad: 1 };
     return { nombre: match[1].trim(), cantidad: match[2] ? parseInt(match[2]) : 1 };
 }
-function buscarJugadorEnLista(lista, nombre) {
-    const nn = normalizarNombre(nombre);
+function buscarJugadorEnLista(lista, nombre, miembros) {
+    const jk = claveJugador(nombre, miembros);
     return lista.findIndex(g => {
         const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
-        return match && normalizarNombre(match[1]) === nn;
+        return match && claveJugador(match[1], miembros) === jk;
     });
 }
 
@@ -166,6 +210,22 @@ async function responderLargo(interaction, texto, ephemeral = false) {
     }
 }
 
+// ====== AUTOCOMPLETADO ======
+function obtenerNombresUnicos(db, miembros) {
+    const map = new Map();
+    const agregar = (nombre) => {
+        if (!nombre) return;
+        const key = claveJugador(nombre, miembros);
+        if (!map.has(key)) map.set(key, aplicarCanonico(nombre, miembros));
+    };
+    for (const c of db.compras) {
+        (c.ganadores || []).forEach(agregar);
+        (c.perdedores || []).forEach(agregar);
+    }
+    for (const k of Object.keys(miembros.canonicos || {})) agregar(k);
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+}
+
 // ====== CATEGORÍAS ======
 const CATEGORIAS = [
     'Cajas 20k',
@@ -176,6 +236,8 @@ const CATEGORIAS = [
     'Equipo',
     'Accesorios'
 ];
+
+const CATEGORIAS_TOTAL = CATEGORIAS.filter(c => c !== 'Caja 10k' && c !== 'Emblemas Azules');
 
 const PESOS = {
     'Emblemas Únicos': { 'Emblemas Únicos': 3 },
@@ -196,7 +258,7 @@ function getFactorTemporal(dias) {
     return 0;
 }
 
-function calcularPrioridad(jugador, categoria, compras) {
+function calcularPrioridad(jugador, categoria, compras, miembros) {
     const pesosCategoria = PESOS[categoria] || {};
     let impacto = 0;
     let unidades7d = 0;
@@ -204,7 +266,7 @@ function calcularPrioridad(jugador, categoria, compras) {
     const desglose = {};
 
     for (const c of compras) {
-        const n = contarGanador(c.ganadores, jugador);
+        const n = contarGanador(c.ganadores, jugador, miembros);
         if (n === 0) continue;
         const peso = pesosCategoria[c.categoria];
         if (peso === undefined) continue;
@@ -222,13 +284,13 @@ function calcularPrioridad(jugador, categoria, compras) {
 
     for (const c of compras) {
         if (c.categoria !== categoria) continue;
-        historico += contarGanador(c.ganadores, jugador);
+        historico += contarGanador(c.ganadores, jugador, miembros);
     }
 
     const historicoTotal = {};
     for (const cat of CATEGORIAS) historicoTotal[cat] = 0;
     for (const c of compras) {
-        const n = contarGanador(c.ganadores, jugador);
+        const n = contarGanador(c.ganadores, jugador, miembros);
         if (n === 0) continue;
         if (historicoTotal[c.categoria] !== undefined) historicoTotal[c.categoria] += n;
     }
@@ -307,25 +369,24 @@ client.once(Events.ClientReady, async (c) => {
 
             new SlashCommandBuilder()
                 .setName('historial')
-                .setDescription('Historial de compras de uno o varios jugadores')
-                .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true))
+                .setDescription('Historial privado de compras de uno o varios jugadores')
+                .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
                 .addStringOption(o => o.setName('categoria').setDescription('Filtrar por categoría').setRequired(false).addChoices(...catChoicesTodo))
                 .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false)
                     .addChoices(
-                        { name: 'Resumen', value: 'Resumen' },
                         { name: 'Detallado', value: 'Detallado' },
-                        { name: 'Cronologico', value: 'Cronologico' }
+                        { name: 'Recientes', value: 'Recientes' }
                     )),
 
             new SlashCommandBuilder()
                 .setName('historial2')
-                .setDescription('Últimas 5 compras de un jugador (público)')
-                .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true))
+                .setDescription('Historial público de compras de uno o varios jugadores')
+                .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
                 .addStringOption(o => o.setName('categoria').setDescription('Filtrar por categoría').setRequired(false).addChoices(...catChoicesTodo))
                 .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false)
                     .addChoices(
-                        { name: 'PorCategoria', value: 'PorCategoria' },
-                        { name: 'Cronologico', value: 'Cronologico' }
+                        { name: 'Detallado', value: 'Detallado' },
+                        { name: 'Recientes', value: 'Recientes' }
                     )),
 
             new SlashCommandBuilder()
@@ -336,7 +397,12 @@ client.once(Events.ClientReady, async (c) => {
             new SlashCommandBuilder()
                 .setName('total')
                 .setDescription('Totales por categoría de uno o varios jugadores')
-                .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true)),
+                .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
+                .addStringOption(o => o.setName('visibilidad').setDescription('Visible o Privado').setRequired(false)
+                    .addChoices(
+                        { name: 'Visible', value: 'Visible' },
+                        { name: 'Privado', value: 'Privado' }
+                    )),
 
             new SlashCommandBuilder()
                 .setName('ranking')
@@ -346,7 +412,32 @@ client.once(Events.ClientReady, async (c) => {
                 .setName('prioridad')
                 .setDescription('Calcular prioridad para una categoría')
                 .addStringOption(o => o.setName('categoria').setDescription('Categoría a evaluar').setRequired(true).addChoices(...catChoices))
-                .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true)),
+                .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)),
+
+            new SlashCommandBuilder()
+                .setName('miembro')
+                .setDescription('Gestionar nombres y exclusiones del ranking')
+                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+                .addSubcommand(sub => sub
+                    .setName('excluir')
+                    .setDescription('Excluir un nombre del ranking')
+                    .addStringOption(o => o.setName('nombre').setDescription('Nombre a excluir').setRequired(true).setAutocomplete(true)))
+                .addSubcommand(sub => sub
+                    .setName('incluir')
+                    .setDescription('Reincluir un nombre excluido')
+                    .addStringOption(o => o.setName('nombre').setDescription('Nombre a reincluir').setRequired(true).setAutocomplete(true)))
+                .addSubcommand(sub => sub
+                    .setName('canonico')
+                    .setDescription('Definir cómo se muestra un nombre')
+                    .addStringOption(o => o.setName('nombre').setDescription('Nombre tal como aparece en los registros').setRequired(true).setAutocomplete(true))
+                    .addStringOption(o => o.setName('como').setDescription('Forma correcta a mostrar').setRequired(true)))
+                .addSubcommand(sub => sub
+                    .setName('quitar-canonico')
+                    .setDescription('Eliminar la corrección de un nombre')
+                    .addStringOption(o => o.setName('nombre').setDescription('Nombre con canónico definido').setRequired(true).setAutocomplete(true)))
+                .addSubcommand(sub => sub
+                    .setName('lista')
+                    .setDescription('Listar excluidos y canónicos')),
 
             new SlashCommandBuilder()
                 .setName('editar')
@@ -356,22 +447,22 @@ client.once(Events.ClientReady, async (c) => {
                     .setName('agregar-ganador')
                     .setDescription('Agregar un ganador a una entrada')
                     .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
-                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true)))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('quitar-ganador')
                     .setDescription('Quitar un ganador de una entrada')
                     .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
-                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true)))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('agregar-perdedor')
                     .setDescription('Agregar un perdedor a una entrada')
                     .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
-                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true)))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('quitar-perdedor')
                     .setDescription('Quitar un perdedor de una entrada')
                     .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
-                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true)))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('set-nota')
                     .setDescription('Establecer la nota de una entrada')
@@ -410,10 +501,25 @@ client.once(Events.ClientReady, async (c) => {
 
 // ====== COMANDOS ======
 client.on(Events.InteractionCreate, async (interaction) => {
+    // Autocompletado
+    if (interaction.isAutocomplete()) {
+        const db = cargarDB();
+        const miembros = cargarMiembros();
+        const focused = interaction.options.getFocused(true);
+        if (['jugadores', 'jugador', 'nombre'].includes(focused.name)) {
+            const nombres = obtenerNombresUnicos(db, miembros);
+            const q = normalizar(focused.value);
+            const filtrados = nombres.filter(n => normalizar(n).includes(q)).slice(0, 25);
+            return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
+        }
+        return;
+    }
+
     if (!interaction.isChatInputCommand()) return;
     const db = cargarDB();
+    const miembros = cargarMiembros();
 
-    const comandosLider = ['borrar', 'importar', 'editar'];
+    const comandosLider = ['borrar', 'importar', 'editar', 'miembro'];
     const comandosEscritura = ['sub', 'subf'];
 
     if (comandosLider.includes(interaction.commandName) || comandosEscritura.includes(interaction.commandName)) {
@@ -435,6 +541,56 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     try {
+        // ---------- /miembro ----------
+        if (interaction.commandName === 'miembro') {
+            const sub = interaction.options.getSubcommand();
+
+            if (sub === 'lista') {
+                const ex = miembros.excluidos.length ? miembros.excluidos.join(', ') : '(ninguno)';
+                const can = Object.entries(miembros.canonicos || {}).map(([k, v]) => `\`${k}\` → **${v}**`).join('\n') || '(ninguno)';
+                return interaction.reply({
+                    content: `**Excluidos del ranking:** ${ex}\n\n**Canónicos:**\n${can}`,
+                    ephemeral: true
+                });
+            }
+
+            const nombre = interaction.options.getString('nombre');
+
+            if (sub === 'excluir') {
+                if (esExcluido(nombre, miembros)) {
+                    return interaction.reply({ content: `ℹ️ **${nombre}** ya está excluido del ranking.`, ephemeral: true });
+                }
+                miembros.excluidos.push(nombre);
+                guardarMiembros(miembros);
+                return interaction.reply({ content: `✅ **${nombre}** excluido del ranking.` });
+            }
+            if (sub === 'incluir') {
+                const key = claveJugador(nombre, miembros);
+                const idx = miembros.excluidos.findIndex(e => claveJugador(e, miembros) === key);
+                if (idx === -1) {
+                    return interaction.reply({ content: `ℹ️ **${nombre}** no estaba excluido.`, ephemeral: true });
+                }
+                miembros.excluidos.splice(idx, 1);
+                guardarMiembros(miembros);
+                return interaction.reply({ content: `✅ **${nombre}** reincluido en el ranking.` });
+            }
+            if (sub === 'canonico') {
+                const como = interaction.options.getString('como');
+                miembros.canonicos[normalizarNombre(nombre)] = como;
+                guardarMiembros(miembros);
+                return interaction.reply({ content: `✅ **${nombre}** se mostrará como **${como}**.` });
+            }
+            if (sub === 'quitar-canonico') {
+                const key = normalizarNombre(nombre);
+                if (!miembros.canonicos[key]) {
+                    return interaction.reply({ content: `ℹ️ No hay canónico para **${nombre}**.`, ephemeral: true });
+                }
+                delete miembros.canonicos[key];
+                guardarMiembros(miembros);
+                return interaction.reply({ content: `✅ Canónico eliminado para **${nombre}**.` });
+            }
+        }
+
         // ---------- /editar ----------
         if (interaction.commandName === 'editar') {
             const sub = interaction.options.getSubcommand();
@@ -448,7 +604,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             if (sub === 'agregar-ganador') {
                 const jugador = interaction.options.getString('jugador').trim();
-                if (buscarJugadorEnLista(e.ganadores, jugador) !== -1) {
+                if (buscarJugadorEnLista(e.ganadores, jugador, miembros) !== -1) {
                     return interaction.reply({ content: `ℹ️ **${jugador}** ya está en ganadores de #${id}.`, ephemeral: true });
                 }
                 e.ganadores.push(jugador);
@@ -456,7 +612,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
             else if (sub === 'quitar-ganador') {
                 const jugador = interaction.options.getString('jugador').trim();
-                const pos = buscarJugadorEnLista(e.ganadores, jugador);
+                const pos = buscarJugadorEnLista(e.ganadores, jugador, miembros);
                 if (pos === -1) {
                     return interaction.reply({ content: `ℹ️ **${jugador}** no está en ganadores de #${id}.`, ephemeral: true });
                 }
@@ -465,7 +621,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
             else if (sub === 'agregar-perdedor') {
                 const jugador = interaction.options.getString('jugador').trim();
-                if (buscarJugadorEnLista(e.perdedores, jugador) !== -1) {
+                if (buscarJugadorEnLista(e.perdedores, jugador, miembros) !== -1) {
                     return interaction.reply({ content: `ℹ️ **${jugador}** ya está en perdedores de #${id}.`, ephemeral: true });
                 }
                 e.perdedores.push(jugador);
@@ -473,7 +629,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
             else if (sub === 'quitar-perdedor') {
                 const jugador = interaction.options.getString('jugador').trim();
-                const pos = buscarJugadorEnLista(e.perdedores, jugador);
+                const pos = buscarJugadorEnLista(e.perdedores, jugador, miembros);
                 if (pos === -1) {
                     return interaction.reply({ content: `ℹ️ **${jugador}** no está en perdedores de #${id}.`, ephemeral: true });
                 }
@@ -496,9 +652,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             guardarDB(db);
             let respuesta = `${mensaje}\n\n`;
             respuesta += `#${e.id} · ${formatearFecha(e.fecha)} ${etiquetaDias(e.fecha)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
-            respuesta += `🏆 ${e.ganadores.join(', ') || 'nadie'}\n`;
+            respuesta += `🏆 ${e.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
             if (e.perdedores && e.perdedores.length > 0) {
-                respuesta += `💔 ${e.perdedores.join(', ')}\n`;
+                respuesta += `💔 ${e.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
             }
             if (e.notas) {
                 respuesta += `📝 ${e.notas}`;
@@ -575,7 +731,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             guardarDB(db);
 
             return interaction.reply({
-                content: `✅ #${entrada.id} · 📅 ${formatearFecha(fecha)}\n📦 ${cantidad}x ${objeto} (${categoria})\n🏆 ${ganadores.join(', ') || 'nadie'}${perdedores.length ? `\n💔 Perdieron: ${perdedores.join(', ')}` : ''}`
+                content: `✅ #${entrada.id} · 📅 ${formatearFecha(fecha)}\n📦 ${cantidad}x ${objeto} (${categoria})\n🏆 ${ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}${perdedores.length ? `\n💔 Perdieron: ${perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}` : ''}`
             });
         }
 
@@ -624,9 +780,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         bloqueActual = bloque;
                     }
                     out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
-                    out += `   🏆 ${c.ganadores.join(', ') || 'nadie'}\n`;
+                    out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
                     if (c.perdedores && c.perdedores.length > 0) {
-                        out += `   💔 ${c.perdedores.join(', ')}\n`;
+                        out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
                     }
                     if (c.notas) {
                         out += `   📝 ${c.notas}\n`;
@@ -638,125 +794,128 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
         }
 
-        // ---------- /historial ----------
+        // ---------- /historial (privado) ----------
         if (interaction.commandName === 'historial') {
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
             const categoria = interaction.options.getString('categoria') || 'Todas';
-            const formato = interaction.options.getString('formato') || 'Resumen';
+            const formato = interaction.options.getString('formato') || 'Recientes';
 
-            if (formato === 'Resumen') {
-                let out = '📜 **Historial rápido**\n\n';
-                for (const j of jugadores) {
-                    const comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j) > 0);
-                    const porCat = {};
-                    let totalUnidades = 0;
-                    for (const c of comprasJ) {
-                        const n = contarGanador(c.ganadores, j);
-                        totalUnidades += n;
-                        porCat[c.categoria] = (porCat[c.categoria] || 0) + n;
-                    }
-                    const desglose = CATEGORIAS.map(cat => porCat[cat] ? `${porCat[cat]} ${cat}` : null).filter(Boolean).join(', ');
-                    out += `**${j}**: ${totalUnidades} unidades${desglose ? ` | ${desglose}` : ''}\n`;
-                }
-                return interaction.reply({ content: out });
+            if (formato === 'Detallado' && categoria !== 'Todas') {
+                return interaction.reply({ content: '❌ El formato Detallado solo está disponible cuando Categoría = Todas. Usa Recientes para una categoría específica.', ephemeral: true });
             }
 
-            if (formato === 'Cronologico') {
+            let out = '';
+            if (formato === 'Recientes') {
                 const bloques = [];
                 for (const j of jugadores) {
-                    let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j) > 0);
+                    let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j, miembros) > 0);
                     if (categoria !== 'Todas') comprasJ = comprasJ.filter(c => c.categoria === categoria);
                     comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
                     const ultimas = comprasJ.slice(0, 5);
-                    let bloque = `📜 **${j}** (últimas ${ultimas.length} compras)\n`;
+                    let bloque = `📜 **${aplicarCanonico(j, miembros)}** (últimas ${ultimas.length} compras)\n`;
                     for (const c of ultimas) {
-                        const n = contarGanador(c.ganadores, j);
+                        const n = contarGanador(c.ganadores, j, miembros);
                         bloque += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
                     }
                     bloques.push(bloque);
                 }
-                const out = bloques.join('\n');
-                await responderLargo(interaction, out);
-                return;
-            }
+                out = bloques.join('\n');
+            } else {
+                // Detallado (solo Todas)
+                const bloques = [];
+                for (const j of jugadores) {
+                    let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j, miembros) > 0);
+                    comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
 
-            const bloques = [];
-            for (const j of jugadores) {
-                let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j) > 0);
-                if (categoria !== 'Todas') comprasJ = comprasJ.filter(c => c.categoria === categoria);
-                comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
-
-                const categoriasMostrar = categoria === 'Todas' ? CATEGORIAS : [categoria];
-                let bloque = `📜 **${j}**${categoria !== 'Todas' ? ` — ${categoria}` : ''}\n`;
-
-                for (const cat of categoriasMostrar) {
-                    const filtradas = comprasJ.filter(c => c.categoria === cat).slice(0, 5);
-                    if (filtradas.length === 0) continue;
-                    bloque += `\n**${cat}** (últimas ${filtradas.length}):\n`;
-                    for (const c of filtradas) {
-                        const n = contarGanador(c.ganadores, j);
-                        bloque += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto}\n`;
+                    let bloque = `📜 **${aplicarCanonico(j, miembros)}** (por categoría)\n`;
+                    for (const cat of CATEGORIAS) {
+                        const filtradas = comprasJ.filter(c => c.categoria === cat).slice(0, 5);
+                        if (filtradas.length === 0) continue;
+                        bloque += `\n**${cat}** (últimas ${filtradas.length}):\n`;
+                        for (const c of filtradas) {
+                            const n = contarGanador(c.ganadores, j, miembros);
+                            bloque += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto}\n`;
+                        }
                     }
+                    bloques.push(bloque);
                 }
-                bloques.push(bloque);
+                out = bloques.join('\n');
             }
-            const out = bloques.join('\n');
+
             await responderLargo(interaction, out, true);
             return;
         }
 
-        // ---------- /historial2 ----------
+        // ---------- /historial2 (público) ----------
         if (interaction.commandName === 'historial2') {
-            const jugador = interaction.options.getString('jugador');
+            const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
             const categoria = interaction.options.getString('categoria') || 'Todas';
-            const formato = interaction.options.getString('formato') || 'PorCategoria';
+            const formato = interaction.options.getString('formato') || 'Recientes';
 
-            let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, jugador) > 0);
-            if (categoria !== 'Todas') comprasJ = comprasJ.filter(c => c.categoria === categoria);
-            comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
-
-            let out = '';
-            if (formato === 'Cronologico') {
-                out = `📜 **${jugador}**${categoria !== 'Todas' ? ` — ${categoria}` : ''} (últimas 5 compras)\n`;
-                const ultimas = comprasJ.slice(0, 5);
-                for (const c of ultimas) {
-                    const n = contarGanador(c.ganadores, jugador);
-                    out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
-                }
-            } else {
-                out = `📜 **${jugador}**${categoria !== 'Todas' ? ` — ${categoria}` : ''} (por categoría)\n`;
-                const categoriasMostrar = categoria === 'Todas' ? CATEGORIAS : [categoria];
-                for (const cat of categoriasMostrar) {
-                    const filtradas = comprasJ.filter(c => c.categoria === cat).slice(0, 5);
-                    if (filtradas.length === 0) continue;
-                    out += `\n**${cat}**:\n`;
-                    for (const c of filtradas) {
-                        const n = contarGanador(c.ganadores, jugador);
-                        out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto}\n`;
-                    }
-                }
+            if (formato === 'Detallado' && categoria !== 'Todas') {
+                return interaction.reply({ content: '❌ El formato Detallado solo está disponible cuando Categoría = Todas. Usa Recientes para una categoría específica.', ephemeral: false });
             }
 
-            await responderLargo(interaction, out);
+            let out = '';
+            if (formato === 'Recientes') {
+                const bloques = [];
+                for (const j of jugadores) {
+                    let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j, miembros) > 0);
+                    if (categoria !== 'Todas') comprasJ = comprasJ.filter(c => c.categoria === categoria);
+                    comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
+                    const ultimas = comprasJ.slice(0, 5);
+                    let bloque = `📜 **${aplicarCanonico(j, miembros)}** (últimas ${ultimas.length} compras)\n`;
+                    for (const c of ultimas) {
+                        const n = contarGanador(c.ganadores, j, miembros);
+                        bloque += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
+                    }
+                    bloques.push(bloque);
+                }
+                out = bloques.join('\n');
+            } else {
+                const bloques = [];
+                for (const j of jugadores) {
+                    let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j, miembros) > 0);
+                    comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+                    let bloque = `📜 **${aplicarCanonico(j, miembros)}** (por categoría)\n`;
+                    for (const cat of CATEGORIAS) {
+                        const filtradas = comprasJ.filter(c => c.categoria === cat).slice(0, 5);
+                        if (filtradas.length === 0) continue;
+                        bloque += `\n**${cat}** (últimas ${filtradas.length}):\n`;
+                        for (const c of filtradas) {
+                            const n = contarGanador(c.ganadores, j, miembros);
+                            bloque += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto}\n`;
+                        }
+                    }
+                    bloques.push(bloque);
+                }
+                out = bloques.join('\n');
+            }
+
+            await responderLargo(interaction, out, false);
             return;
         }
 
         // ---------- /total ----------
         if (interaction.commandName === 'total') {
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
+            const visibilidad = interaction.options.getString('visibilidad') || 'Visible';
+            const ephemeral = visibilidad === 'Privado';
+
             let out = '';
             for (const j of jugadores) {
                 const totales = {};
                 for (const cat of CATEGORIAS) totales[cat] = 0;
                 for (const c of db.compras) {
-                    const n = contarGanador(c.ganadores, j);
+                    const n = contarGanador(c.ganadores, j, miembros);
                     if (n > 0 && totales[c.categoria] !== undefined) totales[c.categoria] += n;
                 }
                 const total = Object.values(totales).reduce((a, b) => a + b, 0);
-                const lineas = Object.entries(totales).map(([cat, n]) => `${cat}: ${n}`).join('\n');
-                out += `📊 **Total de ${j}**\n${lineas}\n────────────\n**TOTAL:** ${total}\n\n`;
+                const lineas = CATEGORIAS_TOTAL.map(cat => `${cat}: ${totales[cat] || 0}`).join('\n');
+                out += `📊 **Total de ${aplicarCanonico(j, miembros)}**\n${lineas}\n────────────\n**TOTAL:** ${total}\n\n`;
             }
-            await responderLargo(interaction, out.trimEnd());
+            await responderLargo(interaction, out.trimEnd(), ephemeral);
             return;
         }
 
@@ -766,9 +925,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             for (const c of db.compras) {
                 for (const g of c.ganadores) {
                     const { nombre, cantidad } = parsearGanador(g);
-                    const key = normalizarNombre(nombre);
+                    if (esExcluido(nombre, miembros)) continue;
+                    const key = claveJugador(nombre, miembros);
                     if (!ranking[key]) {
-                        ranking[key] = { nombre, total: 0 };
+                        ranking[key] = { nombre: aplicarCanonico(nombre, miembros), total: 0 };
                         for (const cat of CATEGORIAS) ranking[key][cat] = 0;
                     }
                     if (ranking[key][c.categoria] !== undefined) {
@@ -792,7 +952,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             const resultados = jugadores.map(j => ({
                 jugador: j,
-                ...calcularPrioridad(j, categoria, db.compras)
+                ...calcularPrioridad(j, categoria, db.compras, miembros)
             }));
             resultados.sort(compararPrioridad);
 
@@ -823,13 +983,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     .map(([cat, n]) => `${abreviaturas[cat] || cat}: ${n}`);
                 const histTotalStr = histPartes.length > 0 ? `Histórico total: ${histPartes.join(', ')}` : 'Histórico total: —';
 
-                out += `**${i + 1}. ${r.jugador}**\n`;
+                out += `**${i + 1}. ${aplicarCanonico(r.jugador, miembros)}**\n`;
                 out += `   Impacto reciente: ${r.impacto.toFixed(2)}\n`;
                 out += `   Unidades 7d: ${r.unidades7d}${desgloseStr}\n`;
                 out += `   Histórico en categoría: ${r.historico}\n`;
                 out += `   ${histTotalStr}\n`;
             });
-            out += `\n**Recomendación:** ${resultados[0].jugador}`;
+            out += `\n**Recomendación:** ${aplicarCanonico(resultados[0].jugador, miembros)}`;
 
             await responderLargo(interaction, out);
             return;
@@ -848,7 +1008,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (varios jugadores)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/editar\` · editar entrada (ganadores, perdedores, nota)\n\`/importar\` · importar nuevas filas desde el CSV\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (ganadores, perdedores, nota)\n\`/importar\` · importar nuevas filas desde el CSV\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
