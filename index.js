@@ -154,6 +154,7 @@ function calcularPrioridad(jugador, categoria, compras) {
     let impacto = 0;
     let unidades7d = 0;
     let historico = 0;
+    const desglose = {};
 
     for (const c of compras) {
         const n = contarGanador(c.ganadores, jugador);
@@ -171,7 +172,10 @@ function calcularPrioridad(jugador, categoria, compras) {
 
         const factor = getFactorTemporal(dias);
         impacto += n * peso * factor;
-        if (dias <= 6) unidades7d += n;
+        if (dias <= 6) {
+            unidades7d += n;
+            desglose[c.categoria] = (desglose[c.categoria] || 0) + n;
+        }
     }
 
     for (const c of compras) {
@@ -179,7 +183,7 @@ function calcularPrioridad(jugador, categoria, compras) {
         historico += contarGanador(c.ganadores, jugador);
     }
 
-    return { impacto, unidades7d, historico };
+    return { impacto, unidades7d, historico, desglose };
 }
 
 function compararPrioridad(a, b) {
@@ -425,9 +429,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             let out = `🏆 **Prioridad — ${categoria}**\n\n`;
             resultados.forEach((r, i) => {
+                // Armar desglose legible
+                let desgloseStr = '';
+                if (r.unidades7d > 0) {
+                    const partes = Object.entries(r.desglose)
+                        .filter(([_, n]) => n > 0)
+                        .map(([cat, n]) => {
+                            const nombreCorto = cat
+                                .replace('Emblemas ', '')
+                                .replace('Cajas 20k', 'Cajas')
+                                .replace('Caja 10k', 'Caja10k');
+                            return `${nombreCorto}: ${n}`;
+                        });
+                    if (partes.length > 0) {
+                        desgloseStr = ` (${partes.join(', ')})`;
+                    }
+                }
+
                 out += `**${i + 1}. ${r.jugador}**\n`;
                 out += `   Impacto reciente: ${r.impacto.toFixed(2)}\n`;
-                out += `   Unidades 7d: ${r.unidades7d}\n`;
+                out += `   Unidades 7d: ${r.unidades7d}${desgloseStr}\n`;
                 out += `   Histórico en categoría: ${r.historico}\n`;
             });
             out += `\n**Recomendación:** ${resultados[0].jugador}`;
