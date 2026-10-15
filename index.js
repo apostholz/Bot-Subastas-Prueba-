@@ -178,12 +178,24 @@ function calcularPrioridad(jugador, categoria, compras) {
         }
     }
 
+    // Histórico en la categoría pedida
     for (const c of compras) {
         if (c.categoria !== categoria) continue;
         historico += contarGanador(c.ganadores, jugador);
     }
 
-    return { impacto, unidades7d, historico, desglose };
+    // Histórico total en todas las categorías
+    const historicoTotal = {};
+    for (const cat of CATEGORIAS) historicoTotal[cat] = 0;
+    for (const c of compras) {
+        const n = contarGanador(c.ganadores, jugador);
+        if (n === 0) continue;
+        if (historicoTotal[c.categoria] !== undefined) {
+            historicoTotal[c.categoria] += n;
+        }
+    }
+
+    return { impacto, unidades7d, historico, desglose, historicoTotal };
 }
 
 function compararPrioridad(a, b) {
@@ -429,7 +441,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             let out = `🏆 **Prioridad — ${categoria}**\n\n`;
             resultados.forEach((r, i) => {
-                // Armar desglose legible
+                // Desglose de unidades 7d
                 let desgloseStr = '';
                 if (r.unidades7d > 0) {
                     const partes = Object.entries(r.desglose)
@@ -437,22 +449,54 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         .map(([cat, n]) => {
                             const nombreCorto = cat
                                 .replace('Emblemas ', '')
-                                .replace('Cajas 20k', 'Cajas')
-                                .replace('Caja 10k', 'Caja10k');
+                                .replace('Cajas 20k', '20k')
+                                .replace('Caja 10k', '10k');
                             return `${nombreCorto}: ${n}`;
                         });
-                    if (partes.length > 0) {
-                        desgloseStr = ` (${partes.join(', ')})`;
-                    }
+                    if (partes.length > 0) desgloseStr = ` (${partes.join(', ')})`;
                 }
+
+                // Histórico total abreviado
+                const abreviaturas = {
+                    'Cajas 20k': '20k',
+                    'Caja 10k': '10k',
+                    'Emblemas Generales': 'Gen',
+                    'Emblemas Únicos': 'Únicos',
+                    'Emblemas Azules': 'Az',
+                    'Equipo': 'Eq',
+                    'Accesorios': 'Acc'
+                };
+                const histPartes = Object.entries(r.historicoTotal)
+                    .filter(([_, n]) => n > 0)
+                    .map(([cat, n]) => `${abreviaturas[cat] || cat}: ${n}`);
+                const histTotalStr = histPartes.length > 0 ? `Histórico total: ${histPartes.join(', ')}` : 'Histórico total: —';
 
                 out += `**${i + 1}. ${r.jugador}**\n`;
                 out += `   Impacto reciente: ${r.impacto.toFixed(2)}\n`;
                 out += `   Unidades 7d: ${r.unidades7d}${desgloseStr}\n`;
                 out += `   Histórico en categoría: ${r.historico}\n`;
+                out += `   ${histTotalStr}\n`;
             });
             out += `\n**Recomendación:** ${resultados[0].jugador}`;
-            return interaction.reply({ content: out });
+
+            // Dividir si excede 1900 caracteres
+            const chunks = [];
+            let current = '';
+            for (const linea of out.split('\n')) {
+                if (current.length + linea.length + 1 > 1900) {
+                    chunks.push(current);
+                    current = linea;
+                } else {
+                    current += (current ? '\n' : '') + linea;
+                }
+            }
+            if (current) chunks.push(current);
+
+            await interaction.reply({ content: chunks[0] });
+            for (let i = 1; i < chunks.length; i++) {
+                await interaction.followUp({ content: chunks[i] });
+            }
+            return;
         }
 
         // ---------- /borrar ----------
