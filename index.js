@@ -109,7 +109,7 @@ const CATEGORIAS = [
     'Accesorios'
 ];
 
-// Pesos: PESOS[categoriaEvaluada][categoriaCompra] = peso
+// Pesos
 const PESOS = {
     'Emblemas Únicos': { 'Emblemas Únicos': 3 },
     'Cajas 20k': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 0.3 },
@@ -218,13 +218,22 @@ client.once(Events.ClientReady, async (c) => {
                 .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true))
                 .addStringOption(o => o.setName('categoria').setDescription('Filtrar por categoría').setRequired(false).addChoices(...catChoicesTodo))
                 .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false)
-                    .addChoices({ name: 'Resumen', value: 'Resumen' }, { name: 'Detallado', value: 'Detallado' })),
+                    .addChoices(
+                        { name: 'Resumen', value: 'Resumen' },
+                        { name: 'Detallado', value: 'Detallado' },
+                        { name: 'Cronologico', value: 'Cronologico' }
+                    )),
 
             new SlashCommandBuilder()
                 .setName('historial2')
                 .setDescription('Últimas 5 compras de un jugador (público)')
                 .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true))
-                .addStringOption(o => o.setName('categoria').setDescription('Filtrar por categoría').setRequired(false).addChoices(...catChoicesTodo)),
+                .addStringOption(o => o.setName('categoria').setDescription('Filtrar por categoría').setRequired(false).addChoices(...catChoicesTodo))
+                .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false)
+                    .addChoices(
+                        { name: 'PorCategoria', value: 'PorCategoria' },
+                        { name: 'Cronologico', value: 'Cronologico' }
+                    )),
 
             new SlashCommandBuilder()
                 .setName('total')
@@ -267,7 +276,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     const db = cargarDB();
 
-    // Chequeo de permisos para comandos restringidos
+    // Permisos
     const comandosLider = ['borrar'];
     const comandosEscritura = ['sub', 'subf'];
 
@@ -330,9 +339,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
             const categoria = interaction.options.getString('categoria') || 'Todas';
             const formato = interaction.options.getString('formato') || 'Resumen';
-            const esDetallado = formato === 'Detallado';
 
-            if (!esDetallado) {
+            // --- Resumen (público, compacto) ---
+            if (formato === 'Resumen') {
                 let out = '📜 **Historial rápido**\n\n';
                 for (const j of jugadores) {
                     const comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j) > 0);
@@ -349,6 +358,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.reply({ content: out });
             }
 
+            // --- Cronologico (público, lista única) ---
+            if (formato === 'Cronologico') {
+                const bloques = [];
+                for (const j of jugadores) {
+                    let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j) > 0);
+                    if (categoria !== 'Todas') comprasJ = comprasJ.filter(c => c.categoria === categoria);
+                    comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
+                    const ultimas = comprasJ.slice(0, 5);
+                    let bloque = `📜 **${j}** (últimas ${ultimas.length} compras)\n`;
+                    for (const c of ultimas) {
+                        const n = contarGanador(c.ganadores, j);
+                        bloque += `#${c.id} · ${formatearFecha(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
+                    }
+                    bloques.push(bloque);
+                }
+
+                const chunks = [];
+                let current = '';
+                for (const b of bloques) {
+                    if (current.length + b.length > 1900) { chunks.push(current); current = b; }
+                    else { current += '\n' + b; }
+                }
+                if (current) chunks.push(current);
+
+                await interaction.reply({ content: chunks[0] });
+                for (let i = 1; i < chunks.length; i++) {
+                    await interaction.followUp({ content: chunks[i] });
+                }
+                return;
+            }
+
+            // --- Detallado (ephemeral, agrupado por categoría) ---
             const bloques = [];
             for (const j of jugadores) {
                 let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j) > 0);
@@ -389,20 +430,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.commandName === 'historial2') {
             const jugador = interaction.options.getString('jugador');
             const categoria = interaction.options.getString('categoria') || 'Todas';
+            const formato = interaction.options.getString('formato') || 'PorCategoria';
+
             let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, jugador) > 0);
             if (categoria !== 'Todas') comprasJ = comprasJ.filter(c => c.categoria === categoria);
             comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
 
-            const categoriasMostrar = categoria === 'Todas' ? CATEGORIAS : [categoria];
-            let out = `📜 **${jugador}**${categoria !== 'Todas' ? ` — ${categoria}` : ''} (últimas 5)\n`;
-
-            for (const cat of categoriasMostrar) {
-                const filtradas = comprasJ.filter(c => c.categoria === cat).slice(0, 5);
-                if (filtradas.length === 0) continue;
-                out += `\n**${cat}**:\n`;
-                for (const c of filtradas) {
+            let out = '';
+            if (formato === 'Cronologico') {
+                out = `📜 **${jugador}**${categoria !== 'Todas' ? ` — ${categoria}` : ''} (últimas 5 compras)\n`;
+                const ultimas = comprasJ.slice(0, 5);
+                for (const c of ultimas) {
                     const n = contarGanador(c.ganadores, jugador);
-                    out += `#${c.id} · ${formatearFecha(c.fecha)} · ${n}x ${c.objeto}\n`;
+                    out += `#${c.id} · ${formatearFecha(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
+                }
+            } else {
+                out = `📜 **${jugador}**${categoria !== 'Todas' ? ` — ${categoria}` : ''} (por categoría)\n`;
+                const categoriasMostrar = categoria === 'Todas' ? CATEGORIAS : [categoria];
+                for (const cat of categoriasMostrar) {
+                    const filtradas = comprasJ.filter(c => c.categoria === cat).slice(0, 5);
+                    if (filtradas.length === 0) continue;
+                    out += `\n**${cat}**:\n`;
+                    for (const c of filtradas) {
+                        const n = contarGanador(c.ganadores, jugador);
+                        out += `#${c.id} · ${formatearFecha(c.fecha)} · ${n}x ${c.objeto}\n`;
+                    }
                 }
             }
 
@@ -542,7 +594,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (soporta varios jugadores)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (varios jugadores, formatos Resumen/Detallado/Cronologico)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
