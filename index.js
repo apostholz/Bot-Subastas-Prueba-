@@ -16,7 +16,6 @@ const DATA_DIR = '/app/data';
 const DB_FILE = path.join(DATA_DIR, 'compras_v2.json');
 const CSV_FILE = path.join(__dirname, 'historial.csv');
 
-// ====== IDs de roles ======
 const ROL_LIDER = '1547712440593031249';
 const ROL_HELPER = '1560311703118545007';
 
@@ -45,6 +44,19 @@ function parsearGanador(g) {
     const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
     if (!match) return { nombre: g, cantidad: 1 };
     return { nombre: match[1].trim(), cantidad: match[2] ? parseInt(match[2]) : 1 };
+}
+
+// ====== HUELLA PARA DEDUPLICAR ======
+function huella(c) {
+    return [
+        c.fecha || '',
+        c.evento || '',
+        c.categoria || '',
+        c.objeto || '',
+        c.cantidad || 0,
+        (c.ganadores || []).join(','),
+        (c.perdedores || []).join(',')
+    ].join('|');
 }
 
 // ====== CSV INICIAL ======
@@ -109,7 +121,6 @@ const CATEGORIAS = [
     'Accesorios'
 ];
 
-// Pesos
 const PESOS = {
     'Emblemas Únicos': { 'Emblemas Únicos': 3 },
     'Cajas 20k': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 0.3 },
@@ -251,6 +262,11 @@ client.once(Events.ClientReady, async (c) => {
                 .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true)),
 
             new SlashCommandBuilder()
+                .setName('importar')
+                .setDescription('Importar entradas nuevas desde historial.csv')
+                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+            new SlashCommandBuilder()
                 .setName('borrar')
                 .setDescription('Borrar una entrada por ID')
                 .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -276,8 +292,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     const db = cargarDB();
 
-    // Permisos
-    const comandosLider = ['borrar'];
+    const comandosLider = ['borrar', 'importar'];
     const comandosEscritura = ['sub', 'subf'];
 
     if (comandosLider.includes(interaction.commandName) || comandosEscritura.includes(interaction.commandName)) {
@@ -299,6 +314,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     try {
+        // ---------- /importar ----------
+        if (interaction.commandName === 'importar') {
+            if (!fs.existsSync(CSV_FILE)) {
+                return interaction.reply({ content: '❌ No existe historial.csv en el servidor.', ephemeral: true });
+            }
+            const contenido = fs.readFileSync(CSV_FILE, 'utf8');
+            const filas = parse(contenido, { columns: true, skip_empty_lines: true, trim: true });
+
+            const existentes = new Set(db.compras.map(huella));
+            let agregadas = 0;
+
+            for (const fila of filas) {
+                const nueva = {
+                    id: db.nextId,
+                    fecha: convertirFecha(fila.fecha),
+                    evento: fila.evento || '',
+                    categoria: fila.categoria || '',
+                    objeto: fila.objeto || '',
+                    cantidad: parseInt(fila.cantidad) || 1,
+                    ganadores: fila.ganadores ? fila.ganadores.split(',').map(s => s.trim()).filter(Boolean) : [],
+                    perdedores: fila.perdedores ? fila.perdedores.split(',').map(s => s.trim()).filter(Boolean) : [],
+                    notas: fila.notas || ''
+                };
+                const fp = huella(nueva);
+                if (!existentes.has(fp)) {
+                    db.compras.push(nueva);
+                    existentes.add(fp);
+                    db.nextId++;
+                    agregadas++;
+                }
+            }
+
+            guardarDB(db);
+            return interaction.reply({
+                content: `✅ Importadas **${agregadas}** entradas nuevas.\nTotal en la base: **${db.compras.length}**.`
+            });
+        }
+
         // ---------- /sub y /subf ----------
         if (interaction.commandName === 'sub' || interaction.commandName === 'subf') {
             const categoria = interaction.options.getString('categoria');
@@ -340,7 +393,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const categoria = interaction.options.getString('categoria') || 'Todas';
             const formato = interaction.options.getString('formato') || 'Resumen';
 
-            // --- Resumen (público, compacto) ---
             if (formato === 'Resumen') {
                 let out = '📜 **Historial rápido**\n\n';
                 for (const j of jugadores) {
@@ -358,7 +410,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.reply({ content: out });
             }
 
-            // --- Cronologico (público, lista única) ---
             if (formato === 'Cronologico') {
                 const bloques = [];
                 for (const j of jugadores) {
@@ -389,7 +440,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return;
             }
 
-            // --- Detallado (ephemeral, agrupado por categoría) ---
             const bloques = [];
             for (const j of jugadores) {
                 let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j) > 0);
@@ -594,7 +644,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (varios jugadores, formatos Resumen/Detallado/Cronologico)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (varios jugadores)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/importar\` · importar nuevas filas desde el CSV\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
