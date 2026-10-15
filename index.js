@@ -132,6 +132,13 @@ function diasDesde(iso) {
     const diff = Date.now() - new Date(iso).getTime();
     return Math.floor(diff / (1000 * 60 * 60 * 24));
 }
+function etiquetaDias(iso) {
+    const d = diasDesde(iso);
+    if (d === 999) return '(?)';
+    if (d <= 0) return '(hoy)';
+    if (d === 1) return '(ayer)';
+    return `(${d} días)`;
+}
 
 // ====== CATEGORÍAS ======
 const CATEGORIAS = [
@@ -462,7 +469,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             guardarDB(db);
             let respuesta = `${mensaje}\n\n`;
-            respuesta += `#${e.id} · ${formatearFecha(e.fecha)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
+            respuesta += `#${e.id} · ${formatearFecha(e.fecha)} ${etiquetaDias(e.fecha)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
             respuesta += `🏆 ${e.ganadores.join(', ') || 'nadie'}\n`;
             if (e.perdedores && e.perdedores.length > 0) {
                 respuesta += `💔 ${e.perdedores.join(', ')}\n`;
@@ -653,7 +660,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     let bloque = `📜 **${j}** (últimas ${ultimas.length} compras)\n`;
                     for (const c of ultimas) {
                         const n = contarGanador(c.ganadores, j);
-                        bloque += `#${c.id} · ${formatearFecha(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
+                        bloque += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
                     }
                     bloques.push(bloque);
                 }
@@ -688,7 +695,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     bloque += `\n**${cat}** (últimas ${filtradas.length}):\n`;
                     for (const c of filtradas) {
                         const n = contarGanador(c.ganadores, j);
-                        bloque += `#${c.id} · ${formatearFecha(c.fecha)} · ${n}x ${c.objeto}\n`;
+                        bloque += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto}\n`;
                     }
                 }
                 bloques.push(bloque);
@@ -725,7 +732,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const ultimas = comprasJ.slice(0, 5);
                 for (const c of ultimas) {
                     const n = contarGanador(c.ganadores, jugador);
-                    out += `#${c.id} · ${formatearFecha(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
+                    out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
                 }
             } else {
                 out = `📜 **${jugador}**${categoria !== 'Todas' ? ` — ${categoria}` : ''} (por categoría)\n`;
@@ -736,7 +743,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     out += `\n**${cat}**:\n`;
                     for (const c of filtradas) {
                         const n = contarGanador(c.ganadores, jugador);
-                        out += `#${c.id} · ${formatearFecha(c.fecha)} · ${n}x ${c.objeto}\n`;
+                        out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${n}x ${c.objeto}\n`;
                     }
                 }
             }
