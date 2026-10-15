@@ -8,12 +8,17 @@ const {
     Events,
     REST,
     Routes,
-    SlashCommandBuilder
+    SlashCommandBuilder,
+    PermissionFlagsBits
 } = require('discord.js');
 
 const DATA_DIR = '/app/data';
 const DB_FILE = path.join(DATA_DIR, 'compras_v2.json');
 const CSV_FILE = path.join(__dirname, 'historial.csv');
+
+// ====== IDs de roles ======
+const ROL_LIDER = '1547712440593031249';
+const ROL_HELPER = '1560311703118545007';
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -106,38 +111,13 @@ const CATEGORIAS = [
 
 // Pesos: PESOS[categoriaEvaluada][categoriaCompra] = peso
 const PESOS = {
-    'Emblemas Únicos': {
-        'Emblemas Únicos': 3
-    },
-    'Cajas 20k': {
-        'Emblemas Únicos': 3,
-        'Cajas 20k': 2,
-        'Emblemas Generales': 0.3
-    },
-    'Emblemas Generales': {
-        'Emblemas Únicos': 3,
-        'Cajas 20k': 2,
-        'Emblemas Generales': 1
-    },
-    'Emblemas Azules': {
-        'Emblemas Únicos': 3,
-        'Cajas 20k': 2,
-        'Emblemas Generales': 1,
-        'Emblemas Azules': 0.5
-    },
-    'Equipo': {
-        'Equipo': 1.0,
-        'Accesorios': 1.5,
-        'Emblemas Únicos': 3
-    },
-    'Accesorios': {
-        'Accesorios': 1.5,
-        'Equipo': 0.5,
-        'Emblemas Únicos': 3
-    },
-    'Caja 10k': {
-        'Caja 10k': 0.5
-    }
+    'Emblemas Únicos': { 'Emblemas Únicos': 3 },
+    'Cajas 20k': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 0.3 },
+    'Emblemas Generales': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 1 },
+    'Emblemas Azules': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 1, 'Emblemas Azules': 0.5 },
+    'Equipo': { 'Equipo': 1.0, 'Accesorios': 1.5, 'Emblemas Únicos': 3 },
+    'Accesorios': { 'Accesorios': 1.5, 'Equipo': 0.5, 'Emblemas Únicos': 3 },
+    'Caja 10k': { 'Caja 10k': 0.5 }
 };
 
 function getFactorTemporal(dias) {
@@ -161,15 +141,10 @@ function calcularPrioridad(jugador, categoria, compras) {
         if (n === 0) continue;
         const peso = pesosCategoria[c.categoria];
         if (peso === undefined) continue;
-
         const dias = diasDesde(c.fecha);
-
-        // Excepción Único solo si ≤ 2 días para Equipo/Accesorios
-        if (c.categoria === 'Emblemas Únicos' &&
-            (categoria === 'Equipo' || categoria === 'Accesorios')) {
+        if (c.categoria === 'Emblemas Únicos' && (categoria === 'Equipo' || categoria === 'Accesorios')) {
             if (dias > 2) continue;
         }
-
         const factor = getFactorTemporal(dias);
         impacto += n * peso * factor;
         if (dias <= 6) {
@@ -178,21 +153,17 @@ function calcularPrioridad(jugador, categoria, compras) {
         }
     }
 
-    // Histórico en la categoría pedida
     for (const c of compras) {
         if (c.categoria !== categoria) continue;
         historico += contarGanador(c.ganadores, jugador);
     }
 
-    // Histórico total en todas las categorías
     const historicoTotal = {};
     for (const cat of CATEGORIAS) historicoTotal[cat] = 0;
     for (const c of compras) {
         const n = contarGanador(c.ganadores, jugador);
         if (n === 0) continue;
-        if (historicoTotal[c.categoria] !== undefined) {
-            historicoTotal[c.categoria] += n;
-        }
+        if (historicoTotal[c.categoria] !== undefined) historicoTotal[c.categoria] += n;
     }
 
     return { impacto, unidades7d, historico, desglose, historicoTotal };
@@ -223,8 +194,8 @@ client.once(Events.ClientReady, async (c) => {
             new SlashCommandBuilder()
                 .setName('sub')
                 .setDescription('Registrar compra de hoy')
-                .addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true)
-                    .addChoices(...catChoices))
+                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+                .addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true).addChoices(...catChoices))
                 .addStringOption(o => o.setName('objeto').setDescription('Nombre del ítem').setRequired(true))
                 .addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true))
                 .addStringOption(o => o.setName('ganadores').setDescription('Ganadores separados por coma').setRequired(true))
@@ -233,9 +204,9 @@ client.once(Events.ClientReady, async (c) => {
             new SlashCommandBuilder()
                 .setName('subf')
                 .setDescription('Registrar compra con fecha específica')
+                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
                 .addStringOption(o => o.setName('fecha').setDescription('DD/MM/YY o "hoy"').setRequired(true))
-                .addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true)
-                    .addChoices(...catChoices))
+                .addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true).addChoices(...catChoices))
                 .addStringOption(o => o.setName('objeto').setDescription('Nombre del ítem').setRequired(true))
                 .addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true))
                 .addStringOption(o => o.setName('ganadores').setDescription('Ganadores separados por coma').setRequired(true))
@@ -245,13 +216,15 @@ client.once(Events.ClientReady, async (c) => {
                 .setName('historial')
                 .setDescription('Historial de compras de uno o varios jugadores')
                 .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true))
-                .addStringOption(o => o.setName('categoria').setDescription('Filtrar por categoría').setRequired(false)
-                    .addChoices(...catChoicesTodo))
+                .addStringOption(o => o.setName('categoria').setDescription('Filtrar por categoría').setRequired(false).addChoices(...catChoicesTodo))
                 .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false)
-                    .addChoices(
-                        { name: 'Resumen', value: 'Resumen' },
-                        { name: 'Detallado', value: 'Detallado' }
-                    )),
+                    .addChoices({ name: 'Resumen', value: 'Resumen' }, { name: 'Detallado', value: 'Detallado' })),
+
+            new SlashCommandBuilder()
+                .setName('historial2')
+                .setDescription('Últimas 5 compras de un jugador (público)')
+                .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true))
+                .addStringOption(o => o.setName('categoria').setDescription('Filtrar por categoría').setRequired(false).addChoices(...catChoicesTodo)),
 
             new SlashCommandBuilder()
                 .setName('total')
@@ -265,13 +238,13 @@ client.once(Events.ClientReady, async (c) => {
             new SlashCommandBuilder()
                 .setName('prioridad')
                 .setDescription('Calcular prioridad para una categoría')
-                .addStringOption(o => o.setName('categoria').setDescription('Categoría a evaluar').setRequired(true)
-                    .addChoices(...catChoices))
+                .addStringOption(o => o.setName('categoria').setDescription('Categoría a evaluar').setRequired(true).addChoices(...catChoices))
                 .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true)),
 
             new SlashCommandBuilder()
                 .setName('borrar')
                 .setDescription('Borrar una entrada por ID')
+                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
                 .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true)),
 
             new SlashCommandBuilder()
@@ -293,6 +266,28 @@ client.once(Events.ClientReady, async (c) => {
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     const db = cargarDB();
+
+    // Chequeo de permisos para comandos restringidos
+    const comandosLider = ['borrar'];
+    const comandosEscritura = ['sub', 'subf'];
+
+    if (comandosLider.includes(interaction.commandName) || comandosEscritura.includes(interaction.commandName)) {
+        const esDueño = interaction.guild && interaction.guild.ownerId === interaction.user.id;
+        const tieneLider = interaction.member && interaction.member.roles.cache.has(ROL_LIDER);
+        const tieneHelper = interaction.member && interaction.member.roles.cache.has(ROL_HELPER);
+        const esAdmin = interaction.member && interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+
+        if (comandosLider.includes(interaction.commandName)) {
+            if (!esDueño && !tieneLider && !esAdmin) {
+                return interaction.reply({ content: '❌ No tienes permiso para usar este comando.', ephemeral: true });
+            }
+        }
+        if (comandosEscritura.includes(interaction.commandName)) {
+            if (!esDueño && !tieneLider && !tieneHelper && !esAdmin) {
+                return interaction.reply({ content: '❌ No tienes permiso para usar este comando.', ephemeral: true });
+            }
+        }
+    }
 
     try {
         // ---------- /sub y /subf ----------
@@ -354,7 +349,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.reply({ content: out });
             }
 
-            // Detallado → ephemeral, dividido en chunks
             const bloques = [];
             for (const j of jugadores) {
                 let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j) > 0);
@@ -387,6 +381,46 @@ client.on(Events.InteractionCreate, async (interaction) => {
             await interaction.reply({ content: chunks[0], ephemeral: true });
             for (let i = 1; i < chunks.length; i++) {
                 await interaction.followUp({ content: chunks[i], ephemeral: true });
+            }
+            return;
+        }
+
+        // ---------- /historial2 ----------
+        if (interaction.commandName === 'historial2') {
+            const jugador = interaction.options.getString('jugador');
+            const categoria = interaction.options.getString('categoria') || 'Todas';
+            let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, jugador) > 0);
+            if (categoria !== 'Todas') comprasJ = comprasJ.filter(c => c.categoria === categoria);
+            comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+            const categoriasMostrar = categoria === 'Todas' ? CATEGORIAS : [categoria];
+            let out = `📜 **${jugador}**${categoria !== 'Todas' ? ` — ${categoria}` : ''} (últimas 5)\n`;
+
+            for (const cat of categoriasMostrar) {
+                const filtradas = comprasJ.filter(c => c.categoria === cat).slice(0, 5);
+                if (filtradas.length === 0) continue;
+                out += `\n**${cat}**:\n`;
+                for (const c of filtradas) {
+                    const n = contarGanador(c.ganadores, jugador);
+                    out += `#${c.id} · ${formatearFecha(c.fecha)} · ${n}x ${c.objeto}\n`;
+                }
+            }
+
+            const chunks = [];
+            let current = '';
+            for (const linea of out.split('\n')) {
+                if (current.length + linea.length + 1 > 1900) {
+                    chunks.push(current);
+                    current = linea;
+                } else {
+                    current += (current ? '\n' : '') + linea;
+                }
+            }
+            if (current) chunks.push(current);
+
+            await interaction.reply({ content: chunks[0] });
+            for (let i = 1; i < chunks.length; i++) {
+                await interaction.followUp({ content: chunks[i] });
             }
             return;
         }
@@ -443,22 +477,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             let out = `🏆 **Prioridad — ${categoria}**\n\n`;
             resultados.forEach((r, i) => {
-                // Desglose de unidades 7d
                 let desgloseStr = '';
                 if (r.unidades7d > 0) {
                     const partes = Object.entries(r.desglose)
                         .filter(([_, n]) => n > 0)
                         .map(([cat, n]) => {
-                            const nombreCorto = cat
-                                .replace('Emblemas ', '')
-                                .replace('Cajas 20k', '20k')
-                                .replace('Caja 10k', '10k');
+                            const nombreCorto = cat.replace('Emblemas ', '').replace('Cajas 20k', '20k').replace('Caja 10k', '10k');
                             return `${nombreCorto}: ${n}`;
                         });
                     if (partes.length > 0) desgloseStr = ` (${partes.join(', ')})`;
                 }
 
-                // Histórico total abreviado
                 const abreviaturas = {
                     'Cajas 20k': '20k',
                     'Caja 10k': '10k',
@@ -481,7 +510,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             });
             out += `\n**Recomendación:** ${resultados[0].jugador}`;
 
-            // Dividir si excede 1900 caracteres
             const chunks = [];
             let current = '';
             for (const linea of out.split('\n')) {
@@ -514,7 +542,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (soporta varios jugadores)\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial (soporta varios jugadores)\n\`/historial2\` · últimas 5 de un jugador (público)\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
