@@ -213,7 +213,11 @@ async function responderLargo(interaction, texto, ephemeral = false) {
 // ====== AUTOCOMPLETADO ======
 function obtenerNombresUnicos(db, miembros) {
     const map = new Map();
-    const agregar = (nombre) => {
+    const agregar = (nombreConSufijo) => {
+        if (!nombreConSufijo) return;
+        // Quitar sufijo "x N" si existe
+        const match = nombreConSufijo.match(/^(.+?)(?:\s+x(\d+))?$/);
+        const nombre = match ? match[1].trim() : nombreConSufijo.trim();
         if (!nombre) return;
         const key = claveJugador(nombre, miembros);
         if (!map.has(key)) map.set(key, aplicarCanonico(nombre, miembros));
