@@ -46,6 +46,12 @@ function parsearGanador(g) {
     return { nombre: match[1].trim(), cantidad: match[2] ? parseInt(match[2]) : 1 };
 }
 
+// ====== NORMALIZAR TEXTO ======
+function normalizar(s) {
+    return (s || '').toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
 // ====== HUELLA PARA DEDUPLICAR ======
 function huella(c) {
     return [
@@ -196,6 +202,23 @@ function compararPrioridad(a, b) {
     if (a.unidades7d !== b.unidades7d) return a.unidades7d - b.unidades7d;
     if (a.historico !== b.historico) return a.historico - b.historico;
     return 0;
+}
+
+// ====== ORDEN DE EVENTOS Y CATEGORÍAS ======
+const ORDEN_EVENTOS = ['invasion diurna', 'invasion nocturna', 'banquete'];
+
+function ordenEvento(evento) {
+    const idx = ORDEN_EVENTOS.indexOf(normalizar(evento));
+    return idx === -1 ? 999 : idx;
+}
+
+function ordenCategoria(evento, categoria) {
+    const esBanquete = normalizar(evento).includes('banquete');
+    const orden = esBanquete
+        ? ['Equipo', 'Accesorios', 'Emblemas Únicos', 'Emblemas Generales', 'Emblemas Azules', 'Cajas 20k', 'Caja 10k']
+        : ['Cajas 20k', 'Caja 10k', 'Emblemas Únicos', 'Emblemas Generales', 'Emblemas Azules', 'Equipo', 'Accesorios'];
+    const idx = orden.indexOf(categoria);
+    return idx === -1 ? 999 : idx;
 }
 
 // ====== CLIENTE ======
@@ -425,21 +448,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 grupos[ev].push(c);
             }
 
-            // Ordenar eventos con preferencia
-            const ordenEventos = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
+            // Ordenar eventos: Invasión diurna, Invasión nocturna, Banquete
             const eventosOrdenados = Object.keys(grupos).sort((a, b) => {
-                const ia = ordenEventos.indexOf(a);
-                const ib = ordenEventos.indexOf(b);
-                if (ia === -1 && ib === -1) return a.localeCompare(b);
-                if (ia === -1) return 1;
-                if (ib === -1) return -1;
-                return ia - ib;
+                const oa = ordenEvento(a);
+                const ob = ordenEvento(b);
+                if (oa !== ob) return oa - ob;
+                return a.localeCompare(b);
             });
 
             let out = `📅 **Compras del ${formatearFecha(fecha)}**\n`;
             for (const ev of eventosOrdenados) {
                 out += `\n**${ev}**\n`;
-                const lista = grupos[ev].sort((a, b) => a.id - b.id);
+                const lista = grupos[ev].sort((a, b) => {
+                    const oa = ordenCategoria(ev, a.categoria);
+                    const ob = ordenCategoria(ev, b.categoria);
+                    if (oa !== ob) return oa - ob;
+                    return a.id - b.id;
+                });
                 for (const c of lista) {
                     out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
                     out += `   🏆 ${c.ganadores.join(', ') || 'nadie'}\n`;
