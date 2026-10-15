@@ -432,8 +432,8 @@ client.once(Events.ClientReady, async (c) => {
                     .addStringOption(o => o.setName('nombre').setDescription('Nombre a reincluir').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('canonico')
-                    .setDescription('Definir cómo se muestra un nombre')
-                    .addStringOption(o => o.setName('nombre').setDescription('Nombre tal como aparece en los registros').setRequired(true).setAutocomplete(true))
+                    .setDescription('Definir cómo se muestran uno o varios nombres (separados por coma)')
+                    .addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma, ej: Zorkerk,Zorkk,zork').setRequired(true).setAutocomplete(true))
                     .addStringOption(o => o.setName('como').setDescription('Forma correcta a mostrar').setRequired(true)))
                 .addSubcommand(sub => sub
                     .setName('quitar-canonico')
@@ -580,9 +580,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
             if (sub === 'canonico') {
                 const como = interaction.options.getString('como');
-                miembros.canonicos[normalizarNombre(nombre)] = como;
+                const nombresRaw = interaction.options.getString('nombre') || '';
+                const nombres = nombresRaw.split(',').map(s => s.trim()).filter(Boolean);
+                if (nombres.length === 0) {
+                    return interaction.reply({ content: '❌ Debes indicar al menos un nombre.', ephemeral: true });
+                }
+                for (const n of nombres) {
+                    miembros.canonicos[normalizarNombre(n)] = como;
+                }
                 guardarMiembros(miembros);
-                return interaction.reply({ content: `✅ **${nombre}** se mostrará como **${como}**.` });
+                return interaction.reply({ content: `✅ ${nombres.map(n => `**${n}**`).join(', ')} se mostrarán como **${como}**.` });
             }
             if (sub === 'quitar-canonico') {
                 const key = normalizarNombre(nombre);
