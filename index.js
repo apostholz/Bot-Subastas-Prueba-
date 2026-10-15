@@ -12,7 +12,7 @@ const {
 } = require('discord.js');
 
 const DATA_DIR = '/app/data';
-const DB_FILE = path.join(DATA_DIR, 'compras.json');
+const DB_FILE = path.join(DATA_DIR, 'compras_v2.json');
 const CSV_FILE = path.join(__dirname, 'historial.csv');
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
