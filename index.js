@@ -10,7 +10,10 @@ const {
     Routes,
     SlashCommandBuilder,
     PermissionFlagsBits,
-    AttachmentBuilder
+    AttachmentBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
 } = require('discord.js');
 
 const DATA_DIR = '/app/data';
@@ -23,6 +26,18 @@ const ROL_LIDER = '1547712440593031249';
 const ROL_HELPER = '1560311703118545007';
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// ====== PENDIENTES (registro rápido) ======
+const pendingRegistros = new Map();
+function guardarPendiente(datos) {
+    const id = Math.random().toString(36).slice(2, 10);
+    pendingRegistros.set(id, { ...datos, expira: Date.now() + 5 * 60 * 1000 });
+    // Limpiar expirados
+    for (const [k, v] of pendingRegistros.entries()) {
+        if (v.expira < Date.now()) pendingRegistros.delete(k);
+    }
+    return id;
+}
 
 // ====== DB ======
 function cargarDB() {
@@ -253,7 +268,6 @@ function obtenerObjetosUnicos(db) {
     return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
 }
 
-// Autocompletado para nombres separados por coma
 function sugerirNombresMultiples(valorActual, nombres) {
     const valor = valorActual || '';
     const partes = valor.split(',');
@@ -434,6 +448,12 @@ client.once(Events.ClientReady, async (c) => {
                 .addStringOption(o => o.setName('perdedores').setDescription('Perdedores separados por coma').setRequired(false).setAutocomplete(true)),
 
             new SlashCommandBuilder()
+                .setName('registro-rapido')
+                .setDescription('Registrar varias entradas pegando texto CSV')
+                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+                .addStringOption(o => o.setName('texto').setDescription('Líneas CSV: fecha,evento,categoria,objeto,cantidad,ganadores,perdedores,notas').setRequired(true)),
+
+            new SlashCommandBuilder()
                 .setName('historial')
                 .setDescription('Historial privado de compras de uno o varios jugadores')
                 .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
@@ -607,7 +627,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const focused = interaction.options.getFocused(true);
         const cmd = interaction.commandName;
 
-        // Objeto en /objeto
         if (cmd === 'objeto' && focused.name === 'nombre') {
             const objetos = obtenerObjetosUnicos(db);
             const q = normalizar(focused.value);
@@ -615,7 +634,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
         }
 
-        // Objeto en /sub y /subf
         if ((cmd === 'sub' || cmd === 'subf') && focused.name === 'objeto') {
             const objetos = obtenerObjetosUnicos(db);
             const q = normalizar(focused.value);
@@ -623,15 +641,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
         }
 
-        // Listas de nombres (jugadores, ganadores, perdedores)
         if (['jugadores', 'ganadores', 'perdedores'].includes(focused.name)) {
             const nombres = obtenerNombresUnicos(db, miembros);
             return interaction.respond(sugerirNombresMultiples(focused.value, nombres));
         }
 
-        // Nombres simples (jugador, nombre en /miembro)
         if (focused.name === 'jugador' || (cmd === 'miembro' && focused.name === 'nombre')) {
-            // En /miembro canonico puede ser lista separada por coma
             if (cmd === 'miembro' && focused.name === 'nombre') {
                 const nombres = obtenerNombresUnicos(db, miembros);
                 return interaction.respond(sugerirNombresMultiples(focused.value, nombres));
@@ -645,11 +660,55 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
     }
 
+    // Botones
+    if (interaction.isButton()) {
+        const customId = interaction.customId;
+        if (customId.startsWith('reg_confirm_') || customId.startsWith('reg_cancel_')) {
+            const esConfirm = customId.startsWith('reg_confirm_');
+            const id = customId.replace('reg_confirm_', '').replace('reg_cancel_', '');
+            const pendiente = pendingRegistros.get(id);
+            if (!pendiente) {
+                return interaction.update({ content: '❌ La sesión expiró. Volvé a ejecutar el comando.', components: [] });
+            }
+            if (pendiente.userId !== interaction.user.id) {
+                return interaction.reply({ content: '❌ Solo quien ejecutó el comando puede usar estos botones.', ephemeral: true });
+            }
+            if (!esConfirm) {
+                pendingRegistros.delete(id);
+                return interaction.update({ content: '❌ Registro cancelado.', components: [] });
+            }
+            const db = cargarDB();
+            const miembros = cargarMiembros();
+            const existentes = new Set(db.compras.map(huella));
+            let agregadas = 0;
+            let duplicados = 0;
+            for (const entrada of pendiente.entradas) {
+                const nueva = { id: db.nextId, ...entrada };
+                const fp = huella(nueva);
+                if (existentes.has(fp)) {
+                    duplicados++;
+                    continue;
+                }
+                db.compras.push(nueva);
+                existentes.add(fp);
+                db.nextId++;
+                agregadas++;
+            }
+            guardarDB(db);
+            pendingRegistros.delete(id);
+            let msg = `✅ **${agregadas}** entradas registradas.`;
+            if (duplicados > 0) msg += `\n⚠️ ${duplicados} duplicadas ignoradas.`;
+            msg += `\nTotal en la base: **${db.compras.length}**.`;
+            return interaction.update({ content: msg, components: [] });
+        }
+        return;
+    }
+
     if (!interaction.isChatInputCommand()) return;
     const db = cargarDB();
     const miembros = cargarMiembros();
 
-    const comandosLider = ['borrar', 'importar', 'editar', 'miembro', 'backup'];
+    const comandosLider = ['borrar', 'importar', 'editar', 'miembro', 'backup', 'registro-rapido'];
     const comandosEscritura = ['sub', 'subf'];
 
     if (comandosLider.includes(interaction.commandName) || comandosEscritura.includes(interaction.commandName)) {
@@ -671,6 +730,99 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     try {
+        // ---------- /registro-rapido ----------
+        if (interaction.commandName === 'registro-rapido') {
+            const texto = interaction.options.getString('texto') || '';
+            if (!texto.trim()) {
+                return interaction.reply({ content: '❌ No hay texto para procesar.', ephemeral: true });
+            }
+
+            let filas;
+            try {
+                filas = parse(texto, { columns: true, skip_empty_lines: true, trim: true });
+            } catch (e) {
+                return interaction.reply({ content: `❌ Error parseando CSV: ${e.message}`, ephemeral: true });
+            }
+
+            if (filas.length === 0) {
+                return interaction.reply({ content: '❌ No se encontraron filas válidas. Verificá el formato.', ephemeral: true });
+            }
+
+            const validas = [];
+            const errores = [];
+
+            for (let i = 0; i < filas.length; i++) {
+                const fila = filas[i];
+                const fechaConv = convertirFecha(fila.fecha);
+                if (!fechaConv) {
+                    errores.push(`Fila ${i + 2}: fecha inválida "${fila.fecha}"`);
+                    continue;
+                }
+                if (fila.categoria && !CATEGORIAS.includes(fila.categoria)) {
+                    errores.push(`Fila ${i + 2}: categoría desconocida "${fila.categoria}"`);
+                }
+
+                const ganadores = fila.ganadores ? fila.ganadores.split(',').map(s => s.trim()).filter(Boolean) : [];
+                const perdedores = fila.perdedores ? fila.perdedores.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+                validas.push({
+                    fecha: fechaConv,
+                    evento: fila.evento || '',
+                    categoria: fila.categoria || '',
+                    objeto: fila.objeto || '',
+                    cantidad: parseInt(fila.cantidad) || 1,
+                    ganadores,
+                    perdedores,
+                    notas: fila.notas || ''
+                });
+            }
+
+            if (validas.length === 0) {
+                let msg = '❌ Ninguna fila es válida.\n';
+                if (errores.length > 0) msg += errores.slice(0, 5).join('\n');
+                return interaction.reply({ content: msg, ephemeral: true });
+            }
+
+            const id = guardarPendiente({ entradas: validas, userId: interaction.user.id });
+
+            let preview = `📋 **Preview — ${validas.length} entrada(s) a registrar**\n\n`;
+            const MAX_MOSTRAR = 5;
+            for (let i = 0; i < Math.min(validas.length, MAX_MOSTRAR); i++) {
+                const v = validas[i];
+                preview += `**${i + 1}.** ${formatearFecha(v.fecha)} · ${nombreBonitoEvento(v.evento)} · ${v.cantidad}x ${v.objeto} (${v.categoria})\n`;
+                preview += `   🏆 ${v.ganadores.join(', ') || 'nadie'}\n`;
+                if (v.perdedores.length > 0) preview += `   💔 ${v.perdedores.join(', ')}\n`;
+                preview += `\n`;
+            }
+            if (validas.length > MAX_MOSTRAR) {
+                preview += `... y **${validas.length - MAX_MOSTRAR}** más.\n\n`;
+            }
+            if (errores.length > 0) {
+                preview += `⚠️ **${errores.length} fila(s) con problemas (ignoradas):**\n`;
+                preview += errores.slice(0, 5).join('\n');
+                if (errores.length > 5) preview += `\n... y ${errores.length - 5} más.`;
+                preview += `\n\n`;
+            }
+            preview += `¿Confirmás el registro?`;
+
+            if (preview.length > 1900) {
+                preview = preview.slice(0, 1890) + '...';
+            }
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`reg_confirm_${id}`)
+                    .setLabel('Confirmar')
+                    .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                    .setCustomId(`reg_cancel_${id}`)
+                    .setLabel('Cancelar')
+                    .setStyle(ButtonStyle.Danger)
+            );
+
+            return interaction.reply({ content: preview, components: [row], ephemeral: true });
+        }
+
         // ---------- /backup ----------
         if (interaction.commandName === 'backup') {
             const lineas = ['fecha,evento,categoria,objeto,cantidad,ganadores,perdedores,notas'];
@@ -745,7 +897,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return;
             }
 
-            // Lista
             let out = `📦 **${nombreDisplay}** — Lista (${periodo})\nApariciones: ${apariciones.length}\n`;
             for (const c of apariciones) {
                 out += `\n#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x (${c.categoria})\n`;
@@ -1382,7 +1533,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con filtros\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto\n\`/backup\` · exportar CSV de respaldo\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (ganadores, perdedores, nota, evento, cantidad)\n\`/importar\` · importar filas con validación\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con filtros\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto\n\`/backup\` · exportar CSV de respaldo\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (ganadores, perdedores, nota, evento, cantidad)\n\`/importar\` · importar filas con validación\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
