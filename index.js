@@ -735,9 +735,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.reply({ content: '❌ No hay texto para procesar.', ephemeral: true });
             }
 
+            // Detectar si falta el header y agregarlo
+            let textoConHeader = texto.trim();
+            const primeraLinea = (textoConHeader.split('\n')[0] || '').toLowerCase();
+            if (!primeraLinea.startsWith('fecha') && !primeraLinea.includes('fecha,evento')) {
+                textoConHeader = 'fecha,evento,categoria,objeto,cantidad,ganadores,perdedores,notas\n' + textoConHeader;
+            }
+
             let filas;
             try {
-                filas = parse(texto, { columns: true, skip_empty_lines: true, trim: true });
+                filas = parse(textoConHeader, { columns: true, skip_empty_lines: true, trim: true });
             } catch (e) {
                 return interaction.reply({ content: `❌ Error parseando CSV: ${e.message}`, ephemeral: true });
             }
