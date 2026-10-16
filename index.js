@@ -337,6 +337,7 @@ const ORDEN_EVENTOS = ['invasion diurna', 'invasion nocturna', 'banquete'];
 
 function nombreBonitoEvento(evento) {
     const n = normalizar(evento);
+    if (!evento || n === 'manual' || n === 'hoy') return 'Sin evento';
     if (n.includes('diurna')) return 'Invasión diurna';
     if (n.includes('nocturna')) return 'Invasión nocturna';
     if (n.includes('banquete')) return 'Banquete';
@@ -388,6 +389,11 @@ client.once(Events.ClientReady, async (c) => {
             { name: '30 días', value: '30d' },
             { name: 'Total', value: 'Total' }
         ];
+        const eventoChoices = [
+            { name: 'Invasión diurna', value: 'Invasión diurna' },
+            { name: 'Invasión nocturna', value: 'Invasión nocturna' },
+            { name: 'Banquete', value: 'Banquete' }
+        ];
 
         const commandsData = [
             new SlashCommandBuilder()
@@ -398,6 +404,7 @@ client.once(Events.ClientReady, async (c) => {
                 .addStringOption(o => o.setName('objeto').setDescription('Nombre del ítem').setRequired(true))
                 .addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true))
                 .addStringOption(o => o.setName('ganadores').setDescription('Ganadores separados por coma').setRequired(true))
+                .addStringOption(o => o.setName('evento').setDescription('Evento al que pertenece').setRequired(true).addChoices(...eventoChoices))
                 .addStringOption(o => o.setName('perdedores').setDescription('Perdedores separados por coma').setRequired(false)),
 
             new SlashCommandBuilder()
@@ -409,6 +416,7 @@ client.once(Events.ClientReady, async (c) => {
                 .addStringOption(o => o.setName('objeto').setDescription('Nombre del ítem').setRequired(true))
                 .addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true))
                 .addStringOption(o => o.setName('ganadores').setDescription('Ganadores separados por coma').setRequired(true))
+                .addStringOption(o => o.setName('evento').setDescription('Evento al que pertenece').setRequired(true).addChoices(...eventoChoices))
                 .addStringOption(o => o.setName('perdedores').setDescription('Perdedores separados por coma').setRequired(false)),
 
             new SlashCommandBuilder()
@@ -508,7 +516,7 @@ client.once(Events.ClientReady, async (c) => {
 
             new SlashCommandBuilder()
                 .setName('editar')
-                .setDescription('Editar una entrada existente (agregar/quitar ganador o perdedor, nota)')
+                .setDescription('Editar una entrada existente (ganadores, perdedores, nota, evento, cantidad)')
                 .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
                 .addSubcommand(sub => sub
                     .setName('agregar-ganador')
@@ -538,7 +546,17 @@ client.once(Events.ClientReady, async (c) => {
                 .addSubcommand(sub => sub
                     .setName('borrar-nota')
                     .setDescription('Borrar la nota de una entrada')
-                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))),
+                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true)))
+                .addSubcommand(sub => sub
+                    .setName('set-evento')
+                    .setDescription('Reemplazar el evento de una entrada')
+                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+                    .addStringOption(o => o.setName('evento').setDescription('Evento').setRequired(true).addChoices(...eventoChoices)))
+                .addSubcommand(sub => sub
+                    .setName('set-cantidad')
+                    .setDescription('Reemplazar la cantidad disponible de una entrada')
+                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+                    .addIntegerOption(o => o.setName('cantidad').setDescription('Nueva cantidad').setRequired(true))),
 
             new SlashCommandBuilder()
                 .setName('importar')
@@ -864,13 +882,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 e.notas = '';
                 mensaje = `📝 Nota borrada en #${id}.`;
             }
+            else if (sub === 'set-evento') {
+                const nuevoEvento = interaction.options.getString('evento');
+                e.evento = nuevoEvento;
+                mensaje = `📅 Evento de #${id} cambiado a **${nuevoEvento}**.`;
+            }
+            else if (sub === 'set-cantidad') {
+                const nuevaCantidad = interaction.options.getInteger('cantidad');
+                if (nuevaCantidad < 0) {
+                    return interaction.reply({ content: '❌ La cantidad debe ser un número positivo.', ephemeral: true });
+                }
+                e.cantidad = nuevaCantidad;
+                mensaje = `🔢 Cantidad de #${id} cambiada a **${nuevaCantidad}**.`;
+            }
             else {
                 return interaction.reply({ content: '❌ Subcomando desconocido.', ephemeral: true });
             }
 
             guardarDB(db);
             let respuesta = `${mensaje}\n\n`;
-            respuesta += `#${e.id} · ${formatearFecha(e.fecha)} ${etiquetaDias(e.fecha)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
+            respuesta += `#${e.id} · ${formatearFecha(e.fecha)} ${etiquetaDias(e.fecha)} · ${nombreBonitoEvento(e.evento)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
             respuesta += `🏆 ${e.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
             if (e.perdedores && e.perdedores.length > 0) {
                 respuesta += `💔 ${e.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
@@ -973,6 +1004,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const cantidad = interaction.options.getInteger('cantidad') || 1;
             const ganadoresStr = interaction.options.getString('ganadores') || '';
             const perdedoresStr = interaction.options.getString('perdedores') || '';
+            const evento = interaction.options.getString('evento') || '';
             let fecha;
 
             if (interaction.commandName === 'subf') {
@@ -989,7 +1021,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const entrada = {
                 id: db.nextId++,
                 fecha,
-                evento: interaction.commandName === 'subf' ? 'Manual' : 'Hoy',
+                evento,
                 categoria, objeto, cantidad, ganadores, perdedores,
                 notas: ''
             };
@@ -997,7 +1029,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             guardarDB(db);
 
             return interaction.reply({
-                content: `✅ #${entrada.id} · 📅 ${formatearFecha(fecha)}\n📦 ${cantidad}x ${objeto} (${categoria})\n🏆 ${ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}${perdedores.length ? `\n💔 Perdieron: ${perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}` : ''}`
+                content: `✅ #${entrada.id} · 📅 ${formatearFecha(fecha)} · ${nombreBonitoEvento(evento)}\n📦 ${cantidad}x ${objeto} (${categoria})\n🏆 ${ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}${perdedores.length ? `\n💔 Perdieron: ${perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}` : ''}`
             });
         }
 
@@ -1311,7 +1343,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con filtros\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto\n\`/backup\` · exportar CSV de respaldo\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (ganadores, perdedores, nota)\n\`/importar\` · importar filas con validación\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con filtros\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto\n\`/backup\` · exportar CSV de respaldo\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (ganadores, perdedores, nota, evento, cantidad)\n\`/importar\` · importar filas con validación\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
