@@ -134,6 +134,143 @@ function huella(c) {
     ].join('|');
 }
 
+// ====== CSV HELPERS ======
+function generarCSV(db) {
+    const comprasOrdenadas = [...db.compras].sort((a, b) => {
+        if (!a.fecha) return 1;
+        if (!b.fecha) return -1;
+        return a.fecha.localeCompare(b.fecha);
+    });
+    const lineas = ['fecha,evento,categoria,objeto,cantidad,ganadores,perdedores,notas'];
+    for (const c of comprasOrdenadas) {
+        const esc = (s) => `"${(s || '').replace(/"/g, '""')}"`;
+        lineas.push([
+            formatearFecha(c.fecha),
+            c.evento || '',
+            c.categoria || '',
+            esc(c.objeto || ''),
+            c.cantidad || 1,
+            esc((c.ganadores || []).join(',')),
+            esc((c.perdedores || []).join(',')),
+            esc(c.notas || '')
+        ].join(','));
+    }
+    return lineas.join('\n') + '\n';
+}
+
+function mergeCSVEnDB(contenidoCSV, db) {
+    if (!contenidoCSV || !contenidoCSV.trim()) return { agregadas: 0 };
+    const existentes = new Set(db.compras.map(huella));
+    let agregadas = 0;
+    try {
+        const filas = parse(contenidoCSV, { columns: true, skip_empty_lines: true, trim: true });
+        for (const fila of filas) {
+            const fechaConv = convertirFecha(fila.fecha);
+            if (!fechaConv) continue;
+            const ganadores = fila.ganadores ? fila.ganadores.split(',').map(s => s.trim()).filter(Boolean) : [];
+            const perdedores = fila.perdedores ? fila.perdedores.split(',').map(s => s.trim()).filter(Boolean) : [];
+            const nueva = {
+                id: db.nextId,
+                fecha: fechaConv,
+                evento: fila.evento || '',
+                categoria: fila.categoria || '',
+                objeto: fila.objeto || '',
+                cantidad: parseInt(fila.cantidad) || 1,
+                ganadores,
+                perdedores,
+                notas: fila.notas || ''
+            };
+            const fp = huella(nueva);
+            if (!existentes.has(fp)) {
+                db.compras.push(nueva);
+                existentes.add(fp);
+                db.nextId++;
+                agregadas++;
+            }
+        }
+    } catch (e) {
+        console.error('Error parseando CSV:', e.message);
+    }
+    return { agregadas };
+}
+
+// ====== GITHUB SYNC ======
+async function sincronizarConGitHub() {
+    const token = process.env.GITHUB_TOKEN;
+    const repo = process.env.GITHUB_REPO;
+    const branch = process.env.GITHUB_BRANCH || 'main';
+    const filePath = process.env.GITHUB_CSV_PATH || 'historial.csv';
+
+    if (!token || !repo) {
+        return { ok: false, motivo: 'GitHub no configurado (falta GITHUB_TOKEN o GITHUB_REPO).' };
+    }
+    if (typeof fetch !== 'function') {
+        return { ok: false, motivo: 'Node.js no soporta fetch global (requiere Node 18+).' };
+    }
+
+    try {
+        const urlGet = `https://api.github.com/repos/${repo}/contents/${filePath}?ref=${branch}`;
+        const rGet = await fetch(urlGet, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/vnd.github+json',
+                'User-Agent': 'bot-subastas'
+            }
+        });
+
+        let sha = null;
+        let csvRemoto = '';
+        if (rGet.ok) {
+            const data = await rGet.json();
+            sha = data.sha;
+            csvRemoto = Buffer.from(data.content, 'base64').toString('utf8');
+        } else if (rGet.status !== 404) {
+            const txt = await rGet.text();
+            return { ok: false, motivo: `GET ${rGet.status}: ${txt.slice(0, 150)}` };
+        }
+
+        const db = cargarDB();
+        const { agregadas } = mergeCSVEnDB(csvRemoto, db);
+        if (agregadas > 0) guardarDB(db);
+
+        const contenido = generarCSV(db);
+        const contenidoB64 = Buffer.from(contenido, 'utf8').toString('base64');
+
+        try {
+            fs.writeFileSync(CSV_FILE, contenido);
+        } catch (e) {
+            console.error('No se pudo actualizar el CSV local:', e.message);
+        }
+
+        const urlPut = `https://api.github.com/repos/${repo}/contents/${filePath}`;
+        const body = {
+            message: `Sync historial.csv desde bot (${new Date().toISOString().slice(0, 16).replace('T', ' ')})`,
+            content: contenidoB64,
+            branch
+        };
+        if (sha) body.sha = sha;
+
+        const rPut = await fetch(urlPut, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/vnd.github+json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'bot-subastas'
+            },
+            body: JSON.stringify(body)
+        });
+        if (!rPut.ok) {
+            const txt = await rPut.text();
+            return { ok: false, motivo: `PUT ${rPut.status}: ${txt.slice(0, 150)}` };
+        }
+
+        return { ok: true, agregadas, total: db.compras.length };
+    } catch (err) {
+        return { ok: false, motivo: err.message };
+    }
+}
+
 // ====== CSV INICIAL ======
 function leerCSVInicial() {
     if (!fs.existsSync(CSV_FILE)) return;
@@ -404,7 +541,7 @@ function bloqueDeCategoria(evento, categoria) {
     return null;
 }
 
-// ====== RANKING: CONSTRUCCIÓN Y PAGINACIÓN ======
+// ====== RANKING ======
 function construirRanking(comprasFiltradas, categoriaFiltro, miembros) {
     const ranking = {};
     for (const c of comprasFiltradas) {
@@ -431,7 +568,7 @@ function construirRanking(comprasFiltradas, categoriaFiltro, miembros) {
         .sort((a, b) => b[categoriaFiltro] - a[categoriaFiltro]);
 }
 
-function renderRankingPagina(payload, miembros) {
+function renderRankingPagina(payload) {
     const { jugadores, periodo, categoria, pagina } = payload;
     const porPagina = categoria === 'Todas' ? 10 : 15;
     const totalPaginas = Math.max(1, Math.ceil(jugadores.length / porPagina));
@@ -463,31 +600,114 @@ function renderRankingPagina(payload, miembros) {
     return { content: out.trimEnd(), totalPaginas, paginaActual };
 }
 
-function construirBotonesRanking(id, paginaActual, totalPaginas) {
+function construirBotonesPaginacion(prefijo, id, paginaActual, totalPaginas) {
     const alInicio = paginaActual <= 1;
     const alFinal = paginaActual >= totalPaginas;
     return new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId(`rank_first_${id}`)
+            .setCustomId(`${prefijo}_first_${id}`)
             .setLabel('⏮')
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(alInicio),
         new ButtonBuilder()
-            .setCustomId(`rank_prev_${id}`)
+            .setCustomId(`${prefijo}_prev_${id}`)
             .setLabel('◀')
             .setStyle(ButtonStyle.Primary)
             .setDisabled(alInicio),
         new ButtonBuilder()
-            .setCustomId(`rank_next_${id}`)
+            .setCustomId(`${prefijo}_next_${id}`)
             .setLabel('▶')
             .setStyle(ButtonStyle.Primary)
             .setDisabled(alFinal),
         new ButtonBuilder()
-            .setCustomId(`rank_last_${id}`)
+            .setCustomId(`${prefijo}_last_${id}`)
             .setLabel('⏭')
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(alFinal)
     );
+}
+
+// ====== RENDER OBJETO / CATEGORÍA ======
+function renderObjetoPagina(payload, miembros) {
+    const { nombreDisplay, periodo, formato, items, pagina } = payload;
+    const porPagina = 10;
+    const totalPaginas = Math.max(1, Math.ceil(items.length / porPagina));
+    const paginaActual = Math.min(Math.max(1, pagina), totalPaginas);
+    const inicio = (paginaActual - 1) * porPagina;
+    const fin = Math.min(inicio + porPagina, items.length);
+    const slice = items.slice(inicio, fin);
+
+    let out = `📦 **${nombreDisplay}** — ${formato} (${periodo})\n`;
+    out += `_Página ${paginaActual}/${totalPaginas} · ${items.length} ítem${items.length === 1 ? '' : 's'}_\n\n`;
+
+    if (formato === 'Clasificación') {
+        if (slice.length === 0) {
+            out += 'Sin resultados.';
+        } else {
+            slice.forEach((d, i) => {
+                const num = inicio + i + 1;
+                out += `${num}. **${d.nombre}** · ${d.total}\n`;
+            });
+        }
+    } else {
+        if (slice.length === 0) {
+            out += 'Sin resultados.';
+        } else {
+            for (const c of slice) {
+                out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x (${c.categoria})\n`;
+                out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
+                if (c.perdedores && c.perdedores.length > 0) {
+                    out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
+                }
+                out += `\n`;
+            }
+        }
+    }
+
+    return { content: out.trimEnd(), totalPaginas, paginaActual };
+}
+
+function renderCategoriaPagina(payload, miembros) {
+    const { categoria, jugadorFiltro, periodo, formato, items, pagina } = payload;
+    const porPagina = 10;
+    const totalPaginas = Math.max(1, Math.ceil(items.length / porPagina));
+    const paginaActual = Math.min(Math.max(1, pagina), totalPaginas);
+    const inicio = (paginaActual - 1) * porPagina;
+    const fin = Math.min(inicio + porPagina, items.length);
+    const slice = items.slice(inicio, fin);
+
+    let titulo = `📂 **${categoria}**`;
+    if (jugadorFiltro) titulo += ` — ${aplicarCanonico(jugadorFiltro, miembros)}`;
+    titulo += ` — ${formato} (${periodo})`;
+
+    let out = `${titulo}\n`;
+    out += `_Página ${paginaActual}/${totalPaginas} · ${items.length} ítem${items.length === 1 ? '' : 's'}_\n\n`;
+
+    if (formato === 'Clasificación') {
+        if (slice.length === 0) {
+            out += 'Sin resultados.';
+        } else {
+            slice.forEach((d, i) => {
+                const num = inicio + i + 1;
+                out += `${num}. **${d.nombre}** · ${d.total}\n`;
+            });
+        }
+    } else {
+        if (slice.length === 0) {
+            out += 'Sin resultados.';
+        } else {
+            for (const c of slice) {
+                out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x ${c.objeto}\n`;
+                out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
+                if (c.perdedores && c.perdedores.length > 0) {
+                    out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
+                }
+                out += `\n`;
+            }
+        }
+    }
+
+    return { content: out.trimEnd(), totalPaginas, paginaActual };
 }
 
 // ====== CLIENTE ======
@@ -511,6 +731,10 @@ client.once(Events.ClientReady, async (c) => {
             { name: '7 días', value: '7d' },
             { name: '30 días', value: '30d' },
             { name: 'Total', value: 'Total' }
+        ];
+        const formatoChoices = [
+            { name: 'Clasificación', value: 'Clasificación' },
+            { name: 'Lista', value: 'Lista' }
         ];
         const eventoChoices = [
             { name: 'Invasión diurna', value: 'Invasión diurna' },
@@ -606,16 +830,26 @@ client.once(Events.ClientReady, async (c) => {
                 .setDescription('Ver apariciones de un objeto específico')
                 .addStringOption(o => o.setName('nombre').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true))
                 .addStringOption(o => o.setName('periodo').setDescription('Periodo a considerar').setRequired(false).addChoices(...periodoChoices))
-                .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false)
-                    .addChoices(
-                        { name: 'Clasificación', value: 'Clasificación' },
-                        { name: 'Lista', value: 'Lista' }
-                    ))
+                .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false).addChoices(...formatoChoices))
+                .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
+
+            new SlashCommandBuilder()
+                .setName('categoria')
+                .setDescription('Ver todas las compras de una categoría (opcionalmente filtrado por jugador)')
+                .addStringOption(o => o.setName('categoria').setDescription('Categoría a listar').setRequired(true).addChoices(...catChoices))
+                .addStringOption(o => o.setName('jugador').setDescription('Filtrar por un jugador (opcional)').setRequired(false).setAutocomplete(true))
+                .addStringOption(o => o.setName('periodo').setDescription('Periodo a considerar').setRequired(false).addChoices(...periodoChoices))
+                .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false).addChoices(...formatoChoices))
                 .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
             new SlashCommandBuilder()
                 .setName('backup')
                 .setDescription('Exportar todas las compras a un CSV ordenado por fecha')
+                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+            new SlashCommandBuilder()
+                .setName('sync')
+                .setDescription('Sincronizar la base local con historial.csv en GitHub')
                 .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
             new SlashCommandBuilder()
@@ -688,11 +922,6 @@ client.once(Events.ClientReady, async (c) => {
                     .addIntegerOption(o => o.setName('cantidad').setDescription('Nueva cantidad').setRequired(true))),
 
             new SlashCommandBuilder()
-                .setName('importar')
-                .setDescription('Importar entradas nuevas desde historial.csv con validación')
-                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-
-            new SlashCommandBuilder()
                 .setName('borrar')
                 .setDescription('Borrar una entrada por ID')
                 .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -738,6 +967,16 @@ async function mostrarPreview(interaction, titulo, cuerpo, tipo, payload) {
     });
 }
 
+function textoEstadoSync(res) {
+    if (!res) return '';
+    if (res.ok) {
+        let txt = `\n\n☁️ Sync con GitHub: OK`;
+        if (res.agregadas > 0) txt += ` (${res.agregadas} nuevas absorvidas del CSV)`;
+        return txt;
+    }
+    return `\n\n⚠️ Sync con GitHub falló: ${res.motivo}`;
+}
+
 // ====== COMANDOS ======
 client.on(Events.InteractionCreate, async (interaction) => {
     // Autocompletado
@@ -758,6 +997,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const objetos = obtenerObjetosUnicos(db);
             const q = normalizar(focused.value);
             const filtrados = objetos.filter(n => normalizar(n).includes(q)).slice(0, 25);
+            return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
+        }
+
+        if (cmd === 'categoria' && focused.name === 'jugador') {
+            const nombres = obtenerNombresUnicos(db, miembros);
+            const q = normalizar(focused.value);
+            const filtrados = nombres.filter(n => normalizar(n).includes(q)).slice(0, 25);
             return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
         }
 
@@ -784,22 +1030,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton()) {
         const cid = interaction.customId;
 
-        // Paginación de ranking
-        if (cid.startsWith('rank_first_') || cid.startsWith('rank_prev_') || cid.startsWith('rank_next_') || cid.startsWith('rank_last_')) {
-            const match = cid.match(/^rank_(first|prev|next|last)_(.+)$/);
-            if (!match) return;
-            const accion = match[1];
-            const id = match[2];
+        // Paginación genérica
+        const pagMatch = cid.match(/^(rank|obj|cat)_(first|prev|next|last)_(.+)$/);
+        if (pagMatch) {
+            const prefijo = pagMatch[1];
+            const accion = pagMatch[2];
+            const id = pagMatch[3];
             const p = pendingActions.get(id);
-            if (!p || p.tipo !== 'ranking') {
+            const tipoEsperado = prefijo === 'rank' ? 'ranking' : (prefijo === 'obj' ? 'objeto-page' : 'categoria-page');
+            if (!p || p.tipo !== tipoEsperado) {
                 return interaction.reply({ content: '❌ La sesión expiró. Volvé a ejecutar el comando.', ephemeral: true });
             }
             if (p.userId !== interaction.user.id) {
                 return interaction.reply({ content: '❌ Solo quien ejecutó el comando puede navegar las páginas.', ephemeral: true });
             }
             const payload = p.payload;
-            const porPagina = payload.categoria === 'Todas' ? 10 : 15;
-            const totalPaginas = Math.max(1, Math.ceil(payload.jugadores.length / porPagina));
+            const porPagina = (tipoEsperado === 'ranking' && payload.categoria === 'Todas') ? 10 : (tipoEsperado === 'ranking' ? 15 : 10);
+            const totalPaginas = Math.max(1, Math.ceil(payload.items ? payload.items.length : payload.jugadores.length / porPagina));
+
             let nuevaPagina = payload.pagina;
             if (accion === 'first') nuevaPagina = 1;
             else if (accion === 'prev') nuevaPagina = Math.max(1, payload.pagina - 1);
@@ -809,9 +1057,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
             p.expira = Date.now() + 5 * 60 * 1000;
 
             const miembros = cargarMiembros();
-            const { content } = renderRankingPagina(payload, miembros);
-            const row = construirBotonesRanking(id, nuevaPagina, totalPaginas);
-            return interaction.update({ content, components: [row] });
+            let render;
+            if (tipoEsperado === 'ranking') {
+                render = renderRankingPagina(payload);
+            } else if (tipoEsperado === 'objeto-page') {
+                render = renderObjetoPagina(payload, miembros);
+            } else {
+                render = renderCategoriaPagina(payload, miembros);
+            }
+            const row = construirBotonesPaginacion(prefijo, id, render.paginaActual, render.totalPaginas);
+            return interaction.update({ content: render.content, components: [row] });
         }
 
         // Confirmaciones pendientes
@@ -830,15 +1085,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.update({ content: '❌ Acción cancelada.', components: [] });
             }
 
+            try { await interaction.deferUpdate(); } catch (e) { /* ignorar */ }
+
             const db = cargarDB();
             const miembros = cargarMiembros();
             let resultado = '';
+            let requiereSync = false;
 
             if (p.tipo === 'sub' || p.tipo === 'subf') {
                 const e = { id: db.nextId++, ...p.payload };
                 db.compras.push(e);
                 guardarDB(db);
                 resultado = `✅ #${e.id} · 📅 ${formatearFecha(e.fecha)} · ${nombreBonitoEvento(e.evento)}\n📦 ${e.cantidad}x ${e.objeto} (${e.categoria})\n🏆 ${e.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}${e.perdedores.length ? `\n💔 ${e.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}` : ''}`;
+                requiereSync = true;
             }
             else if (p.tipo === 'borrar') {
                 const idx = db.compras.findIndex(c => c.id === p.payload.id);
@@ -848,6 +1107,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     const el = db.compras.splice(idx, 1)[0];
                     guardarDB(db);
                     resultado = `🗑️ Borrada #${el.id}: ${el.cantidad}x ${el.objeto}`;
+                    requiereSync = true;
                 }
             }
             else if (p.tipo === 'editar') {
@@ -879,6 +1139,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     if (e.perdedores.length > 0) r += `💔 ${e.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
                     if (e.notas) r += `📝 ${e.notas}`;
                     resultado = r;
+                    requiereSync = true;
                 }
             }
             else if (p.tipo === 'registro-rapido') {
@@ -898,10 +1159,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (duplicados > 0) msg += `\n⚠️ ${duplicados} duplicadas ignoradas.`;
                 msg += `\nTotal en la base: **${db.compras.length}**.`;
                 resultado = msg;
+                requiereSync = true;
             }
 
             pendingActions.delete(id);
-            return interaction.update({ content: resultado, components: [] });
+
+            if (requiereSync) {
+                const syncRes = await sincronizarConGitHub();
+                resultado += textoEstadoSync(syncRes);
+            }
+
+            try {
+                return await interaction.editReply({ content: resultado, components: [] });
+            } catch (e) {
+                console.error('Error editReply:', e.message);
+                return;
+            }
         }
         return;
     }
@@ -910,7 +1183,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const db = cargarDB();
     const miembros = cargarMiembros();
 
-    const comandosLider = ['borrar', 'importar', 'editar', 'miembro', 'backup', 'registro-rapido'];
+    const comandosLider = ['borrar', 'editar', 'miembro', 'backup', 'registro-rapido', 'sync'];
     const comandosEscritura = ['sub', 'subf'];
 
     if (comandosLider.includes(interaction.commandName) || comandosEscritura.includes(interaction.commandName)) {
@@ -932,6 +1205,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     try {
+        // ---------- /sync ----------
+        if (interaction.commandName === 'sync') {
+            try { await interaction.deferReply({ ephemeral: true }); } catch (e) { /* ignorar */ }
+            const res = await sincronizarConGitHub();
+            let msg;
+            if (res.ok) {
+                msg = `✅ Sync con GitHub: OK`;
+                if (res.agregadas > 0) msg += `\n📥 ${res.agregadas} entradas nuevas absorvidas del CSV remoto.`;
+                msg += `\n📤 CSV actualizado en GitHub con ${res.total} entradas.`;
+            } else {
+                msg = `❌ Sync falló: ${res.motivo}`;
+            }
+            try {
+                return await interaction.editReply({ content: msg });
+            } catch (e) {
+                return interaction.reply({ content: msg, ephemeral: true });
+            }
+        }
+
         // ---------- /registro-rapido ----------
         if (interaction.commandName === 'registro-rapido') {
             const texto = interaction.options.getString('texto') || '';
@@ -1013,27 +1305,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // ---------- /backup ----------
         if (interaction.commandName === 'backup') {
-            const comprasOrdenadas = [...db.compras].sort((a, b) => {
-                if (!a.fecha) return 1;
-                if (!b.fecha) return -1;
-                return a.fecha.localeCompare(b.fecha);
-            });
-
-            const lineas = ['fecha,evento,categoria,objeto,cantidad,ganadores,perdedores,notas'];
-            for (const c of comprasOrdenadas) {
-                const esc = (s) => `"${(s || '').replace(/"/g, '""')}"`;
-                lineas.push([
-                    formatearFecha(c.fecha),
-                    c.evento || '',
-                    c.categoria || '',
-                    esc(c.objeto || ''),
-                    c.cantidad || 1,
-                    esc((c.ganadores || []).join(',')),
-                    esc((c.perdedores || []).join(',')),
-                    esc(c.notas || '')
-                ].join(','));
-            }
-            const contenido = lineas.join('\n');
+            const contenido = generarCSV(db);
             fs.writeFileSync(BACKUP_FILE, contenido);
             const adjunto = new AttachmentBuilder(Buffer.from(contenido, 'utf8'), { name: 'backup.csv' });
             return interaction.reply({
@@ -1048,13 +1320,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const periodo = interaction.options.getString('periodo') || '7d';
             const formato = interaction.options.getString('formato') || 'Clasificación';
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
-
-            if (visibilidad === 'Visible' && (periodo === '30d' || periodo === 'Total')) {
-                return interaction.reply({
-                    content: '❌ Con periodo 30d o Total solo se permite Privado. Cambiá la visibilidad o usá 7d.',
-                    ephemeral: true
-                });
-            }
             const ephemeral = visibilidad === 'Privado';
 
             const keyBuscado = normalizar(nombreBuscado);
@@ -1069,37 +1334,91 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             const nombreDisplay = apariciones[0].objeto;
 
+            let items;
             if (formato === 'Clasificación') {
                 const conteos = {};
-                let totalUnidades = 0;
                 for (const c of apariciones) {
                     for (const g of c.ganadores) {
                         const { nombre, cantidad } = parsearGanador(g);
                         const key = claveJugador(nombre, miembros);
                         if (!conteos[key]) conteos[key] = { nombre: aplicarCanonico(nombre, miembros), total: 0 };
                         conteos[key].total += cantidad;
-                        totalUnidades += cantidad;
                     }
                 }
-                const ordenado = Object.values(conteos).sort((a, b) => b.total - a.total);
-                let out = `📦 **${nombreDisplay}** — Clasificación (${periodo})\n`;
-                out += `Apariciones: ${apariciones.length} · Unidades ganadas: ${totalUnidades}\n\n`;
-                ordenado.forEach((d, i) => {
-                    out += `${i + 1}. **${d.nombre}** · ${d.total}\n`;
-                });
-                await responderLargo(interaction, out, ephemeral);
-                return;
+                items = Object.values(conteos).sort((a, b) => b.total - a.total);
+            } else {
+                items = apariciones;
             }
 
-            let out = `📦 **${nombreDisplay}** — Lista (${periodo})\nApariciones: ${apariciones.length}\n`;
-            for (const c of apariciones) {
-                out += `\n#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x (${c.categoria})\n`;
-                out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
-                if (c.perdedores && c.perdedores.length > 0) {
-                    out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
-                }
+            const payload = {
+                nombreDisplay,
+                periodo,
+                formato,
+                items,
+                pagina: 1
+            };
+
+            const id = guardarPendiente('objeto-page', payload, interaction.user.id);
+            const render = renderObjetoPagina(payload, miembros);
+            const row = construirBotonesPaginacion('obj', id, render.paginaActual, render.totalPaginas);
+
+            await interaction.reply({ content: render.content, components: [row], ephemeral });
+            return;
+        }
+
+        // ---------- /categoria ----------
+        if (interaction.commandName === 'categoria') {
+            const categoria = interaction.options.getString('categoria');
+            const jugadorFiltro = (interaction.options.getString('jugador') || '').trim();
+            const periodo = interaction.options.getString('periodo') || 'Total';
+            const formato = interaction.options.getString('formato') || 'Lista';
+            const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
+            const ephemeral = visibilidad === 'Privado';
+
+            const comprasFiltradas = filtrarPorPeriodo(db.compras, periodo);
+            let apariciones = comprasFiltradas.filter(c => c.categoria === categoria);
+            if (jugadorFiltro) {
+                apariciones = apariciones.filter(c => contarGanador(c.ganadores, jugadorFiltro, miembros) > 0);
             }
-            await responderLargo(interaction, out, ephemeral);
+            apariciones = apariciones.sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+            if (apariciones.length === 0) {
+                let msg = `❌ No hay apariciones de **${categoria}**`;
+                if (jugadorFiltro) msg += ` para **${jugadorFiltro}**`;
+                msg += ` en el periodo ${periodo}.`;
+                return interaction.reply({ content: msg, ephemeral });
+            }
+
+            let items;
+            if (formato === 'Clasificación') {
+                const conteos = {};
+                for (const c of apariciones) {
+                    for (const g of c.ganadores) {
+                        const { nombre, cantidad } = parsearGanador(g);
+                        const key = claveJugador(nombre, miembros);
+                        if (!conteos[key]) conteos[key] = { nombre: aplicarCanonico(nombre, miembros), total: 0 };
+                        conteos[key].total += cantidad;
+                    }
+                }
+                items = Object.values(conteos).sort((a, b) => b.total - a.total);
+            } else {
+                items = apariciones;
+            }
+
+            const payload = {
+                categoria,
+                jugadorFiltro,
+                periodo,
+                formato,
+                items,
+                pagina: 1
+            };
+
+            const id = guardarPendiente('categoria-page', payload, interaction.user.id);
+            const render = renderCategoriaPagina(payload, miembros);
+            const row = construirBotonesPaginacion('cat', id, render.paginaActual, render.totalPaginas);
+
+            await interaction.reply({ content: render.content, components: [row], ephemeral });
             return;
         }
 
@@ -1294,91 +1613,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
 
             return mostrarPreview(interaction, 'Confirmar edición', cuerpo, 'editar', payload);
-        }
-
-        // ---------- /importar ----------
-        if (interaction.commandName === 'importar') {
-            if (!fs.existsSync(CSV_FILE)) {
-                return interaction.reply({ content: '❌ No existe historial.csv en el servidor.', ephemeral: true });
-            }
-            const contenido = fs.readFileSync(CSV_FILE, 'utf8');
-            const filas = parse(contenido, { columns: true, skip_empty_lines: true, trim: true });
-
-            const existentes = new Set(db.compras.map(huella));
-            let agregadas = 0;
-            const errores = {
-                fechasInvalidas: [],
-                categoriasDesconocidas: [],
-                nombresSinCanonico: new Set(),
-                duplicados: 0
-            };
-
-            for (let i = 0; i < filas.length; i++) {
-                const fila = filas[i];
-                const fechaConv = convertirFecha(fila.fecha);
-                if (!fechaConv) {
-                    errores.fechasInvalidas.push(`Fila ${i + 2}: "${fila.fecha}"`);
-                    continue;
-                }
-                if (fila.categoria && !CATEGORIAS.includes(fila.categoria)) {
-                    errores.categoriasDesconocidas.push(`Fila ${i + 2}: "${fila.categoria}"`);
-                }
-
-                const ganadores = fila.ganadores ? fila.ganadores.split(',').map(s => s.trim()).filter(Boolean) : [];
-                const perdedores = fila.perdedores ? fila.perdedores.split(',').map(s => s.trim()).filter(Boolean) : [];
-
-                const todos = [...ganadores, ...perdedores];
-                for (const n of todos) {
-                    const m = n.match(/^(.+?)(?:\s+x(\d+))?$/);
-                    const soloNombre = m ? m[1].trim() : n;
-                    if (!soloNombre) continue;
-                    const norm = normalizarNombre(soloNombre);
-                    if (!miembros.canonicos[norm]) {
-                        errores.nombresSinCanonico.add(soloNombre);
-                    }
-                }
-
-                const nueva = {
-                    id: db.nextId,
-                    fecha: fechaConv,
-                    evento: fila.evento || '',
-                    categoria: fila.categoria || '',
-                    objeto: fila.objeto || '',
-                    cantidad: parseInt(fila.cantidad) || 1,
-                    ganadores,
-                    perdedores,
-                    notas: fila.notas || ''
-                };
-                const fp = huella(nueva);
-                if (existentes.has(fp)) {
-                    errores.duplicados++;
-                    continue;
-                }
-                db.compras.push(nueva);
-                existentes.add(fp);
-                db.nextId++;
-                agregadas++;
-            }
-
-            guardarDB(db);
-
-            let reporte = `✅ Importadas **${agregadas}** entradas nuevas.\nTotal en la base: **${db.compras.length}**.\n`;
-            if (errores.duplicados > 0) reporte += `\n⚠️ Duplicados ignorados: **${errores.duplicados}**.`;
-            if (errores.fechasInvalidas.length > 0) {
-                reporte += `\n\n❌ **Fechas inválidas** (${errores.fechasInvalidas.length}):\n${errores.fechasInvalidas.slice(0, 5).join('\n')}`;
-                if (errores.fechasInvalidas.length > 5) reporte += `\n... y ${errores.fechasInvalidas.length - 5} más.`;
-            }
-            if (errores.categoriasDesconocidas.length > 0) {
-                reporte += `\n\n⚠️ **Categorías desconocidas** (${errores.categoriasDesconocidas.length}):\n${errores.categoriasDesconocidas.slice(0, 5).join('\n')}`;
-                if (errores.categoriasDesconocidas.length > 5) reporte += `\n... y ${errores.categoriasDesconocidas.length - 5} más.`;
-            }
-            if (errores.nombresSinCanonico.size > 0) {
-                const lista = Array.from(errores.nombresSinCanonico).slice(0, 15);
-                reporte += `\n\nℹ️ **Nombres sin canónico** (${errores.nombresSinCanonico.size}):\n${lista.join(', ')}`;
-                if (errores.nombresSinCanonico.size > 15) reporte += `\n... y ${errores.nombresSinCanonico.size - 15} más.`;
-            }
-
-            return interaction.reply({ content: reporte, ephemeral: true });
         }
 
         // ---------- /sub y /subf ----------
@@ -1625,10 +1859,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             };
 
             const id = guardarPendiente('ranking', payload, interaction.user.id);
-            const { content, totalPaginas, paginaActual } = renderRankingPagina(payload, miembros);
-            const row = construirBotonesRanking(id, paginaActual, totalPaginas);
+            const render = renderRankingPagina(payload);
+            const row = construirBotonesPaginacion('rank', id, render.paginaActual, render.totalPaginas);
 
-            await interaction.reply({ content, components: [row], ephemeral });
+            await interaction.reply({ content: render.content, components: [row], ephemeral });
             return;
         }
 
@@ -1689,14 +1923,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto\n\`/backup\` · exportar CSV ordenado por fecha\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (con confirmación)\n\`/importar\` · importar filas con validación\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (con paginación)\n\`/categoria\` · compras de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
     } catch (err) {
         console.error(err);
         if (!interaction.replied) {
-            interaction.reply({ content: '❌ Error. Revisa los logs.', ephemeral: true });
+            try {
+                interaction.reply({ content: '❌ Error. Revisa los logs.', ephemeral: true });
+            } catch (e) { /* ignorar */ }
         }
     }
 });
