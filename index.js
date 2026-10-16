@@ -195,7 +195,9 @@ function mergeCSVEnDB(contenidoCSV, db) {
 }
 
 // ====== GITHUB SYNC ======
-async function sincronizarConGitHub() {
+// conMerge = true  -> absorbe filas nuevas del CSV remoto antes de subir (usar solo en /sync manual)
+// conMerge = false -> solo sube el estado local, sin absorber (usar después de /sub, /editar, /borrar)
+async function sincronizarConGitHub(conMerge = true) {
     const token = process.env.GITHUB_TOKEN;
     const repo = process.env.GITHUB_REPO;
     const branch = process.env.GITHUB_BRANCH || 'main';
@@ -230,8 +232,12 @@ async function sincronizarConGitHub() {
         }
 
         const db = cargarDB();
-        const { agregadas } = mergeCSVEnDB(csvRemoto, db);
-        if (agregadas > 0) guardarDB(db);
+        let agregadas = 0;
+        if (conMerge) {
+            const resMerge = mergeCSVEnDB(csvRemoto, db);
+            agregadas = resMerge.agregadas;
+            if (agregadas > 0) guardarDB(db);
+        }
 
         const contenido = generarCSV(db);
         const contenidoB64 = Buffer.from(contenido, 'utf8').toString('base64');
@@ -1160,7 +1166,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             pendingActions.delete(id);
 
             if (requiereSync) {
-                const syncRes = await sincronizarConGitHub();
+                const syncRes = await sincronizarConGitHub(false);
                 resultado += textoEstadoSync(syncRes);
             }
 
@@ -1203,7 +1209,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /sync ----------
         if (interaction.commandName === 'sync') {
             try { await interaction.deferReply({ ephemeral: true }); } catch (e) { /* ignorar */ }
-            const res = await sincronizarConGitHub();
+            const res = await sincronizarConGitHub(true);
             let msg;
             if (res.ok) {
                 msg = `✅ Sync con GitHub: OK`;
