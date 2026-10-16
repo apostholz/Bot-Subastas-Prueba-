@@ -253,6 +253,20 @@ function obtenerObjetosUnicos(db) {
     return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
 }
 
+// Autocompletado para nombres separados por coma
+function sugerirNombresMultiples(valorActual, nombres) {
+    const valor = valorActual || '';
+    const partes = valor.split(',');
+    const prefijo = partes.slice(0, -1).map(s => s.trim()).filter(Boolean);
+    const ultima = (partes[partes.length - 1] || '').trim();
+    const q = normalizar(ultima);
+    const filtrados = nombres.filter(n => normalizar(n).includes(q)).slice(0, 25);
+    return filtrados.map(n => {
+        const nuevoValor = [...prefijo, n].join(', ');
+        return { name: n, value: nuevoValor };
+    });
+}
+
 // ====== CATEGORÍAS ======
 const CATEGORIAS = [
     'Cajas 20k',
@@ -400,24 +414,24 @@ client.once(Events.ClientReady, async (c) => {
                 .setName('sub')
                 .setDescription('Registrar compra de hoy')
                 .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-                .addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true).addChoices(...catChoices))
-                .addStringOption(o => o.setName('objeto').setDescription('Nombre del ítem').setRequired(true))
-                .addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true))
-                .addStringOption(o => o.setName('ganadores').setDescription('Ganadores separados por coma').setRequired(true))
                 .addStringOption(o => o.setName('evento').setDescription('Evento al que pertenece').setRequired(true).addChoices(...eventoChoices))
-                .addStringOption(o => o.setName('perdedores').setDescription('Perdedores separados por coma').setRequired(false)),
+                .addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true).addChoices(...catChoices))
+                .addStringOption(o => o.setName('objeto').setDescription('Nombre del ítem').setRequired(true).setAutocomplete(true))
+                .addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true))
+                .addStringOption(o => o.setName('ganadores').setDescription('Ganadores separados por coma').setRequired(true).setAutocomplete(true))
+                .addStringOption(o => o.setName('perdedores').setDescription('Perdedores separados por coma').setRequired(false).setAutocomplete(true)),
 
             new SlashCommandBuilder()
                 .setName('subf')
                 .setDescription('Registrar compra con fecha específica')
                 .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
                 .addStringOption(o => o.setName('fecha').setDescription('DD/MM/YY o "hoy"').setRequired(true))
-                .addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true).addChoices(...catChoices))
-                .addStringOption(o => o.setName('objeto').setDescription('Nombre del ítem').setRequired(true))
-                .addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true))
-                .addStringOption(o => o.setName('ganadores').setDescription('Ganadores separados por coma').setRequired(true))
                 .addStringOption(o => o.setName('evento').setDescription('Evento al que pertenece').setRequired(true).addChoices(...eventoChoices))
-                .addStringOption(o => o.setName('perdedores').setDescription('Perdedores separados por coma').setRequired(false)),
+                .addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true).addChoices(...catChoices))
+                .addStringOption(o => o.setName('objeto').setDescription('Nombre del ítem').setRequired(true).setAutocomplete(true))
+                .addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true))
+                .addStringOption(o => o.setName('ganadores').setDescription('Ganadores separados por coma').setRequired(true).setAutocomplete(true))
+                .addStringOption(o => o.setName('perdedores').setDescription('Perdedores separados por coma').setRequired(false).setAutocomplete(true)),
 
             new SlashCommandBuilder()
                 .setName('historial')
@@ -591,18 +605,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const db = cargarDB();
         const miembros = cargarMiembros();
         const focused = interaction.options.getFocused(true);
-        if (interaction.commandName === 'objeto') {
+        const cmd = interaction.commandName;
+
+        // Objeto en /objeto
+        if (cmd === 'objeto' && focused.name === 'nombre') {
             const objetos = obtenerObjetosUnicos(db);
             const q = normalizar(focused.value);
             const filtrados = objetos.filter(n => normalizar(n).includes(q)).slice(0, 25);
             return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
         }
-        if (['jugadores', 'jugador', 'nombre'].includes(focused.name)) {
+
+        // Objeto en /sub y /subf
+        if ((cmd === 'sub' || cmd === 'subf') && focused.name === 'objeto') {
+            const objetos = obtenerObjetosUnicos(db);
+            const q = normalizar(focused.value);
+            const filtrados = objetos.filter(n => normalizar(n).includes(q)).slice(0, 25);
+            return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
+        }
+
+        // Listas de nombres (jugadores, ganadores, perdedores)
+        if (['jugadores', 'ganadores', 'perdedores'].includes(focused.name)) {
+            const nombres = obtenerNombresUnicos(db, miembros);
+            return interaction.respond(sugerirNombresMultiples(focused.value, nombres));
+        }
+
+        // Nombres simples (jugador, nombre en /miembro)
+        if (focused.name === 'jugador' || (cmd === 'miembro' && focused.name === 'nombre')) {
+            // En /miembro canonico puede ser lista separada por coma
+            if (cmd === 'miembro' && focused.name === 'nombre') {
+                const nombres = obtenerNombresUnicos(db, miembros);
+                return interaction.respond(sugerirNombresMultiples(focused.value, nombres));
+            }
             const nombres = obtenerNombresUnicos(db, miembros);
             const q = normalizar(focused.value);
             const filtrados = nombres.filter(n => normalizar(n).includes(q)).slice(0, 25);
             return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
         }
+
         return;
     }
 
@@ -999,12 +1038,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // ---------- /sub y /subf ----------
         if (interaction.commandName === 'sub' || interaction.commandName === 'subf') {
+            const evento = interaction.options.getString('evento') || '';
             const categoria = interaction.options.getString('categoria');
             const objeto = interaction.options.getString('objeto');
             const cantidad = interaction.options.getInteger('cantidad') || 1;
             const ganadoresStr = interaction.options.getString('ganadores') || '';
             const perdedoresStr = interaction.options.getString('perdedores') || '';
-            const evento = interaction.options.getString('evento') || '';
             let fecha;
 
             if (interaction.commandName === 'subf') {
@@ -1067,7 +1106,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             let out = `📅 **Compras del ${formatearFecha(fecha)}**\n`;
             for (const key of eventosOrdenados) {
                 const grupo = grupos[key];
-                out += `\n**${grupo.nombre}**\n`;
+                out += `\n**__${grupo.nombre}__**\n`;
                 const lista = grupo.items.sort((a, b) => {
                     const oa = ordenCategoria(key, a.categoria);
                     const ob = ordenCategoria(key, b.categoria);
@@ -1078,7 +1117,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 for (const c of lista) {
                     const bloque = bloqueDeCategoria(key, c.categoria);
                     if (bloque && bloque !== bloqueActual) {
-                        out += `\n__**${bloque}**__\n`;
+                        out += `\n**${bloque}**\n`;
                         bloqueActual = bloque;
                     }
                     out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
