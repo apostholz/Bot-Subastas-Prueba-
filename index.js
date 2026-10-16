@@ -32,7 +32,6 @@ const pendingRegistros = new Map();
 function guardarPendiente(datos) {
     const id = Math.random().toString(36).slice(2, 10);
     pendingRegistros.set(id, { ...datos, expira: Date.now() + 5 * 60 * 1000 });
-    // Limpiar expirados
     for (const [k, v] of pendingRegistros.entries()) {
         if (v.expira < Date.now()) pendingRegistros.delete(k);
     }
@@ -520,7 +519,7 @@ client.once(Events.ClientReady, async (c) => {
 
             new SlashCommandBuilder()
                 .setName('backup')
-                .setDescription('Exportar todas las compras a un CSV y guardar respaldo')
+                .setDescription('Exportar todas las compras a un CSV ordenado por fecha')
                 .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
             new SlashCommandBuilder()
@@ -678,7 +677,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.update({ content: '❌ Registro cancelado.', components: [] });
             }
             const db = cargarDB();
-            const miembros = cargarMiembros();
             const existentes = new Set(db.compras.map(huella));
             let agregadas = 0;
             let duplicados = 0;
@@ -825,11 +823,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // ---------- /backup ----------
         if (interaction.commandName === 'backup') {
+            const comprasOrdenadas = [...db.compras].sort((a, b) => {
+                if (!a.fecha) return 1;
+                if (!b.fecha) return -1;
+                return a.fecha.localeCompare(b.fecha);
+            });
+
             const lineas = ['fecha,evento,categoria,objeto,cantidad,ganadores,perdedores,notas'];
-            for (const c of db.compras) {
+            for (const c of comprasOrdenadas) {
                 const esc = (s) => `"${(s || '').replace(/"/g, '""')}"`;
                 lineas.push([
-                    c.fecha || '',
+                    formatearFecha(c.fecha),
                     c.evento || '',
                     c.categoria || '',
                     esc(c.objeto || ''),
@@ -843,7 +847,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             fs.writeFileSync(BACKUP_FILE, contenido);
             const adjunto = new AttachmentBuilder(Buffer.from(contenido, 'utf8'), { name: 'backup.csv' });
             return interaction.reply({
-                content: `✅ Respaldo guardado en \`${BACKUP_FILE}\`.\nTotal de entradas: **${db.compras.length}**.`,
+                content: `✅ Respaldo guardado en \`${BACKUP_FILE}\` ordenado por fecha.\nTotal de entradas: **${db.compras.length}**.`,
                 files: [adjunto]
             });
         }
@@ -1533,7 +1537,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con filtros\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto\n\`/backup\` · exportar CSV de respaldo\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (ganadores, perdedores, nota, evento, cantidad)\n\`/importar\` · importar filas con validación\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con filtros\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto\n\`/backup\` · exportar CSV ordenado por fecha\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (ganadores, perdedores, nota, evento, cantidad)\n\`/importar\` · importar filas con validación\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
