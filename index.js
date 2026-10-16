@@ -627,10 +627,21 @@ function construirBotonesPaginacion(prefijo, id, paginaActual, totalPaginas) {
     );
 }
 
+// ====== TAMAÑO DE PÁGINA POR COMANDO ======
+function porPaginaObjeto(formato) {
+    return formato === 'Clasificación' ? 15 : 10;
+}
+function porPaginaCategoria() {
+    return 10;
+}
+function porPaginaRanking(categoria) {
+    return categoria === 'Todas' ? 10 : 15;
+}
+
 // ====== RENDER OBJETO / CATEGORÍA ======
 function renderObjetoPagina(payload, miembros) {
     const { nombreDisplay, periodo, formato, items, pagina } = payload;
-    const porPagina = 10;
+    const porPagina = porPaginaObjeto(formato);
     const totalPaginas = Math.max(1, Math.ceil(items.length / porPagina));
     const paginaActual = Math.min(Math.max(1, pagina), totalPaginas);
     const inicio = (paginaActual - 1) * porPagina;
@@ -638,29 +649,23 @@ function renderObjetoPagina(payload, miembros) {
     const slice = items.slice(inicio, fin);
 
     let out = `📦 **${nombreDisplay}** — ${formato} (${periodo})\n`;
-    out += `_Página ${paginaActual}/${totalPaginas} · ${items.length} ítem${items.length === 1 ? '' : 's'}_\n\n`;
+    out += `_Página ${paginaActual}/${totalPaginas} · ${items.length} ${formato === 'Clasificación' ? 'jugador' : 'aparición'}${items.length === 1 ? '' : 'es'}_\n\n`;
 
-    if (formato === 'Clasificación') {
-        if (slice.length === 0) {
-            out += 'Sin resultados.';
-        } else {
-            slice.forEach((d, i) => {
-                const num = inicio + i + 1;
-                out += `${num}. **${d.nombre}** · ${d.total}\n`;
-            });
-        }
+    if (slice.length === 0) {
+        out += 'Sin resultados.';
+    } else if (formato === 'Clasificación') {
+        slice.forEach((d, i) => {
+            const num = inicio + i + 1;
+            out += `${num}. **${d.nombre}** · ${d.total}\n`;
+        });
     } else {
-        if (slice.length === 0) {
-            out += 'Sin resultados.';
-        } else {
-            for (const c of slice) {
-                out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x (${c.categoria})\n`;
-                out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
-                if (c.perdedores && c.perdedores.length > 0) {
-                    out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
-                }
-                out += `\n`;
+        for (const c of slice) {
+            out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x (${c.categoria})\n`;
+            out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
+            if (c.perdedores && c.perdedores.length > 0) {
+                out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
             }
+            out += `\n`;
         }
     }
 
@@ -668,8 +673,8 @@ function renderObjetoPagina(payload, miembros) {
 }
 
 function renderCategoriaPagina(payload, miembros) {
-    const { categoria, jugadorFiltro, periodo, formato, items, pagina } = payload;
-    const porPagina = 10;
+    const { categoria, jugadorFiltro, periodo, items, pagina } = payload;
+    const porPagina = porPaginaCategoria();
     const totalPaginas = Math.max(1, Math.ceil(items.length / porPagina));
     const paginaActual = Math.min(Math.max(1, pagina), totalPaginas);
     const inicio = (paginaActual - 1) * porPagina;
@@ -678,32 +683,21 @@ function renderCategoriaPagina(payload, miembros) {
 
     let titulo = `📂 **${categoria}**`;
     if (jugadorFiltro) titulo += ` — ${aplicarCanonico(jugadorFiltro, miembros)}`;
-    titulo += ` — ${formato} (${periodo})`;
+    titulo += ` — Lista (${periodo})`;
 
     let out = `${titulo}\n`;
-    out += `_Página ${paginaActual}/${totalPaginas} · ${items.length} ítem${items.length === 1 ? '' : 's'}_\n\n`;
+    out += `_Página ${paginaActual}/${totalPaginas} · ${items.length} aparición${items.length === 1 ? '' : 'es'}_\n\n`;
 
-    if (formato === 'Clasificación') {
-        if (slice.length === 0) {
-            out += 'Sin resultados.';
-        } else {
-            slice.forEach((d, i) => {
-                const num = inicio + i + 1;
-                out += `${num}. **${d.nombre}** · ${d.total}\n`;
-            });
-        }
+    if (slice.length === 0) {
+        out += 'Sin resultados.';
     } else {
-        if (slice.length === 0) {
-            out += 'Sin resultados.';
-        } else {
-            for (const c of slice) {
-                out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x ${c.objeto}\n`;
-                out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
-                if (c.perdedores && c.perdedores.length > 0) {
-                    out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
-                }
-                out += `\n`;
+        for (const c of slice) {
+            out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x ${c.objeto}\n`;
+            out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
+            if (c.perdedores && c.perdedores.length > 0) {
+                out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
             }
+            out += `\n`;
         }
     }
 
@@ -827,7 +821,7 @@ client.once(Events.ClientReady, async (c) => {
 
             new SlashCommandBuilder()
                 .setName('objeto')
-                .setDescription('Ver apariciones de un objeto específico')
+                .setDescription('Ver apariciones de un objeto específico (Clasificación o Lista)')
                 .addStringOption(o => o.setName('nombre').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true))
                 .addStringOption(o => o.setName('periodo').setDescription('Periodo a considerar').setRequired(false).addChoices(...periodoChoices))
                 .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false).addChoices(...formatoChoices))
@@ -835,11 +829,10 @@ client.once(Events.ClientReady, async (c) => {
 
             new SlashCommandBuilder()
                 .setName('categoria')
-                .setDescription('Ver todas las compras de una categoría (opcionalmente filtrado por jugador)')
+                .setDescription('Ver todas las apariciones de una categoría (opcionalmente filtrado por jugador)')
                 .addStringOption(o => o.setName('categoria').setDescription('Categoría a listar').setRequired(true).addChoices(...catChoices))
                 .addStringOption(o => o.setName('jugador').setDescription('Filtrar por un jugador (opcional)').setRequired(false).setAutocomplete(true))
                 .addStringOption(o => o.setName('periodo').setDescription('Periodo a considerar').setRequired(false).addChoices(...periodoChoices))
-                .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false).addChoices(...formatoChoices))
                 .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
             new SlashCommandBuilder()
@@ -1045,8 +1038,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.reply({ content: '❌ Solo quien ejecutó el comando puede navegar las páginas.', ephemeral: true });
             }
             const payload = p.payload;
-            const porPagina = (tipoEsperado === 'ranking' && payload.categoria === 'Todas') ? 10 : (tipoEsperado === 'ranking' ? 15 : 10);
-            const totalPaginas = Math.max(1, Math.ceil(payload.items ? payload.items.length : payload.jugadores.length / porPagina));
+            let porPagina;
+            if (tipoEsperado === 'ranking') porPagina = porPaginaRanking(payload.categoria);
+            else if (tipoEsperado === 'objeto-page') porPagina = porPaginaObjeto(payload.formato);
+            else porPagina = porPaginaCategoria();
+
+            const totalItems = payload.items ? payload.items.length : payload.jugadores.length;
+            const totalPaginas = Math.max(1, Math.ceil(totalItems / porPagina));
 
             let nuevaPagina = payload.pagina;
             if (accion === 'first') nuevaPagina = 1;
@@ -1058,13 +1056,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             const miembros = cargarMiembros();
             let render;
-            if (tipoEsperado === 'ranking') {
-                render = renderRankingPagina(payload);
-            } else if (tipoEsperado === 'objeto-page') {
-                render = renderObjetoPagina(payload, miembros);
-            } else {
-                render = renderCategoriaPagina(payload, miembros);
-            }
+            if (tipoEsperado === 'ranking') render = renderRankingPagina(payload);
+            else if (tipoEsperado === 'objeto-page') render = renderObjetoPagina(payload, miembros);
+            else render = renderCategoriaPagina(payload, miembros);
+
             const row = construirBotonesPaginacion(prefijo, id, render.paginaActual, render.totalPaginas);
             return interaction.update({ content: render.content, components: [row] });
         }
@@ -1366,12 +1361,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
         }
 
-        // ---------- /categoria ----------
+        // ---------- /categoria (solo Lista) ----------
         if (interaction.commandName === 'categoria') {
             const categoria = interaction.options.getString('categoria');
             const jugadorFiltro = (interaction.options.getString('jugador') || '').trim();
             const periodo = interaction.options.getString('periodo') || 'Total';
-            const formato = interaction.options.getString('formato') || 'Lista';
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
             const ephemeral = visibilidad === 'Privado';
 
@@ -1389,28 +1383,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.reply({ content: msg, ephemeral });
             }
 
-            let items;
-            if (formato === 'Clasificación') {
-                const conteos = {};
-                for (const c of apariciones) {
-                    for (const g of c.ganadores) {
-                        const { nombre, cantidad } = parsearGanador(g);
-                        const key = claveJugador(nombre, miembros);
-                        if (!conteos[key]) conteos[key] = { nombre: aplicarCanonico(nombre, miembros), total: 0 };
-                        conteos[key].total += cantidad;
-                    }
-                }
-                items = Object.values(conteos).sort((a, b) => b.total - a.total);
-            } else {
-                items = apariciones;
-            }
-
             const payload = {
                 categoria,
                 jugadorFiltro,
                 periodo,
-                formato,
-                items,
+                items: apariciones,
                 pagina: 1
             };
 
@@ -1923,7 +1900,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (con paginación)\n\`/categoria\` · compras de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
