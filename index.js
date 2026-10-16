@@ -293,6 +293,16 @@ const CATEGORIAS = [
 
 const CATEGORIAS_TOTAL = CATEGORIAS.filter(c => c !== 'Caja 10k' && c !== 'Emblemas Azules');
 
+const ABREVIATURAS = {
+    'Cajas 20k': '20k',
+    'Caja 10k': '10k',
+    'Emblemas Generales': 'Gen',
+    'Emblemas Únicos': 'Únicos',
+    'Emblemas Azules': 'Az',
+    'Equipo': 'Eq',
+    'Accesorios': 'Acc'
+};
+
 const PESOS = {
     'Emblemas Únicos': { 'Emblemas Únicos': 3 },
     'Cajas 20k': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 0.3 },
@@ -1553,31 +1563,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (r.unidades7d > 0) {
                     const partes = Object.entries(r.desglose)
                         .filter(([_, n]) => n > 0)
-                        .map(([cat, n]) => {
-                            const nombreCorto = cat.replace('Emblemas ', '').replace('Cajas 20k', '20k').replace('Caja 10k', '10k');
-                            return `${nombreCorto}: ${n}`;
-                        });
+                        .map(([cat, n]) => `${ABREVIATURAS[cat] || cat}: ${n}`);
                     if (partes.length > 0) desgloseStr = ` (${partes.join(', ')})`;
                 }
 
-                const abreviaturas = {
-                    'Cajas 20k': '20k',
-                    'Caja 10k': '10k',
-                    'Emblemas Generales': 'Gen',
-                    'Emblemas Únicos': 'Únicos',
-                    'Emblemas Azules': 'Az',
-                    'Equipo': 'Eq',
-                    'Accesorios': 'Acc'
-                };
                 const histPartes = Object.entries(r.historicoTotal)
                     .filter(([_, n]) => n > 0)
-                    .map(([cat, n]) => `${abreviaturas[cat] || cat}: ${n}`);
-                const histTotalStr = histPartes.length > 0 ? `Histórico total: ${histPartes.join(', ')}` : 'Histórico total: —';
+                    .map(([cat, n]) => `${ABREVIATURAS[cat] || cat}: ${n}`);
+                const histTotalStr = histPartes.length > 0 ? `Total histórico: ${histPartes.join(', ')}` : 'Total histórico: —';
 
                 out += `**${i + 1}. ${aplicarCanonico(r.jugador, miembros)}**\n`;
                 out += `   Impacto reciente: ${r.impacto.toFixed(2)}\n`;
                 out += `   Unidades 7d: ${r.unidades7d}${desgloseStr}\n`;
-                out += `   Histórico en categoría: ${r.historico}\n`;
+                out += `   Total en categoría: ${r.historico}\n`;
                 out += `   ${histTotalStr}\n`;
             });
             out += `\n**Recomendación:** ${aplicarCanonico(resultados[0].jugador, miembros)}`;
