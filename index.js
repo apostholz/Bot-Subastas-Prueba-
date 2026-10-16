@@ -466,8 +466,14 @@ client.once(Events.ClientReady, async (c) => {
 
             new SlashCommandBuilder()
                 .setName('objeto')
-                .setDescription('Ver todas las apariciones de un objeto específico')
+                .setDescription('Ver apariciones de un objeto específico')
                 .addStringOption(o => o.setName('nombre').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true))
+                .addStringOption(o => o.setName('periodo').setDescription('Periodo a considerar').setRequired(false).addChoices(...periodoChoices))
+                .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false)
+                    .addChoices(
+                        { name: 'Clasificación', value: 'Clasificación' },
+                        { name: 'Lista', value: 'Lista' }
+                    ))
                 .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
             new SlashCommandBuilder()
@@ -567,14 +573,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const db = cargarDB();
         const miembros = cargarMiembros();
         const focused = interaction.options.getFocused(true);
+        if (interaction.commandName === 'objeto') {
+            const objetos = obtenerObjetosUnicos(db);
+            const q = normalizar(focused.value);
+            const filtrados = objetos.filter(n => normalizar(n).includes(q)).slice(0, 25);
+            return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
+        }
         if (['jugadores', 'jugador', 'nombre'].includes(focused.name)) {
-            // Si es /objeto, autocompletar con objetos
-            if (interaction.commandName === 'objeto') {
-                const objetos = obtenerObjetosUnicos(db);
-                const q = normalizar(focused.value);
-                const filtrados = objetos.filter(n => normalizar(n).includes(q)).slice(0, 25);
-                return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
-            }
             const nombres = obtenerNombresUnicos(db, miembros);
             const q = normalizar(focused.value);
             const filtrados = nombres.filter(n => normalizar(n).includes(q)).slice(0, 25);
@@ -637,19 +642,54 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /objeto ----------
         if (interaction.commandName === 'objeto') {
             const nombreBuscado = interaction.options.getString('nombre').trim();
+            const periodo = interaction.options.getString('periodo') || '7d';
+            const formato = interaction.options.getString('formato') || 'Clasificación';
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
-            const ephemeral = visibilidad === 'Privado';
-            const keyBuscado = normalizar(nombreBuscado);
 
-            const apariciones = db.compras
+            if (visibilidad === 'Visible' && (periodo === '30d' || periodo === 'Total')) {
+                return interaction.reply({
+                    content: '❌ Con periodo 30d o Total solo se permite Privado. Cambiá la visibilidad o usá 7d.',
+                    ephemeral: true
+                });
+            }
+            const ephemeral = visibilidad === 'Privado';
+
+            const keyBuscado = normalizar(nombreBuscado);
+            const comprasFiltradas = filtrarPorPeriodo(db.compras, periodo);
+            const apariciones = comprasFiltradas
                 .filter(c => c.objeto && normalizar(c.objeto) === keyBuscado && (c.ganadores || []).length > 0)
                 .sort((a, b) => b.fecha.localeCompare(a.fecha));
 
             if (apariciones.length === 0) {
-                return interaction.reply({ content: `❌ No hay apariciones compradas de **${nombreBuscado}**.`, ephemeral });
+                return interaction.reply({ content: `❌ No hay apariciones compradas de **${nombreBuscado}** en el periodo ${periodo}.`, ephemeral });
             }
 
-            let out = `📦 **${apariciones[0].objeto}** — ${apariciones.length} apariciones\n`;
+            const nombreDisplay = apariciones[0].objeto;
+
+            if (formato === 'Clasificación') {
+                const conteos = {};
+                let totalUnidades = 0;
+                for (const c of apariciones) {
+                    for (const g of c.ganadores) {
+                        const { nombre, cantidad } = parsearGanador(g);
+                        const key = claveJugador(nombre, miembros);
+                        if (!conteos[key]) conteos[key] = { nombre: aplicarCanonico(nombre, miembros), total: 0 };
+                        conteos[key].total += cantidad;
+                        totalUnidades += cantidad;
+                    }
+                }
+                const ordenado = Object.values(conteos).sort((a, b) => b.total - a.total);
+                let out = `📦 **${nombreDisplay}** — Clasificación (${periodo})\n`;
+                out += `Apariciones: ${apariciones.length} · Unidades ganadas: ${totalUnidades}\n\n`;
+                ordenado.forEach((d, i) => {
+                    out += `${i + 1}. **${d.nombre}** · ${d.total}\n`;
+                });
+                await responderLargo(interaction, out, ephemeral);
+                return;
+            }
+
+            // Lista
+            let out = `📦 **${nombreDisplay}** — Lista (${periodo})\nApariciones: ${apariciones.length}\n`;
             for (const c of apariciones) {
                 out += `\n#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x (${c.categoria})\n`;
                 out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
@@ -657,7 +697,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
                 }
             }
-
             await responderLargo(interaction, out, ephemeral);
             return;
         }
@@ -873,7 +912,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const ganadores = fila.ganadores ? fila.ganadores.split(',').map(s => s.trim()).filter(Boolean) : [];
                 const perdedores = fila.perdedores ? fila.perdedores.split(',').map(s => s.trim()).filter(Boolean) : [];
 
-                // Nombres sin canónico
                 const todos = [...ganadores, ...perdedores];
                 for (const n of todos) {
                     const m = n.match(/^(.+?)(?:\s+x(\d+))?$/);
@@ -1156,8 +1194,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ranking ----------
         if (interaction.commandName === 'ranking') {
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
-            const periodo = interaction.options.getString('periodo') || 'Total';
+            const periodo = interaction.options.getString('periodo') || '7d';
             const categoriaFiltro = interaction.options.getString('categoria') || 'Todas';
+
+            if (visibilidad === 'Visible' && (periodo === '30d' || periodo === 'Total')) {
+                return interaction.reply({
+                    content: '❌ Con periodo 30d o Total solo se permite Privado. Cambiá la visibilidad o usá 7d.',
+                    ephemeral: true
+                });
+            }
             const ephemeral = visibilidad === 'Privado';
 
             const comprasFiltradas = filtrarPorPeriodo(db.compras, periodo);
