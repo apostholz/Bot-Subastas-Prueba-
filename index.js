@@ -404,6 +404,92 @@ function bloqueDeCategoria(evento, categoria) {
     return null;
 }
 
+// ====== RANKING: CONSTRUCCIÓN Y PAGINACIÓN ======
+function construirRanking(comprasFiltradas, categoriaFiltro, miembros) {
+    const ranking = {};
+    for (const c of comprasFiltradas) {
+        for (const g of c.ganadores) {
+            const { nombre, cantidad } = parsearGanador(g);
+            if (esExcluido(nombre, miembros)) continue;
+            const key = claveJugador(nombre, miembros);
+            if (!ranking[key]) {
+                ranking[key] = { nombre: aplicarCanonico(nombre, miembros), total: 0 };
+                for (const cat of CATEGORIAS) ranking[key][cat] = 0;
+            }
+            if (ranking[key][c.categoria] !== undefined) {
+                ranking[key][c.categoria] += cantidad;
+                ranking[key].total += cantidad;
+            }
+        }
+    }
+
+    if (categoriaFiltro === 'Todas') {
+        return Object.values(ranking).sort((a, b) => b.total - a.total);
+    }
+    return Object.values(ranking)
+        .filter(d => (d[categoriaFiltro] || 0) > 0)
+        .sort((a, b) => b[categoriaFiltro] - a[categoriaFiltro]);
+}
+
+function renderRankingPagina(payload, miembros) {
+    const { jugadores, periodo, categoria, pagina } = payload;
+    const porPagina = categoria === 'Todas' ? 10 : 15;
+    const totalPaginas = Math.max(1, Math.ceil(jugadores.length / porPagina));
+    const paginaActual = Math.min(Math.max(1, pagina), totalPaginas);
+    const inicio = (paginaActual - 1) * porPagina;
+    const fin = Math.min(inicio + porPagina, jugadores.length);
+    const slice = jugadores.slice(inicio, fin);
+
+    const titulo = categoria === 'Todas'
+        ? `🏆 **Ranking general** (${periodo})`
+        : `🏆 **Ranking — ${categoria}** (${periodo})`;
+
+    let out = `${titulo}\n`;
+    out += `_Página ${paginaActual}/${totalPaginas} · ${jugadores.length} jugador${jugadores.length === 1 ? '' : 'es'}_\n\n`;
+
+    if (slice.length === 0) {
+        out += `No hay jugadores para mostrar.`;
+    } else {
+        slice.forEach((d, i) => {
+            const num = inicio + i + 1;
+            if (categoria === 'Todas') {
+                out += `${num}. **${d.nombre}** · ${d.total} | 20k: ${d['Cajas 20k']} | Ún: ${d['Emblemas Únicos']} | Gen: ${d['Emblemas Generales']} | Eq: ${d['Equipo']} | Acc: ${d['Accesorios']}\n`;
+            } else {
+                out += `${num}. **${d.nombre}** · ${d[categoria]}\n`;
+            }
+        });
+    }
+
+    return { content: out.trimEnd(), totalPaginas, paginaActual };
+}
+
+function construirBotonesRanking(id, paginaActual, totalPaginas) {
+    const alInicio = paginaActual <= 1;
+    const alFinal = paginaActual >= totalPaginas;
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`rank_first_${id}`)
+            .setLabel('⏮')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(alInicio),
+        new ButtonBuilder()
+            .setCustomId(`rank_prev_${id}`)
+            .setLabel('◀')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(alInicio),
+        new ButtonBuilder()
+            .setCustomId(`rank_next_${id}`)
+            .setLabel('▶')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(alFinal),
+        new ButtonBuilder()
+            .setCustomId(`rank_last_${id}`)
+            .setLabel('⏭')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(alFinal)
+    );
+}
+
 // ====== CLIENTE ======
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
@@ -697,6 +783,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // Botones
     if (interaction.isButton()) {
         const cid = interaction.customId;
+
+        // Paginación de ranking
+        if (cid.startsWith('rank_first_') || cid.startsWith('rank_prev_') || cid.startsWith('rank_next_') || cid.startsWith('rank_last_')) {
+            const match = cid.match(/^rank_(first|prev|next|last)_(.+)$/);
+            if (!match) return;
+            const accion = match[1];
+            const id = match[2];
+            const p = pendingActions.get(id);
+            if (!p || p.tipo !== 'ranking') {
+                return interaction.reply({ content: '❌ La sesión expiró. Volvé a ejecutar el comando.', ephemeral: true });
+            }
+            if (p.userId !== interaction.user.id) {
+                return interaction.reply({ content: '❌ Solo quien ejecutó el comando puede navegar las páginas.', ephemeral: true });
+            }
+            const payload = p.payload;
+            const porPagina = payload.categoria === 'Todas' ? 10 : 15;
+            const totalPaginas = Math.max(1, Math.ceil(payload.jugadores.length / porPagina));
+            let nuevaPagina = payload.pagina;
+            if (accion === 'first') nuevaPagina = 1;
+            else if (accion === 'prev') nuevaPagina = Math.max(1, payload.pagina - 1);
+            else if (accion === 'next') nuevaPagina = Math.min(totalPaginas, payload.pagina + 1);
+            else if (accion === 'last') nuevaPagina = totalPaginas;
+            payload.pagina = nuevaPagina;
+            p.expira = Date.now() + 5 * 60 * 1000;
+
+            const miembros = cargarMiembros();
+            const { content } = renderRankingPagina(payload, miembros);
+            const row = construirBotonesRanking(id, nuevaPagina, totalPaginas);
+            return interaction.update({ content, components: [row] });
+        }
+
+        // Confirmaciones pendientes
         if (cid.startsWith('pend_confirm_') || cid.startsWith('pend_cancel_')) {
             const esConfirm = cid.startsWith('pend_confirm_');
             const id = cid.replace('pend_confirm_', '').replace('pend_cancel_', '');
@@ -1491,58 +1609,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // ---------- /ranking ----------
         if (interaction.commandName === 'ranking') {
-            const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
+            const visibilidad = interaction.options.getString('visibilidad') || 'Visible';
             const periodo = interaction.options.getString('periodo') || '7d';
             const categoriaFiltro = interaction.options.getString('categoria') || 'Todas';
-
-            if (visibilidad === 'Visible' && (periodo === '30d' || periodo === 'Total')) {
-                return interaction.reply({
-                    content: '❌ Con periodo 30d o Total solo se permite Privado. Cambiá la visibilidad o usá 7d.',
-                    ephemeral: true
-                });
-            }
             const ephemeral = visibilidad === 'Privado';
 
             const comprasFiltradas = filtrarPorPeriodo(db.compras, periodo);
+            const jugadores = construirRanking(comprasFiltradas, categoriaFiltro, miembros);
 
-            const ranking = {};
-            for (const c of comprasFiltradas) {
-                for (const g of c.ganadores) {
-                    const { nombre, cantidad } = parsearGanador(g);
-                    if (esExcluido(nombre, miembros)) continue;
-                    const key = claveJugador(nombre, miembros);
-                    if (!ranking[key]) {
-                        ranking[key] = { nombre: aplicarCanonico(nombre, miembros), total: 0 };
-                        for (const cat of CATEGORIAS) ranking[key][cat] = 0;
-                    }
-                    if (ranking[key][c.categoria] !== undefined) {
-                        ranking[key][c.categoria] += cantidad;
-                        ranking[key].total += cantidad;
-                    }
-                }
-            }
+            const payload = {
+                jugadores,
+                periodo,
+                categoria: categoriaFiltro,
+                pagina: 1
+            };
 
-            let ordenado;
-            let titulo;
-            if (categoriaFiltro === 'Todas') {
-                ordenado = Object.values(ranking).sort((a, b) => b.total - a.total).slice(0, 50);
-                titulo = `🏆 **Ranking general** (${periodo})`;
-            } else {
-                ordenado = Object.values(ranking)
-                    .filter(d => (d[categoriaFiltro] || 0) > 0)
-                    .sort((a, b) => b[categoriaFiltro] - a[categoriaFiltro])
-                    .slice(0, 50);
-                titulo = `🏆 **Ranking — ${categoriaFiltro}** (${periodo})`;
-            }
+            const id = guardarPendiente('ranking', payload, interaction.user.id);
+            const { content, totalPaginas, paginaActual } = renderRankingPagina(payload, miembros);
+            const row = construirBotonesRanking(id, paginaActual, totalPaginas);
 
-            const lineas = ordenado.map((d, i) => {
-                if (categoriaFiltro === 'Todas') {
-                    return `${i + 1}. **${d.nombre}** · ${d.total} | 20k: ${d['Cajas 20k']} | Ún: ${d['Emblemas Únicos']} | Gen: ${d['Emblemas Generales']} | Eq: ${d['Equipo']} | Acc: ${d['Accesorios']}`;
-                }
-                return `${i + 1}. **${d.nombre}** · ${d[categoriaFiltro]}`;
-            }).join('\n');
-
-            await responderLargo(interaction, `${titulo}\n${lineas}`, ephemeral);
+            await interaction.reply({ content, components: [row], ephemeral });
             return;
         }
 
@@ -1603,7 +1689,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con filtros\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto\n\`/backup\` · exportar CSV ordenado por fecha\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (con confirmación)\n\`/importar\` · importar filas con validación\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto\n\`/backup\` · exportar CSV ordenado por fecha\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (con confirmación)\n\`/importar\` · importar filas con validación\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
