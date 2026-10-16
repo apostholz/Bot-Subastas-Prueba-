@@ -68,11 +68,9 @@ function claveJugador(nombre, miembros) {
 function aplicarCanonico(nombre, miembros) {
     if (!nombre) return nombre;
     const key = claveJugador(nombre, miembros);
-    // Buscar algún canónico cuyo valor normalizado coincida con la clave
     for (const v of Object.values(miembros.canonicos || {})) {
         if (normalizarNombre(v) === key) return v;
     }
-    // Si el nombre exacto tiene canónico, devolverlo
     const direct = miembros.canonicos && miembros.canonicos[normalizarNombre(nombre)];
     if (direct) return direct;
     return nombre;
@@ -151,9 +149,22 @@ function leerCSVInicial() {
 }
 
 // ====== FECHAS ======
+function fechaArgentina(offsetDias = 0) {
+    const ahora = new Date();
+    const fechaStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).format(ahora);
+    const [y, m, d] = fechaStr.split('-').map(Number);
+    const fecha = new Date(Date.UTC(y, m - 1, d + offsetDias));
+    return fecha.toISOString().split('T')[0];
+}
+function fechaHoyArgentina() {
+    return fechaArgentina(0);
+}
+function fechaAyerArgentina() {
+    return fechaArgentina(-1);
+}
 function convertirFecha(fecha) {
     if (!fecha) return null;
-    if (fecha.toLowerCase() === 'hoy') return new Date().toISOString().split('T')[0];
+    if (fecha.toLowerCase() === 'hoy') return fechaHoyArgentina();
     const partes = fecha.split('/');
     if (partes.length !== 3) return null;
     const [dia, mes, anio] = partes;
@@ -163,12 +174,8 @@ function convertirFecha(fecha) {
 function convertirFechaDia(fecha) {
     if (!fecha) return null;
     const f = fecha.toLowerCase().trim();
-    if (f === 'hoy') return new Date().toISOString().split('T')[0];
-    if (f === 'ayer') {
-        const d = new Date();
-        d.setDate(d.getDate() - 1);
-        return d.toISOString().split('T')[0];
-    }
+    if (f === 'hoy') return fechaHoyArgentina();
+    if (f === 'ayer') return fechaAyerArgentina();
     return convertirFecha(fecha);
 }
 function formatearFecha(iso) {
@@ -215,7 +222,6 @@ function obtenerNombresUnicos(db, miembros) {
     const map = new Map();
     const agregar = (nombreConSufijo) => {
         if (!nombreConSufijo) return;
-        // Quitar sufijo "x N" si existe
         const match = nombreConSufijo.match(/^(.+?)(?:\s+x(\d+))?$/);
         const nombre = match ? match[1].trim() : nombreConSufijo.trim();
         if (!nombre) return;
@@ -312,6 +318,14 @@ function compararPrioridad(a, b) {
 // ====== ORDEN DE EVENTOS Y CATEGORÍAS ======
 const ORDEN_EVENTOS = ['invasion diurna', 'invasion nocturna', 'banquete'];
 
+function nombreBonitoEvento(evento) {
+    const n = normalizar(evento);
+    if (n.includes('diurna')) return 'Invasión diurna';
+    if (n.includes('nocturna')) return 'Invasión nocturna';
+    if (n.includes('banquete')) return 'Banquete';
+    return evento;
+}
+
 function ordenEvento(evento) {
     const idx = ORDEN_EVENTOS.indexOf(normalizar(evento));
     return idx === -1 ? 999 : idx;
@@ -348,6 +362,10 @@ client.once(Events.ClientReady, async (c) => {
         const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
         const catChoices = CATEGORIAS.map(cat => ({ name: cat, value: cat }));
         const catChoicesTodo = [...catChoices, { name: 'Todas', value: 'Todas' }];
+        const visibilidadChoices = [
+            { name: 'Privado', value: 'Privado' },
+            { name: 'Visible', value: 'Visible' }
+        ];
 
         const commandsData = [
             new SlashCommandBuilder()
@@ -396,21 +414,19 @@ client.once(Events.ClientReady, async (c) => {
             new SlashCommandBuilder()
                 .setName('dia')
                 .setDescription('Ver todas las compras de un día específico')
-                .addStringOption(o => o.setName('fecha').setDescription('DD/MM/YY, "hoy" o "ayer"').setRequired(true)),
+                .addStringOption(o => o.setName('fecha').setDescription('DD/MM/YY, "hoy" o "ayer"').setRequired(true))
+                .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
             new SlashCommandBuilder()
                 .setName('total')
                 .setDescription('Totales por categoría de uno o varios jugadores')
                 .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
-                .addStringOption(o => o.setName('visibilidad').setDescription('Visible o Privado').setRequired(false)
-                    .addChoices(
-                        { name: 'Visible', value: 'Visible' },
-                        { name: 'Privado', value: 'Privado' }
-                    )),
+                .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
             new SlashCommandBuilder()
                 .setName('ranking')
-                .setDescription('Tabla general de todos los jugadores'),
+                .setDescription('Tabla general de todos los jugadores')
+                .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
             new SlashCommandBuilder()
                 .setName('prioridad')
@@ -725,7 +741,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 fecha = convertirFecha(fechaStr);
                 if (!fecha) return interaction.reply({ content: '❌ Fecha inválida. Usa DD/MM/YY o "hoy".', ephemeral: true });
             } else {
-                fecha = new Date().toISOString().split('T')[0];
+                fecha = fechaHoyArgentina();
             }
 
             const ganadores = ganadoresStr.split(',').map(s => s.trim()).filter(Boolean);
@@ -750,6 +766,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.commandName === 'dia') {
             const fechaStr = interaction.options.getString('fecha');
             const fecha = convertirFechaDia(fechaStr);
+            const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
+            const ephemeral = visibilidad === 'Privado';
 
             if (!fecha) {
                 return interaction.reply({ content: '❌ Fecha inválida. Usa DD/MM/YY, "hoy" o "ayer".', ephemeral: true });
@@ -757,14 +775,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             const comprasDia = db.compras.filter(c => c.fecha === fecha);
             if (comprasDia.length === 0) {
-                return interaction.reply({ content: `📅 No hay compras registradas para el ${formatearFecha(fecha)}.` });
+                return interaction.reply({ content: `📅 No hay compras registradas para el ${formatearFecha(fecha)}.`, ephemeral });
             }
 
             const grupos = {};
             for (const c of comprasDia) {
                 const ev = c.evento || 'Sin evento';
-                if (!grupos[ev]) grupos[ev] = [];
-                grupos[ev].push(c);
+                const key = normalizar(ev);
+                if (!grupos[key]) grupos[key] = { nombre: nombreBonitoEvento(ev), items: [] };
+                grupos[key].items.push(c);
             }
 
             const eventosOrdenados = Object.keys(grupos).sort((a, b) => {
@@ -775,17 +794,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
             });
 
             let out = `📅 **Compras del ${formatearFecha(fecha)}**\n`;
-            for (const ev of eventosOrdenados) {
-                out += `\n**${ev}**\n`;
-                const lista = grupos[ev].sort((a, b) => {
-                    const oa = ordenCategoria(ev, a.categoria);
-                    const ob = ordenCategoria(ev, b.categoria);
+            for (const key of eventosOrdenados) {
+                const grupo = grupos[key];
+                out += `\n**${grupo.nombre}**\n`;
+                const lista = grupo.items.sort((a, b) => {
+                    const oa = ordenCategoria(key, a.categoria);
+                    const ob = ordenCategoria(key, b.categoria);
                     if (oa !== ob) return oa - ob;
                     return a.id - b.id;
                 });
                 let bloqueActual = null;
                 for (const c of lista) {
-                    const bloque = bloqueDeCategoria(ev, c.categoria);
+                    const bloque = bloqueDeCategoria(key, c.categoria);
                     if (bloque && bloque !== bloqueActual) {
                         out += `\n__**${bloque}**__\n`;
                         bloqueActual = bloque;
@@ -801,7 +821,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
             }
 
-            await responderLargo(interaction, out);
+            await responderLargo(interaction, out, ephemeral);
             return;
         }
 
@@ -832,7 +852,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 out = bloques.join('\n');
             } else {
-                // Detallado (solo Todas)
                 const bloques = [];
                 for (const j of jugadores) {
                     let comprasJ = db.compras.filter(c => contarGanador(c.ganadores, j, miembros) > 0);
@@ -932,6 +951,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // ---------- /ranking ----------
         if (interaction.commandName === 'ranking') {
+            const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
+            const ephemeral = visibilidad === 'Privado';
+
             const ranking = {};
             for (const c of db.compras) {
                 for (const g of c.ganadores) {
@@ -952,7 +974,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const lineas = ordenado.map((d, i) =>
                 `${i + 1}. **${d.nombre}** · ${d.total} | 20k: ${d['Cajas 20k']} | Ún: ${d['Emblemas Únicos']} | Gen: ${d['Emblemas Generales']} | Eq: ${d['Equipo']} | Acc: ${d['Accesorios']}`
             ).join('\n');
-            await responderLargo(interaction, `🏆 **Ranking general**\n${lineas}`);
+            await responderLargo(interaction, `🏆 **Ranking general**\n${lineas}`, ephemeral);
             return;
         }
 
