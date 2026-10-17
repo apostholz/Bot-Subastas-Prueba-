@@ -195,8 +195,6 @@ function mergeCSVEnDB(contenidoCSV, db) {
 }
 
 // ====== GITHUB SYNC ======
-// conMerge = true  -> absorbe filas nuevas del CSV remoto antes de subir (usar solo en /sync manual)
-// conMerge = false -> solo sube el estado local, sin absorber (usar después de /sub, /editar, /borrar)
 async function sincronizarConGitHub(conMerge = true) {
     const token = process.env.GITHUB_TOKEN;
     const repo = process.env.GITHUB_REPO;
@@ -344,8 +342,10 @@ function formatearFecha(iso) {
 }
 function diasDesde(iso) {
     if (!iso) return 999;
-    const diff = Date.now() - new Date(iso).getTime();
-    return Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hoy = fechaHoyArgentina();
+    const d1 = new Date(hoy + 'T00:00:00Z');
+    const d2 = new Date(iso + 'T00:00:00Z');
+    return Math.floor((d1 - d2) / (1000 * 60 * 60 * 24));
 }
 function etiquetaDias(iso) {
     const d = diasDesde(iso);
@@ -356,8 +356,7 @@ function etiquetaDias(iso) {
 }
 function filtrarPorPeriodo(compras, periodo) {
     if (periodo === 'Total') return compras;
-    const limite = periodo === '7d' ? 7 : 30;
-    return compras.filter(c => diasDesde(c.fecha) < limite);
+    return compras.filter(c => diasDesde(c.fecha) < 7);
 }
 
 // ====== RESPUESTA LARGA ======
@@ -404,6 +403,7 @@ function obtenerObjetosUnicos(db) {
     const map = new Map();
     for (const c of db.compras) {
         if (!c.objeto) continue;
+        if (OBJETOS_PROHIBIDOS.some(o => normalizar(o) === normalizar(c.objeto))) continue;
         const key = normalizar(c.objeto);
         if (!map.has(key)) map.set(key, c.objeto);
     }
@@ -426,22 +426,18 @@ function sugerirNombresMultiples(valorActual, nombres) {
 // ====== CATEGORÍAS ======
 const CATEGORIAS = [
     'Cajas 20k',
-    'Caja 10k',
     'Emblemas Generales',
     'Emblemas Únicos',
-    'Emblemas Azules',
     'Equipo',
     'Accesorios'
 ];
 
-const CATEGORIAS_TOTAL = CATEGORIAS.filter(c => c !== 'Caja 10k' && c !== 'Emblemas Azules');
+const CATEGORIAS_TOTAL = CATEGORIAS;
 
 const ABREVIATURAS = {
     'Cajas 20k': '20k',
-    'Caja 10k': '10k',
     'Emblemas Generales': 'Gen',
     'Emblemas Únicos': 'Únicos',
-    'Emblemas Azules': 'Az',
     'Equipo': 'Eq',
     'Accesorios': 'Acc'
 };
@@ -450,11 +446,11 @@ const PESOS = {
     'Emblemas Únicos': { 'Emblemas Únicos': 3 },
     'Cajas 20k': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 0.3 },
     'Emblemas Generales': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 1 },
-    'Emblemas Azules': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 1, 'Emblemas Azules': 0.5 },
     'Equipo': { 'Equipo': 1.0, 'Accesorios': 1.5, 'Emblemas Únicos': 3 },
-    'Accesorios': { 'Accesorios': 1.5, 'Equipo': 0.5, 'Emblemas Únicos': 3 },
-    'Caja 10k': { 'Caja 10k': 0.5 }
+    'Accesorios': { 'Accesorios': 1.5, 'Equipo': 0.5, 'Emblemas Únicos': 3 }
 };
+
+const OBJETOS_PROHIBIDOS = ['Combatiente', 'Arquero gnoll'];
 
 function getFactorTemporal(dias) {
     if (dias <= 0) return 1.0;
@@ -532,8 +528,8 @@ function ordenEvento(evento) {
 function ordenCategoria(evento, categoria) {
     const esBanquete = normalizar(evento).includes('banquete');
     const orden = esBanquete
-        ? ['Equipo', 'Accesorios', 'Emblemas Únicos', 'Emblemas Generales', 'Emblemas Azules', 'Cajas 20k', 'Caja 10k']
-        : ['Cajas 20k', 'Caja 10k', 'Emblemas Únicos', 'Emblemas Generales', 'Emblemas Azules', 'Equipo', 'Accesorios'];
+        ? ['Equipo', 'Accesorios', 'Emblemas Únicos', 'Emblemas Generales']
+        : ['Cajas 20k', 'Emblemas Únicos', 'Emblemas Generales', 'Equipo', 'Accesorios'];
     const idx = orden.indexOf(categoria);
     return idx === -1 ? 999 : idx;
 }
@@ -729,7 +725,6 @@ client.once(Events.ClientReady, async (c) => {
         ];
         const periodoChoices = [
             { name: '7 días', value: '7d' },
-            { name: '30 días', value: '30d' },
             { name: 'Total', value: 'Total' }
         ];
         const formatoChoices = [
@@ -882,24 +877,24 @@ client.once(Events.ClientReady, async (c) => {
                 .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
                 .addSubcommand(sub => sub
                     .setName('agregar-ganador')
-                    .setDescription('Agregar un ganador a una entrada')
+                    .setDescription('Agregar uno o varios ganadores (separados por coma)')
                     .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
-                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('quitar-ganador')
-                    .setDescription('Quitar un ganador de una entrada')
+                    .setDescription('Quitar uno o varios ganadores (separados por coma)')
                     .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
-                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('agregar-perdedor')
-                    .setDescription('Agregar un perdedor a una entrada')
+                    .setDescription('Agregar uno o varios perdedores (separados por coma)')
                     .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
-                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('quitar-perdedor')
-                    .setDescription('Quitar un perdedor de una entrada')
+                    .setDescription('Quitar uno o varios perdedores (separados por coma)')
                     .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
-                    .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)))
+                    .addStringOption(o => o.setName('jugador').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('set-nota')
                     .setDescription('Establecer la nota de una entrada')
@@ -1029,6 +1024,91 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton()) {
         const cid = interaction.customId;
 
+        // Navegación de días
+        if (cid.startsWith('dia_')) {
+            const match = cid.match(/^dia_(first|prev|next|last)_(.+)$/);
+            if (!match) return;
+            const accion = match[1];
+            const id = match[2];
+            const p = pendingActions.get(id);
+            if (!p || p.tipo !== 'dia-page') {
+                return interaction.reply({ content: '❌ La sesión expiró. Volvé a ejecutar el comando.', ephemeral: true });
+            }
+            if (p.userId !== interaction.user.id) {
+                return interaction.reply({ content: '❌ Solo quien ejecutó el comando puede navegar las páginas.', ephemeral: true });
+            }
+            
+            let d = new Date(p.payload.fecha + 'T00:00:00Z');
+            if (accion === 'first') d = new Date(p.payload.minDate + 'T00:00:00Z');
+            else if (accion === 'prev') d.setUTCDate(d.getUTCDate() - 1);
+            else if (accion === 'next') d.setUTCDate(d.getUTCDate() + 1);
+            else if (accion === 'last') d = new Date(p.payload.maxDate + 'T00:00:00Z');
+            
+            const nuevaFecha = d.toISOString().split('T')[0];
+            p.payload.fecha = nuevaFecha;
+            p.expira = Date.now() + 5 * 60 * 1000;
+            
+            const miembros = cargarMiembros();
+            const db = cargarDB();
+            const comprasDia = db.compras.filter(c => c.fecha === nuevaFecha);
+            
+            let out = `📅 **Compras del ${formatearFecha(nuevaFecha)}**\n`;
+            if (comprasDia.length === 0) {
+                out = `📅 No hay compras registradas para el ${formatearFecha(nuevaFecha)}.`;
+            } else {
+                const grupos = {};
+                for (const c of comprasDia) {
+                    const ev = c.evento || 'Sin evento';
+                    const key = normalizar(ev);
+                    if (!grupos[key]) grupos[key] = { nombre: nombreBonitoEvento(ev), items: [] };
+                    grupos[key].items.push(c);
+                }
+                const eventosOrdenados = Object.keys(grupos).sort((a, b) => {
+                    const oa = ordenEvento(a);
+                    const ob = ordenEvento(b);
+                    if (oa !== ob) return oa - ob;
+                    return a.localeCompare(b);
+                });
+                for (const key of eventosOrdenados) {
+                    const grupo = grupos[key];
+                    out += `\n**__${grupo.nombre}__**\n`;
+                    const lista = grupo.items.sort((a, b) => {
+                        const oa = ordenCategoria(key, a.categoria);
+                        const ob = ordenCategoria(key, b.categoria);
+                        if (oa !== ob) return oa - ob;
+                        return a.id - b.id;
+                    });
+                    let bloqueActual = null;
+                    for (const c of lista) {
+                        const bloque = bloqueDeCategoria(key, c.categoria);
+                        if (bloque && bloque !== bloqueActual) {
+                            out += `\n**${bloque}**\n`;
+                            bloqueActual = bloque;
+                        }
+                        out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
+                        out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
+                        if (c.perdedores && c.perdedores.length > 0) {
+                            out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
+                        }
+                        if (c.notas) {
+                            out += `   📝 ${c.notas}\n`;
+                        }
+                    }
+                }
+            }
+            
+            const alInicio = nuevaFecha <= p.payload.minDate;
+            const alFinal = nuevaFecha >= p.payload.maxDate;
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`dia_first_${id}`).setLabel('⏮').setStyle(ButtonStyle.Secondary).setDisabled(alInicio),
+                new ButtonBuilder().setCustomId(`dia_prev_${id}`).setLabel('◀').setStyle(ButtonStyle.Primary).setDisabled(alInicio),
+                new ButtonBuilder().setCustomId(`dia_next_${id}`).setLabel('▶').setStyle(ButtonStyle.Primary).setDisabled(alFinal),
+                new ButtonBuilder().setCustomId(`dia_last_${id}`).setLabel('⏭').setStyle(ButtonStyle.Secondary).setDisabled(alFinal)
+            );
+            
+            return interaction.update({ content: out, components: [row] });
+        }
+
         // Paginación genérica
         const pagMatch = cid.match(/^(rank|obj|cat)_(first|prev|next|last)_(.+)$/);
         if (pagMatch) {
@@ -1119,20 +1199,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     const e = db.compras[idx];
                     const sub = p.payload.sub;
                     const valor = p.payload.valor;
-                    if (sub === 'agregar-ganador') e.ganadores.push(valor);
-                    else if (sub === 'quitar-ganador') {
-                        const pos = buscarJugadorEnLista(e.ganadores, valor, miembros);
-                        if (pos !== -1) e.ganadores.splice(pos, 1);
+                    if (sub === 'agregar-ganador') {
+                        for (const j of valor) e.ganadores.push(j);
                     }
-                    else if (sub === 'agregar-perdedor') e.perdedores.push(valor);
+                    else if (sub === 'quitar-ganador') {
+                        for (const j of valor) {
+                            const pos = buscarJugadorEnLista(e.ganadores, j, miembros);
+                            if (pos !== -1) e.ganadores.splice(pos, 1);
+                        }
+                    }
+                    else if (sub === 'agregar-perdedor') {
+                        for (const j of valor) e.perdedores.push(j);
+                    }
                     else if (sub === 'quitar-perdedor') {
-                        const pos = buscarJugadorEnLista(e.perdedores, valor, miembros);
-                        if (pos !== -1) e.perdedores.splice(pos, 1);
+                        for (const j of valor) {
+                            const pos = buscarJugadorEnLista(e.perdedores, j, miembros);
+                            if (pos !== -1) e.perdedores.splice(pos, 1);
+                        }
                     }
                     else if (sub === 'set-nota') e.notas = valor;
                     else if (sub === 'borrar-nota') e.notas = '';
                     else if (sub === 'set-evento') e.evento = valor;
                     else if (sub === 'set-cantidad') e.cantidad = valor;
+                    
                     guardarDB(db);
                     let r = `✅ Edición aplicada a #${e.id}.\n\n`;
                     r += `#${e.id} · ${formatearFecha(e.fecha)} ${etiquetaDias(e.fecha)} · ${nombreBonitoEvento(e.evento)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
@@ -1261,6 +1350,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 if (fila.categoria && !CATEGORIAS.includes(fila.categoria)) {
                     errores.push(`Fila ${i + 2}: categoría desconocida "${fila.categoria}"`);
+                    continue;
+                }
+                if (fila.objeto && OBJETOS_PROHIBIDOS.some(o => normalizar(o) === normalizar(fila.objeto))) {
+                    errores.push(`Fila ${i + 2}: objeto prohibido "${fila.objeto}"`);
+                    continue;
                 }
 
                 const ganadores = fila.ganadores ? fila.ganadores.split(',').map(s => s.trim()).filter(Boolean) : [];
@@ -1318,7 +1412,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /objeto ----------
         if (interaction.commandName === 'objeto') {
             const nombreBuscado = interaction.options.getString('nombre').trim();
-            const periodo = interaction.options.getString('periodo') || '7d';
+            const periodo = interaction.options.getString('periodo') || 'Total';
             const formato = interaction.options.getString('formato') || 'Clasificación';
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
             const ephemeral = visibilidad === 'Privado';
@@ -1527,38 +1621,112 @@ client.on(Events.InteractionCreate, async (interaction) => {
             let payload = null;
 
             if (sub === 'agregar-ganador') {
-                const jugador = interaction.options.getString('jugador').trim();
-                if (buscarJugadorEnLista(e.ganadores, jugador, miembros) !== -1) {
-                    return interaction.reply({ content: `ℹ️ **${jugador}** ya está en ganadores de #${id}.`, ephemeral: true });
+                const str = interaction.options.getString('jugador');
+                const nombresOriginales = str.split(',').map(s => s.trim()).filter(Boolean);
+                const vistos = new Set();
+                const agregados = [];
+                const salteados = [];
+                for (const j of nombresOriginales) {
+                    const key = j.toLowerCase();
+                    if (vistos.has(key)) {
+                        salteados.push(j);
+                        continue;
+                    }
+                    vistos.add(key);
+                    if (buscarJugadorEnLista(e.ganadores, j, miembros) !== -1) {
+                        salteados.push(j);
+                    } else {
+                        agregados.push(j);
+                    }
                 }
-                cuerpo = `Agregar **${jugador}** a ganadores de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
-                payload = { id, sub, valor: jugador };
+                if (agregados.length === 0) {
+                    return interaction.reply({ content: `ℹ️ Ninguno se agregó (ya estaban): ${salteados.join(', ')}`, ephemeral: true });
+                }
+                cuerpo = `Agregar **${agregados.join(', ')}** a ganadores de #${id}.`;
+                if (salteados.length > 0) cuerpo += `\n(Salteados por ya estar: ${salteados.join(', ')})`;
+                cuerpo += `\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
+                payload = { id, sub, valor: agregados };
             }
             else if (sub === 'quitar-ganador') {
-                const jugador = interaction.options.getString('jugador').trim();
-                const pos = buscarJugadorEnLista(e.ganadores, jugador, miembros);
-                if (pos === -1) {
-                    return interaction.reply({ content: `ℹ️ **${jugador}** no está en ganadores de #${id}.`, ephemeral: true });
+                const str = interaction.options.getString('jugador');
+                const nombresOriginales = str.split(',').map(s => s.trim()).filter(Boolean);
+                const vistos = new Set();
+                const quitados = [];
+                const salteados = [];
+                for (const j of nombresOriginales) {
+                    const key = j.toLowerCase();
+                    if (vistos.has(key)) {
+                        salteados.push(j);
+                        continue;
+                    }
+                    vistos.add(key);
+                    if (buscarJugadorEnLista(e.ganadores, j, miembros) === -1) {
+                        salteados.push(j);
+                    } else {
+                        quitados.push(j);
+                    }
                 }
-                cuerpo = `Quitar **${jugador}** de ganadores de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
-                payload = { id, sub, valor: jugador };
+                if (quitados.length === 0) {
+                    return interaction.reply({ content: `ℹ️ Ninguno se quitó (no estaban): ${salteados.join(', ')}`, ephemeral: true });
+                }
+                cuerpo = `Quitar **${quitados.join(', ')}** de ganadores de #${id}.`;
+                if (salteados.length > 0) cuerpo += `\n(Salteados por no estar: ${salteados.join(', ')})`;
+                cuerpo += `\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
+                payload = { id, sub, valor: quitados };
             }
             else if (sub === 'agregar-perdedor') {
-                const jugador = interaction.options.getString('jugador').trim();
-                if (buscarJugadorEnLista(e.perdedores, jugador, miembros) !== -1) {
-                    return interaction.reply({ content: `ℹ️ **${jugador}** ya está en perdedores de #${id}.`, ephemeral: true });
+                const str = interaction.options.getString('jugador');
+                const nombresOriginales = str.split(',').map(s => s.trim()).filter(Boolean);
+                const vistos = new Set();
+                const agregados = [];
+                const salteados = [];
+                for (const j of nombresOriginales) {
+                    const key = j.toLowerCase();
+                    if (vistos.has(key)) {
+                        salteados.push(j);
+                        continue;
+                    }
+                    vistos.add(key);
+                    if (buscarJugadorEnLista(e.perdedores, j, miembros) !== -1) {
+                        salteados.push(j);
+                    } else {
+                        agregados.push(j);
+                    }
                 }
-                cuerpo = `Agregar **${jugador}** a perdedores de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
-                payload = { id, sub, valor: jugador };
+                if (agregados.length === 0) {
+                    return interaction.reply({ content: `ℹ️ Ninguno se agregó (ya estaban): ${salteados.join(', ')}`, ephemeral: true });
+                }
+                cuerpo = `Agregar **${agregados.join(', ')}** a perdedores de #${id}.`;
+                if (salteados.length > 0) cuerpo += `\n(Salteados por ya estar: ${salteados.join(', ')})`;
+                cuerpo += `\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
+                payload = { id, sub, valor: agregados };
             }
             else if (sub === 'quitar-perdedor') {
-                const jugador = interaction.options.getString('jugador').trim();
-                const pos = buscarJugadorEnLista(e.perdedores, jugador, miembros);
-                if (pos === -1) {
-                    return interaction.reply({ content: `ℹ️ **${jugador}** no está en perdedores de #${id}.`, ephemeral: true });
+                const str = interaction.options.getString('jugador');
+                const nombresOriginales = str.split(',').map(s => s.trim()).filter(Boolean);
+                const vistos = new Set();
+                const quitados = [];
+                const salteados = [];
+                for (const j of nombresOriginales) {
+                    const key = j.toLowerCase();
+                    if (vistos.has(key)) {
+                        salteados.push(j);
+                        continue;
+                    }
+                    vistos.add(key);
+                    if (buscarJugadorEnLista(e.perdedores, j, miembros) === -1) {
+                        salteados.push(j);
+                    } else {
+                        quitados.push(j);
+                    }
                 }
-                cuerpo = `Quitar **${jugador}** de perdedores de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
-                payload = { id, sub, valor: jugador };
+                if (quitados.length === 0) {
+                    return interaction.reply({ content: `ℹ️ Ninguno se quitó (no estaban): ${salteados.join(', ')}`, ephemeral: true });
+                }
+                cuerpo = `Quitar **${quitados.join(', ')}** de perdedores de #${id}.`;
+                if (salteados.length > 0) cuerpo += `\n(Salteados por no estar: ${salteados.join(', ')})`;
+                cuerpo += `\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
+                payload = { id, sub, valor: quitados };
             }
             else if (sub === 'set-nota') {
                 const nota = interaction.options.getString('nota');
@@ -1616,6 +1784,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 fecha = fechaHoyArgentina();
             }
 
+            if (OBJETOS_PROHIBIDOS.some(o => normalizar(o) === normalizar(objeto))) {
+                return interaction.reply({ content: `❌ El objeto **${objeto}** ya no está permitido.`, ephemeral: true });
+            }
+
             const ganadores = ganadoresStr.split(',').map(s => s.trim()).filter(Boolean);
             const perdedores = perdedoresStr.split(',').map(s => s.trim()).filter(Boolean);
 
@@ -1645,9 +1817,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.reply({ content: '❌ Fecha inválida. Usa DD/MM/YY, "hoy" o "ayer".', ephemeral: true });
             }
 
+            let minDate = fechaHoyArgentina();
+            let maxDate = fechaHoyArgentina();
+            if (db.compras.length > 0) {
+                const fechas = db.compras.map(c => c.fecha).filter(Boolean).sort();
+                minDate = fechas[0];
+                maxDate = fechas[fechas.length - 1];
+            }
+
+            const payload = { fecha, visibilidad, minDate, maxDate };
+            const id = guardarPendiente('dia-page', payload, interaction.user.id);
+
+            const alInicio = fecha <= minDate;
+            const alFinal = fecha >= maxDate;
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`dia_first_${id}`).setLabel('⏮').setStyle(ButtonStyle.Secondary).setDisabled(alInicio),
+                new ButtonBuilder().setCustomId(`dia_prev_${id}`).setLabel('◀').setStyle(ButtonStyle.Primary).setDisabled(alInicio),
+                new ButtonBuilder().setCustomId(`dia_next_${id}`).setLabel('▶').setStyle(ButtonStyle.Primary).setDisabled(alFinal),
+                new ButtonBuilder().setCustomId(`dia_last_${id}`).setLabel('⏭').setStyle(ButtonStyle.Secondary).setDisabled(alFinal)
+            );
+
             const comprasDia = db.compras.filter(c => c.fecha === fecha);
             if (comprasDia.length === 0) {
-                return interaction.reply({ content: `📅 No hay compras registradas para el ${formatearFecha(fecha)}.`, ephemeral });
+                return interaction.reply({ content: `📅 No hay compras registradas para el ${formatearFecha(fecha)}.`, components: [row], ephemeral });
             }
 
             const grupos = {};
@@ -1693,7 +1885,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
             }
 
-            await responderLargo(interaction, out, ephemeral);
+            await interaction.reply({ content: out, components: [row], ephemeral });
             return;
         }
 
@@ -1827,7 +2019,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ranking ----------
         if (interaction.commandName === 'ranking') {
             const visibilidad = interaction.options.getString('visibilidad') || 'Visible';
-            const periodo = interaction.options.getString('periodo') || '7d';
+            const periodo = interaction.options.getString('periodo') || 'Total';
             const categoriaFiltro = interaction.options.getString('categoria') || 'Todas';
             const ephemeral = visibilidad === 'Privado';
 
@@ -1906,7 +2098,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico (con navegación)\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (múltiples nombres, con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
