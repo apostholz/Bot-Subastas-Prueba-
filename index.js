@@ -443,11 +443,31 @@ const ABREVIATURAS = {
 };
 
 const PESOS = {
-    'Emblemas Únicos': { 'Emblemas Únicos': 3 },
-    'Cajas 20k': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 0.3 },
-    'Emblemas Generales': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 1 },
-    'Equipo': { 'Equipo': 1.0, 'Accesorios': 1.5, 'Emblemas Únicos': 3 },
-    'Accesorios': { 'Accesorios': 1.5, 'Equipo': 0.5, 'Emblemas Únicos': 3 }
+    'Emblemas Únicos': { 
+        'Emblemas Únicos': 3,
+        'Cajas 20k': 0.3,
+        'Emblemas Generales': 0.1
+    },
+    'Cajas 20k': { 
+        'Emblemas Únicos': 3, 
+        'Cajas 20k': 2, 
+        'Emblemas Generales': 0.4 
+    },
+    'Emblemas Generales': { 
+        'Emblemas Únicos': 3, 
+        'Cajas 20k': 2, 
+        'Emblemas Generales': 1 
+    },
+    'Equipo': { 
+        'Equipo': 1.0, 
+        'Accesorios': 1.5, 
+        'Emblemas Únicos': 3 
+    },
+    'Accesorios': { 
+        'Accesorios': 1.5, 
+        'Equipo': 0.5, 
+        'Emblemas Únicos': 3 
+    }
 };
 
 const OBJETOS_PROHIBIDOS = ['Combatiente', 'Arquero gnoll'];
@@ -704,6 +724,110 @@ function renderCategoriaPagina(payload, miembros) {
     }
 
     return { content: out.trimEnd(), totalPaginas, paginaActual };
+}
+
+// ====== PRIORIDAD: RENDER Y PERDEDORES ======
+function obtenerCategoriasAfectantes(categoria) {
+    const orden = {
+        'Emblemas Únicos': ['Emblemas Únicos', 'Cajas 20k', 'Emblemas Generales'],
+        'Cajas 20k': ['Cajas 20k', 'Emblemas Únicos', 'Emblemas Generales'],
+        'Emblemas Generales': ['Emblemas Generales', 'Emblemas Únicos', 'Cajas 20k'],
+        'Equipo': ['Equipo', 'Accesorios', 'Emblemas Únicos'],
+        'Accesorios': ['Accesorios', 'Equipo', 'Emblemas Únicos']
+    };
+    return orden[categoria] || [categoria];
+}
+
+function calcularPerdedores7d(jugadores, categoria, db, miembros) {
+    const cats = obtenerCategoriasAfectantes(categoria);
+    const res = {};
+    cats.forEach(c => res[c] = {});
+    
+    const jks = jugadores.map(j => ({ nombre: j, key: claveJugador(j, miembros) }));
+    const recientes = filtrarPorPeriodo(db.compras, '7d');
+    
+    for (const c of recientes) {
+        if (!cats.includes(c.categoria)) continue;
+        for (const p of c.perdedores) {
+            const pk = claveJugador(p, miembros);
+            const match = jks.find(j => j.key === pk);
+            if (match) {
+                res[c.categoria][match.nombre] = (res[c.categoria][match.nombre] || 0) + 1;
+            }
+        }
+    }
+    return res;
+}
+
+function renderPrioridad(payload, miembros) {
+    const { categoria, resultados } = payload;
+    let out = `🏆 **Prioridad — ${categoria}**\n\n`;
+    resultados.forEach((r, i) => {
+        let desgloseStr = '';
+        if (r.unidades7d > 0) {
+            const partes = Object.entries(r.desglose)
+                .filter(([_, n]) => n > 0)
+                .map(([cat, n]) => `${ABREVIATURAS[cat] || cat}: ${n}`);
+            if (partes.length > 0) desgloseStr = ` (${partes.join(', ')})`;
+        }
+
+        const histPartes = Object.entries(r.historicoTotal)
+            .filter(([_, n]) => n > 0)
+            .map(([cat, n]) => `${ABREVIATURAS[cat] || cat}: ${n}`);
+        
+        const sumaHist = Object.values(r.historicoTotal).reduce((a, b) => a + b, 0);
+        const histTotalStr = histPartes.length > 0 ? `Total histórico (${sumaHist}): ${histPartes.join(', ')}` : 'Total histórico: —';
+
+        out += `**${i + 1}. ${aplicarCanonico(r.jugador, miembros)}**\n`;
+        out += `   Impacto reciente: ${r.impacto.toFixed(2)}\n`;
+        out += `   Unidades 7d: ${r.unidades7d}${desgloseStr}\n`;
+        out += `   Total en categoría: ${r.historico}\n`;
+        out += `   ${histTotalStr}\n`;
+    });
+    out += `\n**Recomendación:** ${aplicarCanonico(resultados[0].jugador, miembros)}`;
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`prio_perdedores_${payload.id}`)
+            .setLabel('💔 Ver perdedores 7d')
+            .setStyle(ButtonStyle.Danger)
+    );
+    return { content: out, components: [row] };
+}
+
+function renderPerdedores(payload, db, miembros) {
+    const { categoria, jugadores, id } = payload;
+    const catsAfectantes = obtenerCategoriasAfectantes(categoria);
+    const conteos = calcularPerdedores7d(jugadores, categoria, db, miembros);
+
+    let out = `💔 **Perdedores — ${categoria} (últimos 7d)**\n\n`;
+    
+    catsAfectantes.forEach((cat, idx) => {
+        if (idx === 0) {
+            out += `**${cat}** (categoría pedida)\n`;
+        } else {
+            out += `\n**${cat}**\n`;
+        }
+        const mapa = conteos[cat] || {};
+        const arr = Object.entries(mapa)
+            .filter(([_, count]) => count > 0)
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+        if (arr.length === 0) {
+            out += `Sin registros.\n`;
+        } else {
+            arr.forEach(([jug, count]) => {
+                out += `- ${aplicarCanonico(jug, miembros)}: ${count} ${count === 1 ? 'vez' : 'veces'}\n`;
+            });
+        }
+    });
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`prio_volver_${id}`)
+            .setLabel('🔙 Volver a prioridad')
+            .setStyle(ButtonStyle.Primary)
+    );
+    return { content: out, components: [row] };
 }
 
 // ====== CLIENTE ======
@@ -1023,6 +1147,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // Botones
     if (interaction.isButton()) {
         const cid = interaction.customId;
+
+        // Prioridad: perdedores / volver
+        if (cid.startsWith('prio_perdedores_') || cid.startsWith('prio_volver_')) {
+            const esPerdedores = cid.startsWith('prio_perdedores_');
+            const id = cid.replace('prio_perdedores_', '').replace('prio_volver_', '');
+            const p = pendingActions.get(id);
+            if (!p || p.tipo !== 'prioridad-page') {
+                return interaction.reply({ content: '❌ La sesión expiró. Volvé a ejecutar el comando.', ephemeral: true });
+            }
+            if (p.userId !== interaction.user.id) {
+                return interaction.reply({ content: '❌ Solo quien ejecutó el comando puede usar estos botones.', ephemeral: true });
+            }
+            const db = cargarDB();
+            const miembros = cargarMiembros();
+            if (esPerdedores) {
+                const { content, components } = renderPerdedores(p.payload, db, miembros);
+                return interaction.update({ content, components });
+            } else {
+                const { content, components } = renderPrioridad(p.payload, miembros);
+                return interaction.update({ content, components });
+            }
+        }
 
         // Navegación de días
         if (cid.startsWith('dia_')) {
@@ -2052,30 +2198,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }));
             resultados.sort(compararPrioridad);
 
-            let out = `🏆 **Prioridad — ${categoria}**\n\n`;
-            resultados.forEach((r, i) => {
-                let desgloseStr = '';
-                if (r.unidades7d > 0) {
-                    const partes = Object.entries(r.desglose)
-                        .filter(([_, n]) => n > 0)
-                        .map(([cat, n]) => `${ABREVIATURAS[cat] || cat}: ${n}`);
-                    if (partes.length > 0) desgloseStr = ` (${partes.join(', ')})`;
-                }
+            const payload = {
+                categoria,
+                jugadores,
+                resultados,
+                ventanaActual: 'prioridad'
+            };
+            const id = guardarPendiente('prioridad-page', payload, interaction.user.id);
+            payload.id = id;
 
-                const histPartes = Object.entries(r.historicoTotal)
-                    .filter(([_, n]) => n > 0)
-                    .map(([cat, n]) => `${ABREVIATURAS[cat] || cat}: ${n}`);
-                const histTotalStr = histPartes.length > 0 ? `Total histórico: ${histPartes.join(', ')}` : 'Total histórico: —';
-
-                out += `**${i + 1}. ${aplicarCanonico(r.jugador, miembros)}**\n`;
-                out += `   Impacto reciente: ${r.impacto.toFixed(2)}\n`;
-                out += `   Unidades 7d: ${r.unidades7d}${desgloseStr}\n`;
-                out += `   Total en categoría: ${r.historico}\n`;
-                out += `   ${histTotalStr}\n`;
-            });
-            out += `\n**Recomendación:** ${aplicarCanonico(resultados[0].jugador, miembros)}`;
-
-            await responderLargo(interaction, out);
+            const { content, components } = renderPrioridad(payload, miembros);
+            await interaction.reply({ content, components, ephemeral: false });
             return;
         }
 
@@ -2098,7 +2231,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico (con navegación)\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (múltiples nombres, con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico (con navegación)\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad (con acceso a perdedores 7d)\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (múltiples nombres, con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
