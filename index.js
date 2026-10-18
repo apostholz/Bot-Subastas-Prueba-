@@ -16,6 +16,8 @@ const {
     ButtonStyle
 } = require('discord.js');
 
+const { comandosPanel, setupPanel } = require('./panel');
+
 const DATA_DIR = '/app/data';
 const DB_FILE = path.join(DATA_DIR, 'compras_v2.json');
 const MIEMBROS_FILE = path.join(DATA_DIR, 'miembros.json');
@@ -1062,7 +1064,9 @@ client.once(Events.ClientReady, async (c) => {
 
             new SlashCommandBuilder()
                 .setName('ayuda')
-                .setDescription('Lista los comandos')
+                .setDescription('Lista los comandos'),
+
+            ...comandosPanel
         ];
 
         await rest.put(
@@ -1118,6 +1122,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const miembros = cargarMiembros();
         const focused = interaction.options.getFocused(true);
         const cmd = interaction.commandName;
+
+        if (cmd === 'panel') return;
 
         if (cmd === 'objeto' && focused.name === 'nombre') {
             const objetos = obtenerObjetosUnicos(db);
@@ -2266,7 +2272,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico (con navegación)\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad (con acceso a perdedores 7d)\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (agregar/quitar/cambiar, con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico (con navegación)\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad (con acceso a perdedores 7d)\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (agregar/quitar/cambiar, con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje\n\n**Sistema de Paneles:**\n\`/panel crear\` · crear panel en un thread\n\`/panel ver\` · mostrar panel actual\n\`/panel objeto\` · cambiar objeto del panel\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel indice\` · crear/actualizar índice de subastas (solo líder/helper)`,
                 ephemeral: true
             });
         }
@@ -2278,6 +2284,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
             } catch (e) { /* ignorar */ }
         }
     }
+});
+
+// ====== SETUP PANEL ======
+setupPanel(client, {
+    cargarDB,
+    guardarDB,
+    sincronizarConGitHub,
+    calcularPrioridad,
+    compararPrioridad,
+    formatearNombreConCantidad,
+    aplicarCanonico,
+    contarGanador,
+    obtenerNombresUnicos,
+    obtenerObjetosUnicos,
+    cargarMiembros,
+    normalizar,
+    fechaHoyArgentina,
+    ROL_LIDER,
+    ROL_HELPER
 });
 
 client.login(process.env.DISCORD_TOKEN);
