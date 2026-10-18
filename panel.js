@@ -172,7 +172,8 @@ function renderPanel(session, funciones) {
     const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`panel_btn:editar:${session.id}`).setLabel('Editar').setStyle(ButtonStyle.Secondary).setDisabled(cerrada),
         new ButtonBuilder().setCustomId(`panel_btn:historial:${session.id}`).setLabel('Ver historial').setStyle(ButtonStyle.Secondary).setDisabled(cerrada),
-        new ButtonBuilder().setCustomId(`panel_btn:registrar:${session.id}`).setLabel('Registrar resultado').setStyle(ButtonStyle.Primary).setDisabled(cerrada)
+        new ButtonBuilder().setCustomId(`panel_btn:registrar:${session.id}`).setLabel('Registrar resultado').setStyle(ButtonStyle.Primary).setDisabled(cerrada),
+        new ButtonBuilder().setCustomId(`panel_btn:cancelar:${session.id}`).setLabel('Cancelar subasta').setStyle(ButtonStyle.Danger).setDisabled(cerrada)
     );
 
     return { embeds: [embed], components: [row1, row2] };
@@ -335,13 +336,14 @@ function setupPanel(client, funciones) {
             const esLiderUsuario = esLider(interaction.member, funciones);
 
             if (sub === 'crear') {
+                await interaction.deferReply();
                 if (!interaction.channel.isThread()) {
-                    return interaction.reply({ content: '❌ Este comando solo funciona dentro de un thread.', ephemeral: true });
+                    return interaction.editReply({ content: '❌ Este comando solo funciona dentro de un thread.' });
                 }
                 const threadId = interaction.channelId;
                 const existente = Object.values(subastas).find(s => s.threadId === threadId && s.estado === 'abierta');
                 if (existente) {
-                    return interaction.reply({ content: '❌ Ya hay un panel activo en este thread. Cancelalo o registralo antes de crear otro.', ephemeral: true });
+                    return interaction.editReply({ content: '❌ Ya hay un panel activo en este thread. Cancelalo o registralo antes de crear otro.' });
                 }
 
                 const db = funciones.cargarDB();
@@ -368,7 +370,7 @@ function setupPanel(client, funciones) {
                 guardarSubastas(subastas);
 
                 const { embeds, components } = renderPanel(session, funciones);
-                const msg = await interaction.reply({ embeds, components, fetchReply: true });
+                const msg = await interaction.editReply({ embeds, components });
                 session.messageId = msg.id;
                 guardarSubastas(subastas);
 
@@ -380,6 +382,7 @@ function setupPanel(client, funciones) {
                 if (!esLiderUsuario) {
                     return interaction.reply({ content: '❌ Solo líderes/helpers pueden crear o actualizar el índice.', ephemeral: true });
                 }
+                await interaction.deferReply({ ephemeral: true });
                 const indice = cargarIndice();
                 let canal = interaction.channel;
                 let msg = null;
@@ -405,7 +408,7 @@ function setupPanel(client, funciones) {
                 }
 
                 await actualizarIndice(client, funciones);
-                return interaction.reply({ content: '✅ Índice actualizado.', ephemeral: true });
+                return interaction.editReply({ content: '✅ Índice actualizado.' });
             }
 
             if (sub === 'cancelar') {
@@ -420,21 +423,12 @@ function setupPanel(client, funciones) {
                     return interaction.reply({ content: '❌ No hay panel activo en este thread.', ephemeral: true });
                 }
 
-                session.estado = 'cancelada';
-                pushHistorial(session, interaction, 'Subasta cancelada');
-                guardarSubastas(subastas);
-
-                await actualizarMensajePanel(client, session, funciones);
-
-                const archivadas = cargarArchivadas();
-                archivadas[session.id] = session;
-                guardarArchivadas(archivadas);
-
-                delete subastas[session.id];
-                guardarSubastas(subastas);
-                await actualizarIndice(client, funciones);
-
-                return interaction.reply({ content: '🗑️ Subasta cancelada y archivada sin registrar en historial.', ephemeral: true });
+                const id = guardarPendientePanel('cancelar_subasta', { sessionId: session.id }, interaction.user.id);
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, cancelar').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Volver').setStyle(ButtonStyle.Secondary)
+                );
+                return interaction.reply({ content: '⚠️ **¿Estás seguro de cancelar esta subasta?** No se guardará en el historial.', components: [row], ephemeral: true });
             }
 
             if (!interaction.channel.isThread()) {
@@ -506,33 +500,32 @@ function setupPanel(client, funciones) {
             const miembros = funciones.cargarMiembros();
             const esLiderUsuario = esLider(interaction.member, funciones);
 
-            if (accion === 'anotarme') {
-                const nombreRaw = interaction.member?.displayName || interaction.user.username;
-                const nombre = funciones.aplicarCanonico(nombreRaw, miembros);
-                if (incluyeInteresado(session, nombre, miembros)) {
-                    return interaction.reply({ content: 'ℹ️ Ya estás anotado.', ephemeral: true });
-                }
-                session.interesados.push(nombre);
-                pushHistorial(session, interaction, 'Se anotó');
-                guardarSubastas(subastas);
-                await actualizarMensajePanel(client, session, funciones);
-                await actualizarIndice(client, funciones);
-                return interaction.reply({ content: '✅ Te anotaste.', ephemeral: true });
-            }
+            if (accion === 'anotarme' || accion === 'retirarme') {
+                await interaction.deferReply({ ephemeral: true });
 
-            if (accion === 'retirarme') {
                 const nombreRaw = interaction.member?.displayName || interaction.user.username;
                 const nombre = funciones.aplicarCanonico(nombreRaw, miembros);
-                const idx = session.interesados.findIndex(i => claveJugadorLocal(i, miembros) === claveJugadorLocal(nombre, miembros));
-                if (idx === -1) {
-                    return interaction.reply({ content: 'ℹ️ No estabas anotado.', ephemeral: true });
+
+                if (accion === 'anotarme') {
+                    if (incluyeInteresado(session, nombre, miembros)) {
+                        return interaction.editReply({ content: 'ℹ️ Ya estás anotado.' });
+                    }
+                    session.interesados.push(nombre);
+                    pushHistorial(session, interaction, 'Se anotó');
+                } else {
+                    const idx = session.interesados.findIndex(i => claveJugadorLocal(i, miembros) === claveJugadorLocal(nombre, miembros));
+                    if (idx === -1) {
+                        return interaction.editReply({ content: 'ℹ️ No estabas anotado.' });
+                    }
+                    session.interesados.splice(idx, 1);
+                    pushHistorial(session, interaction, 'Se retiró');
                 }
-                session.interesados.splice(idx, 1);
-                pushHistorial(session, interaction, 'Se retiró');
+
                 guardarSubastas(subastas);
                 await actualizarMensajePanel(client, session, funciones);
                 await actualizarIndice(client, funciones);
-                return interaction.reply({ content: '✅ Te retiraste.', ephemeral: true });
+
+                return interaction.editReply({ content: accion === 'anotarme' ? '✅ Te anotaste.' : '✅ Te retiraste.' });
             }
 
             if (accion === 'prioridad') {
@@ -634,6 +627,18 @@ function setupPanel(client, funciones) {
                 );
 
                 return interaction.showModal(modal);
+            }
+
+            if (accion === 'cancelar') {
+                if (!esLiderUsuario) {
+                    return interaction.reply({ content: '❌ Solo líderes/helpers pueden cancelar la subasta.', ephemeral: true });
+                }
+                const id = guardarPendientePanel('cancelar_subasta', { sessionId: session.id }, interaction.user.id);
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, cancelar').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Volver').setStyle(ButtonStyle.Secondary)
+                );
+                return interaction.reply({ content: '⚠️ **¿Estás seguro de cancelar esta subasta?** No se guardará en el historial.', components: [row], ephemeral: true });
             }
         }
 
@@ -919,6 +924,24 @@ function setupPanel(client, funciones) {
 
                 pendingPanel.delete(id);
                 return interaction.editReply({ content: msg, components: [] });
+            }
+
+            if (p.tipo === 'cancelar_subasta') {
+                session.estado = 'cancelada';
+                pushHistorial(session, interaction, 'Subasta cancelada');
+                guardarSubastas(subastas);
+                await actualizarMensajePanel(client, session, funciones);
+
+                const archivadas = cargarArchivadas();
+                archivadas[session.id] = session;
+                guardarArchivadas(archivadas);
+
+                delete subastas[session.id];
+                guardarSubastas(subastas);
+                await actualizarIndice(client, funciones);
+
+                pendingPanel.delete(id);
+                return interaction.editReply({ content: '🗑️ Subasta cancelada y archivada sin registrar en historial.', components: [] });
             }
         }
     });
