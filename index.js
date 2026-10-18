@@ -1003,8 +1003,11 @@ client.once(Events.ClientReady, async (c) => {
                     .setDescription('Eliminar la corrección de un nombre')
                     .addStringOption(o => o.setName('nombre').setDescription('Nombre con canónico definido').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
-                    .setName('lista')
-                    .setDescription('Listar excluidos y canónicos')),
+                    .setName('canonicos')
+                    .setDescription('Listar todos los nombres canónicos'))
+                .addSubcommand(sub => sub
+                    .setName('excluidos')
+                    .setDescription('Listar todos los nombres excluidos del ranking')),
 
             new SlashCommandBuilder()
                 .setName('editar')
@@ -1726,11 +1729,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.commandName === 'miembro') {
             const sub = interaction.options.getSubcommand();
 
-            if (sub === 'lista') {
-                const ex = miembros.excluidos.length ? miembros.excluidos.join(', ') : '(ninguno)';
+            if (sub === 'canonicos') {
                 const can = Object.entries(miembros.canonicos || {}).map(([k, v]) => `\`${k}\` → **${v}**`).join('\n') || '(ninguno)';
                 return interaction.reply({
-                    content: `**Excluidos del ranking:** ${ex}\n\n**Canónicos:**\n${can}`,
+                    content: `**Canónicos registrados:**\n${can}`,
+                    ephemeral: true
+                });
+            }
+
+            if (sub === 'excluidos') {
+                const ex = miembros.excluidos.length ? miembros.excluidos.map(e => `• ${e}`).join('\n') : '(ninguno)';
+                return interaction.reply({
+                    content: `**Excluidos del ranking:**\n${ex}`,
                     ephemeral: true
                 });
             }
@@ -1738,22 +1748,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const nombre = interaction.options.getString('nombre');
 
             if (sub === 'excluir') {
-                if (esExcluido(nombre, miembros)) {
-                    return interaction.reply({ content: `ℹ️ **${nombre}** ya está excluido del ranking.`, ephemeral: true });
+                const canon = aplicarCanonico(nombre, miembros);
+                if (esExcluido(canon, miembros)) {
+                    return interaction.reply({ content: `ℹ️ **${canon}** ya está excluido del ranking.`, ephemeral: true });
                 }
-                miembros.excluidos.push(nombre);
+                miembros.excluidos.push(canon);
                 guardarMiembros(miembros);
-                return interaction.reply({ content: `✅ **${nombre}** excluido del ranking.` });
+                return interaction.reply({ content: `✅ **${canon}** excluido del ranking.` });
             }
             if (sub === 'incluir') {
-                const key = claveJugador(nombre, miembros);
+                const canon = aplicarCanonico(nombre, miembros);
+                const key = claveJugador(canon, miembros);
                 const idx = miembros.excluidos.findIndex(e => claveJugador(e, miembros) === key);
                 if (idx === -1) {
-                    return interaction.reply({ content: `ℹ️ **${nombre}** no estaba excluido.`, ephemeral: true });
+                    return interaction.reply({ content: `ℹ️ **${canon}** no estaba excluido.`, ephemeral: true });
                 }
                 miembros.excluidos.splice(idx, 1);
                 guardarMiembros(miembros);
-                return interaction.reply({ content: `✅ **${nombre}** reincluido en el ranking.` });
+                return interaction.reply({ content: `✅ **${canon}** reincluido en el ranking.` });
             }
             if (sub === 'canonico') {
                 const como = interaction.options.getString('como');
@@ -1773,9 +1785,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (!miembros.canonicos[key]) {
                     return interaction.reply({ content: `ℹ️ No hay canónico para **${nombre}**.`, ephemeral: true });
                 }
+                const canonActual = miembros.canonicos[key];
                 delete miembros.canonicos[key];
                 guardarMiembros(miembros);
-                return interaction.reply({ content: `✅ Canónico eliminado para **${nombre}**.` });
+                return interaction.reply({ content: `✅ Canónico eliminado para **${canonActual}** (antes se mostraba así).` });
             }
         }
 
@@ -2272,7 +2285,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico (con navegación)\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad (con acceso a perdedores 7d)\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (agregar/quitar/cambiar, con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje\n\n**Sistema de Paneles:**\n\`/panel crear\` · crear panel en un thread (categoría automática)\n\`/panel ver\` · mostrar panel actual\n\`/panel objeto\` · cambiar objeto del panel (categoría automática)\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta (solo líder/helper)\n\`/panel indice\` · crear/actualizar índice de subastas (solo líder/helper)`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico (con navegación)\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad (con acceso a perdedores 7d)\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones (\`excluir\`, \`incluir\`, \`canonico\`, \`quitar-canonico\`, \`canonicos\`, \`excluidos\`)\n\`/editar\` · editar entrada (agregar/quitar/cambiar, con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje\n\n**Sistema de Paneles:**\n\`/panel crear\` · crear panel en un thread (categoría automática)\n\`/panel ver\` · mostrar panel actual\n\`/panel objeto\` · cambiar objeto del panel (categoría automática)\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta (solo líder/helper)\n\`/panel indice\` · crear/actualizar índice de subastas (solo líder/helper)`,
                 ephemeral: true
             });
         }
