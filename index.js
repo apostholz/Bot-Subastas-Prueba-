@@ -91,6 +91,15 @@ function aplicarCanonico(nombre, miembros) {
     if (direct) return direct;
     return nombre;
 }
+function formatearNombreConCantidad(g, miembros) {
+    if (!g) return g;
+    const match = g.match(/^(.+?)(?:\s+[xX](\d+))?$/);
+    if (!match) return aplicarCanonico(g, miembros);
+    const base = match[1].trim();
+    const cantidad = match[2];
+    const nombreCanonico = aplicarCanonico(base, miembros);
+    return cantidad ? `${nombreCanonico} x${cantidad}` : nombreCanonico;
+}
 function esExcluido(nombre, miembros) {
     if (!nombre || !miembros.excluidos) return false;
     const key = claveJugador(nombre, miembros);
@@ -461,12 +470,12 @@ const PESOS = {
     'Equipo': { 
         'Equipo': 1.0, 
         'Accesorios': 1.5, 
-        'Emblemas Únicos': 3 
+        'Emblemas Únicos': 1.5 
     },
     'Accesorios': { 
         'Accesorios': 1.5, 
         'Equipo': 0.5, 
-        'Emblemas Únicos': 3 
+        'Emblemas Únicos': 1.5 
     }
 };
 
@@ -683,9 +692,9 @@ function renderObjetoPagina(payload, miembros) {
     } else {
         for (const c of slice) {
             out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x (${c.categoria})\n`;
-            out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
+            out += `   🏆 ${c.ganadores.map(g => formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
             if (c.perdedores && c.perdedores.length > 0) {
-                out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
+                out += `   💔 ${c.perdedores.map(g => formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
             }
             out += `\n`;
         }
@@ -715,9 +724,9 @@ function renderCategoriaPagina(payload, miembros) {
     } else {
         for (const c of slice) {
             out += `#${c.id} · ${formatearFecha(c.fecha)} ${etiquetaDias(c.fecha)} · ${nombreBonitoEvento(c.evento)} · ${c.cantidad}x ${c.objeto}\n`;
-            out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
+            out += `   🏆 ${c.ganadores.map(g => formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
             if (c.perdedores && c.perdedores.length > 0) {
-                out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
+                out += `   💔 ${c.perdedores.map(g => formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
             }
             out += `\n`;
         }
@@ -1010,6 +1019,12 @@ client.once(Events.ClientReady, async (c) => {
                     .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
                     .addStringOption(o => o.setName('jugador').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
+                    .setName('cambiar-ganador')
+                    .setDescription('Reemplazar un ganador por otro')
+                    .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+                    .addStringOption(o => o.setName('quitar').setDescription('Nombre actual a quitar').setRequired(true).setAutocomplete(true))
+                    .addStringOption(o => o.setName('poner').setDescription('Nombre nuevo a poner').setRequired(true).setAutocomplete(true)))
+                .addSubcommand(sub => sub
                     .setName('agregar-perdedor')
                     .setDescription('Agregar uno o varios perdedores (separados por coma)')
                     .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
@@ -1125,7 +1140,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
         }
 
-        if (['jugadores', 'ganadores', 'perdedores'].includes(focused.name)) {
+        if (['jugadores', 'ganadores', 'perdedores', 'quitar', 'poner'].includes(focused.name)) {
             const nombres = obtenerNombresUnicos(db, miembros);
             return interaction.respond(sugerirNombresMultiples(focused.value, nombres));
         }
@@ -1232,9 +1247,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                             bloqueActual = bloque;
                         }
                         out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
-                        out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
+                        out += `   🏆 ${c.ganadores.map(g => formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
                         if (c.perdedores && c.perdedores.length > 0) {
-                            out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
+                            out += `   💔 ${c.perdedores.map(g => formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
                         }
                         if (c.notas) {
                             out += `   📝 ${c.notas}\n`;
@@ -1323,7 +1338,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const e = { id: db.nextId++, ...p.payload };
                 db.compras.push(e);
                 guardarDB(db);
-                resultado = `✅ #${e.id} · 📅 ${formatearFecha(e.fecha)} · ${nombreBonitoEvento(e.evento)}\n📦 ${e.cantidad}x ${e.objeto} (${e.categoria})\n🏆 ${e.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}${e.perdedores.length ? `\n💔 ${e.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}` : ''}`;
+                resultado = `✅ #${e.id} · 📅 ${formatearFecha(e.fecha)} · ${nombreBonitoEvento(e.evento)}\n📦 ${e.cantidad}x ${e.objeto} (${e.categoria})\n🏆 ${e.ganadores.map(g => formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}${e.perdedores.length ? `\n💔 ${e.perdedores.map(g => formatearNombreConCantidad(g, miembros)).join(', ')}` : ''}`;
                 requiereSync = true;
             }
             else if (p.tipo === 'borrar') {
@@ -1354,6 +1369,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
                             if (pos !== -1) e.ganadores.splice(pos, 1);
                         }
                     }
+                    else if (sub === 'cambiar-ganador') {
+                        const pos = buscarJugadorEnLista(e.ganadores, valor.quitar, miembros);
+                        if (pos !== -1) e.ganadores.splice(pos, 1, valor.poner);
+                    }
                     else if (sub === 'agregar-perdedor') {
                         for (const j of valor) e.perdedores.push(j);
                     }
@@ -1371,8 +1390,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     guardarDB(db);
                     let r = `✅ Edición aplicada a #${e.id}.\n\n`;
                     r += `#${e.id} · ${formatearFecha(e.fecha)} ${etiquetaDias(e.fecha)} · ${nombreBonitoEvento(e.evento)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
-                    r += `🏆 ${e.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
-                    if (e.perdedores.length > 0) r += `💔 ${e.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
+                    r += `🏆 ${e.ganadores.map(g => formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
+                    if (e.perdedores.length > 0) r += `💔 ${e.perdedores.map(g => formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
                     if (e.notas) r += `📝 ${e.notas}`;
                     resultado = r;
                     requiereSync = true;
@@ -1529,8 +1548,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             for (let i = 0; i < Math.min(validas.length, MAX_MOSTRAR); i++) {
                 const v = validas[i];
                 preview += `**${i + 1}.** ${formatearFecha(v.fecha)} · ${nombreBonitoEvento(v.evento)} · ${v.cantidad}x ${v.objeto} (${v.categoria})\n`;
-                preview += `   🏆 ${v.ganadores.join(', ') || 'nadie'}\n`;
-                if (v.perdedores.length > 0) preview += `   💔 ${v.perdedores.join(', ')}\n`;
+                preview += `   🏆 ${v.ganadores.map(g => formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
+                if (v.perdedores.length > 0) preview += `   💔 ${v.perdedores.map(g => formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
                 preview += `\n`;
             }
             if (validas.length > MAX_MOSTRAR) preview += `... y **${validas.length - MAX_MOSTRAR}** más.\n\n`;
@@ -1820,6 +1839,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 cuerpo += `\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
                 payload = { id, sub, valor: quitados };
             }
+            else if (sub === 'cambiar-ganador') {
+                const quitar = interaction.options.getString('quitar').trim();
+                const poner = interaction.options.getString('poner').trim();
+                const posQuitar = buscarJugadorEnLista(e.ganadores, quitar, miembros);
+                const posPoner = buscarJugadorEnLista(e.ganadores, poner, miembros);
+                
+                if (posQuitar === -1) {
+                    return interaction.reply({ content: `❌ **${quitar}** no está en ganadores de #${id}.`, ephemeral: true });
+                }
+                if (posPoner !== -1) {
+                    return interaction.reply({ content: `❌ **${poner}** ya está en ganadores de #${id}.`, ephemeral: true });
+                }
+                
+                cuerpo = `Cambiar **${quitar}** por **${poner}** en ganadores de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
+                payload = { id, sub, valor: { quitar, poner } };
+            }
             else if (sub === 'agregar-perdedor') {
                 const str = interaction.options.getString('jugador');
                 const nombresOriginales = str.split(',').map(s => s.trim()).filter(Boolean);
@@ -1946,8 +1981,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             let cuerpo = `📅 ${formatearFecha(fecha)} · ${nombreBonitoEvento(evento)}\n`;
             cuerpo += `📦 ${cantidad}x ${objeto} (${categoria})\n`;
-            cuerpo += `🏆 ${ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}`;
-            if (perdedores.length > 0) cuerpo += `\n💔 ${perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}`;
+            cuerpo += `🏆 ${ganadores.map(g => formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
+            if (perdedores.length > 0) cuerpo += `\n💔 ${perdedores.map(g => formatearNombreConCantidad(g, miembros)).join(', ')}`;
 
             return mostrarPreview(interaction, 'Confirmar registro', cuerpo, interaction.commandName, entrada);
         }
@@ -2021,9 +2056,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         bloqueActual = bloque;
                     }
                     out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
-                    out += `   🏆 ${c.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}\n`;
+                    out += `   🏆 ${c.ganadores.map(g => formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
                     if (c.perdedores && c.perdedores.length > 0) {
-                        out += `   💔 ${c.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}\n`;
+                        out += `   💔 ${c.perdedores.map(g => formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
                     }
                     if (c.notas) {
                         out += `   📝 ${c.notas}\n`;
@@ -2221,8 +2256,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             let cuerpo = `#${e.id} · ${formatearFecha(e.fecha)} ${etiquetaDias(e.fecha)} · ${nombreBonitoEvento(e.evento)}\n`;
             cuerpo += `📦 ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
-            cuerpo += `🏆 ${e.ganadores.map(g => aplicarCanonico(g, miembros)).join(', ') || 'nadie'}`;
-            if (e.perdedores.length > 0) cuerpo += `\n💔 ${e.perdedores.map(g => aplicarCanonico(g, miembros)).join(', ')}`;
+            cuerpo += `🏆 ${e.ganadores.map(g => formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
+            if (e.perdedores.length > 0) cuerpo += `\n💔 ${e.perdedores.map(g => formatearNombreConCantidad(g, miembros)).join(', ')}`;
             if (e.notas) cuerpo += `\n📝 ${e.notas}`;
 
             return mostrarPreview(interaction, '⚠️ Confirmar BORRADO', cuerpo, 'borrar', { id });
@@ -2231,7 +2266,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico (con navegación)\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad (con acceso a perdedores 7d)\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (múltiples nombres, con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra de hoy\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas con texto CSV\n\`/historial\` · historial privado (varios jugadores)\n\`/historial2\` · historial público (varios jugadores)\n\`/dia\` · compras de un día específico (con navegación)\n\`/total\` · totales por categoría (varios jugadores)\n\`/ranking\` · tabla general con paginación\n\`/prioridad\` · calcular prioridad (con acceso a perdedores 7d)\n\`/alertas\` · alertas de acaparamiento (7d)\n\`/objeto\` · apariciones de un objeto (Clasificación o Lista, con paginación)\n\`/categoria\` · todas las apariciones de una categoría (con paginación)\n\`/backup\` · exportar CSV ordenado por fecha\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada (agregar/quitar/cambiar, con confirmación)\n\`/borrar\` · borrar por ID (con confirmación)\n\`/ayuda\` · este mensaje`,
                 ephemeral: true
             });
         }
