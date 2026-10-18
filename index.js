@@ -987,12 +987,12 @@ client.once(Events.ClientReady, async (c) => {
                 .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
                 .addSubcommand(sub => sub
                     .setName('excluir')
-                    .setDescription('Excluir un nombre del ranking')
-                    .addStringOption(o => o.setName('nombre').setDescription('Nombre a excluir').setRequired(true).setAutocomplete(true)))
+                    .setDescription('Excluir uno o varios nombres del ranking')
+                    .addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('incluir')
-                    .setDescription('Reincluir un nombre excluido')
-                    .addStringOption(o => o.setName('nombre').setDescription('Nombre a reincluir').setRequired(true).setAutocomplete(true)))
+                    .setDescription('Reincluir uno o varios nombres excluidos')
+                    .addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
                 .addSubcommand(sub => sub
                     .setName('canonico')
                     .setDescription('Definir cómo se muestran uno o varios nombres (separados por coma)')
@@ -1745,32 +1745,62 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 });
             }
 
-            const nombre = interaction.options.getString('nombre');
+            const nombreRaw = interaction.options.getString('nombre');
+            const nombres = nombreRaw.split(',').map(s => s.trim()).filter(Boolean);
 
             if (sub === 'excluir') {
-                const canon = aplicarCanonico(nombre, miembros);
-                if (esExcluido(canon, miembros)) {
-                    return interaction.reply({ content: `ℹ️ **${canon}** ya está excluido del ranking.`, ephemeral: true });
+                const agregados = [];
+                const yaEstaban = [];
+                const vistos = new Set();
+                for (const n of nombres) {
+                    const canon = aplicarCanonico(n, miembros);
+                    const key = claveJugador(canon, miembros);
+                    if (vistos.has(key)) continue;
+                    vistos.add(key);
+                    if (esExcluido(canon, miembros)) {
+                        yaEstaban.push(canon);
+                    } else {
+                        miembros.excluidos.push(canon);
+                        agregados.push(canon);
+                    }
                 }
-                miembros.excluidos.push(canon);
+                if (agregados.length === 0) {
+                    return interaction.reply({ content: `ℹ️ Todos ya estaban excluidos: ${yaEstaban.join(', ')}`, ephemeral: true });
+                }
                 guardarMiembros(miembros);
-                return interaction.reply({ content: `✅ **${canon}** excluido del ranking.` });
+                let msg = `✅ **Excluidos del ranking:** ${agregados.join(', ')}`;
+                if (yaEstaban.length > 0) msg += `\nℹ️ Ya estaban excluidos: ${yaEstaban.join(', ')}`;
+                return interaction.reply({ content: msg });
             }
+            
             if (sub === 'incluir') {
-                const canon = aplicarCanonico(nombre, miembros);
-                const key = claveJugador(canon, miembros);
-                const idx = miembros.excluidos.findIndex(e => claveJugador(e, miembros) === key);
-                if (idx === -1) {
-                    return interaction.reply({ content: `ℹ️ **${canon}** no estaba excluido.`, ephemeral: true });
+                const quitados = [];
+                const noEstaban = [];
+                const vistos = new Set();
+                for (const n of nombres) {
+                    const canon = aplicarCanonico(n, miembros);
+                    const key = claveJugador(canon, miembros);
+                    if (vistos.has(key)) continue;
+                    vistos.add(key);
+                    const idx = miembros.excluidos.findIndex(e => claveJugador(e, miembros) === key);
+                    if (idx === -1) {
+                        noEstaban.push(canon);
+                    } else {
+                        miembros.excluidos.splice(idx, 1);
+                        quitados.push(canon);
+                    }
                 }
-                miembros.excluidos.splice(idx, 1);
+                if (quitados.length === 0) {
+                    return interaction.reply({ content: `ℹ️ Ninguno estaba excluido: ${noEstaban.join(', ')}`, ephemeral: true });
+                }
                 guardarMiembros(miembros);
-                return interaction.reply({ content: `✅ **${canon}** reincluido en el ranking.` });
+                let msg = `✅ **Reincluidos en el ranking:** ${quitados.join(', ')}`;
+                if (noEstaban.length > 0) msg += `\nℹ️ No estaban excluidos: ${noEstaban.join(', ')}`;
+                return interaction.reply({ content: msg });
             }
+            
             if (sub === 'canonico') {
                 const como = interaction.options.getString('como');
-                const nombresRaw = interaction.options.getString('nombre') || '';
-                const nombres = nombresRaw.split(',').map(s => s.trim()).filter(Boolean);
                 if (nombres.length === 0) {
                     return interaction.reply({ content: '❌ Debes indicar al menos un nombre.', ephemeral: true });
                 }
@@ -1781,9 +1811,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.reply({ content: `✅ ${nombres.map(n => `**${n}**`).join(', ')} se mostrarán como **${como}**.` });
             }
             if (sub === 'quitar-canonico') {
-                const key = normalizarNombre(nombre);
+                const key = normalizarNombre(nombres[0]);
                 if (!miembros.canonicos[key]) {
-                    return interaction.reply({ content: `ℹ️ No hay canónico para **${nombre}**.`, ephemeral: true });
+                    return interaction.reply({ content: `ℹ️ No hay canónico para **${nombres[0]}**.`, ephemeral: true });
                 }
                 const canonActual = miembros.canonicos[key];
                 delete miembros.canonicos[key];
