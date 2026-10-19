@@ -13,6 +13,7 @@ const {
 } = require('discord.js');
 
 const utils = require('./utils');
+const logic = require('./logic');
 
 const DATA_DIR = '/app/data';
 const SUBASTAS_FILE = path.join(DATA_DIR, 'subastas_activas.json');
@@ -64,31 +65,6 @@ function obtenerEventoPorHora() {
     return 'Banquete';
 }
 
-function inferirCategoria(objeto, db) {
-    const key = utils.normalizar(objeto);
-    const map = {
-        'lagarto de trueno vil': 'Emblemas Únicos', 'idolo de obsidiana vil': 'Emblemas Únicos',
-        'tiranosaurio vil': 'Emblemas Únicos', 'hidra vil': 'Emblemas Únicos',
-        'elemental de trueno': 'Emblemas Generales', 'gigante de lava': 'Emblemas Generales',
-        'espiritu del viento': 'Emblemas Generales', 'gigante bioquimico': 'Emblemas Generales',
-        'combatiente': 'Emblemas Generales', 'luchador hombre pez': 'Emblemas Generales',
-        'arquero gnoll': 'Emblemas Generales', 'mago': 'Emblemas Generales'
-    };
-    if (map[key]) return map[key];
-    if (key.includes('caja 20k')) return 'Cajas 20k';
-    if (key.includes('collar') || key.includes('anillo') || key.includes('marca') || key.includes('brazal')) return 'Accesorios';
-    if (db && Array.isArray(db.compras)) {
-        const compras = db.compras.filter(c => c.objeto && utils.normalizar(c.objeto) === key);
-        if (compras.length > 0) {
-            const conteo = {};
-            for (const c of compras) conteo[c.categoria] = (conteo[c.categoria] || 0) + 1;
-            const orden = Object.entries(conteo).sort((a, b) => b[1] - a[1]);
-            if (orden.length > 0) return orden[0][0];
-        }
-    }
-    return 'Equipo';
-}
-
 function guardarPendientePanel(tipo, payload, userId) {
     const id = Math.random().toString(36).slice(2, 10);
     pendingPanel.set(id, { tipo, payload, userId, expira: Date.now() + 10 * 60 * 1000 });
@@ -136,7 +112,8 @@ function renderPanel(session, funciones) {
     const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`panel_btn:editar:${session.id}`).setLabel('Editar').setStyle(ButtonStyle.Secondary).setDisabled(cerrada),
         new ButtonBuilder().setCustomId(`panel_btn:historial:${session.id}`).setLabel('Ver historial').setStyle(ButtonStyle.Secondary).setDisabled(cerrada),
-        new ButtonBuilder().setCustomId(`panel_btn:registrar:${session.id}`).setLabel('Registrar resultado').setStyle(ButtonStyle.Success).setDisabled(cerrada),
+        new ButtonBuilder().setCustomId(`panel_btn:logs:${session.id}`).setLabel('Logs').setStyle(ButtonStyle.Secondary).setDisabled(cerrada),
+        new ButtonBuilder().setCustomId(`panel_btn:registrar:${session.id}`).setLabel('Registrar resultado').setStyle(ButtonStyle.Primary).setDisabled(cerrada),
         new ButtonBuilder().setCustomId(`panel_btn:cancelar:${session.id}`).setLabel('Cancelar subasta').setStyle(ButtonStyle.Secondary).setDisabled(cerrada)
     );
 
@@ -150,7 +127,22 @@ async function actualizarMensajePanel(client, session, funciones) {
         const msg = await canal.messages.fetch(session.messageId);
         const { embeds, components } = renderPanel(session, funciones);
         await msg.edit({ embeds, components });
-    } catch (e) { /* Ignorar errores si el mensaje fue borrado */ }
+    } catch (e) {
+        if (e.code === 10008) { // Unknown Message
+            console.log(`[Panel] Mensaje no encontrado en <#${session.threadId}>. Recreando...`);
+            try {
+                const canal = await client.channels.fetch(session.channelId);
+                const { embeds, components } = renderPanel(session, funciones);
+                const nuevo = await canal.send({ embeds, components });
+                session.messageId = nuevo.id;
+                const subastas = cargarSubastas();
+                subastas[session.id] = session;
+                guardarSubastas(subastas);
+            } catch (err) { console.error('[Panel] Error al recrear:', err.message); }
+        } else {
+            console.error(`[Panel] Error editando en <#${session.threadId}>:`, e.message);
+        }
+    }
 }
 
 async function actualizarIndice(client, funciones) {
@@ -314,7 +306,7 @@ function setupPanel(client, funciones) {
 
                 const db = funciones.cargarDB();
                 const objeto = interaction.options.getString('objeto');
-                const categoria = inferirCategoria(objeto, db);
+                const categoria = logic.inferirCategoria(objeto, db);
                 const cantidad = interaction.options.getInteger('cantidad');
                 const evento = interaction.options.getString('evento') || obtenerEventoPorHora();
                 const fecha = funciones.fechaHoyArgentina();
@@ -358,10 +350,10 @@ function setupPanel(client, funciones) {
 
                 const id = guardarPendientePanel('cancelar_subasta', { sessionId: session.id }, interaction.user.id);
                 const row = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, cancelar').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, cancelar y eliminar').setStyle(ButtonStyle.Danger),
                     new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Volver').setStyle(ButtonStyle.Secondary)
                 );
-                return interaction.reply({ content: '⚠️ **¿Cancelar esta subasta?**', components: [row], ephemeral: true });
+                return interaction.reply({ content: '⚠️ **¿Cancelar esta subasta y eliminar el panel?**', components: [row], ephemeral: true });
             }
 
             if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Solo en threads.', ephemeral: true });
@@ -369,14 +361,25 @@ function setupPanel(client, funciones) {
             if (!session) return interaction.reply({ content: '❌ No hay panel activo.', ephemeral: true });
 
             if (sub === 'ver') {
-                const render = renderPanel(session, funciones);
-                return interaction.reply({ embeds: [render.embeds[0]], components: render.components });
+                // Punto 4: Borrar el mensaje anterior
+                if (session.messageId) {
+                    try {
+                        const canal = await client.channels.fetch(session.channelId);
+                        const oldMsg = await canal.messages.fetch(session.messageId);
+                        await oldMsg.delete();
+                    } catch (e) { /* ignorar si ya no existe */ }
+                }
+                const { embeds, components } = renderPanel(session, funciones);
+                const msg = await interaction.reply({ embeds, components });
+                session.messageId = msg.id;
+                guardarSubastas(subastas);
+                return;
             }
 
             if (sub === 'objeto') {
                 const db = funciones.cargarDB();
                 const nombre = interaction.options.getString('nombre');
-                const categoria = inferirCategoria(nombre, db);
+                const categoria = logic.inferirCategoria(nombre, db);
                 session.item.objeto = nombre; session.item.categoria = categoria;
                 pushHistorial(session, interaction, `Objeto cambiado a ${nombre}`);
                 guardarSubastas(subastas);
@@ -475,7 +478,6 @@ function setupPanel(client, funciones) {
                 const resultados = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
                 resultados.sort(funciones.compararPrioridad);
                 
-                // CORREGIDO: Guardar la sesión para que funcione el botón de perdedores
                 const pPayload = { categoria: session.item.categoria, jugadores: session.interesados, resultados };
                 const id = funciones.guardarPendiente('prioridad-page', pPayload, interaction.user.id);
                 pPayload.id = id;
@@ -484,9 +486,19 @@ function setupPanel(client, funciones) {
                 return interaction.reply({ content, components, ephemeral: true });
             }
 
-            if (accion === 'historial') {
+            if (accion === 'logs') {
                 const hist = session.historial.slice(-10).map(h => `- ${new Date(h.timestamp).toLocaleTimeString('es-AR')} - ${h.userName}: ${h.accion}`).join('\n');
                 return interaction.reply({ content: `**Últimas modificaciones:**\n${hist || 'Sin registros.'}`, ephemeral: true });
+            }
+
+            if (accion === 'historial') {
+                // Punto 9: Nuevo botón de Historial
+                if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`panel_hist:res:${sessionId}`).setLabel('Resumido').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId(`panel_hist:det:${sessionId}`).setLabel('Detallado').setStyle(ButtonStyle.Secondary)
+                );
+                return interaction.reply({ content: 'Elegí el formato del historial:', components: [row], ephemeral: true });
             }
 
             if (accion === 'editar') {
@@ -525,11 +537,95 @@ function setupPanel(client, funciones) {
                 if (!esLiderUsuario) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
                 const id = guardarPendientePanel('cancelar_subasta', { sessionId: session.id }, interaction.user.id);
                 const row = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, cancelar').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, cancelar y eliminar').setStyle(ButtonStyle.Danger),
                     new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Volver').setStyle(ButtonStyle.Secondary)
                 );
-                return interaction.reply({ content: '⚠️ **¿Estás seguro de cancelar esta subasta?**', components: [row], ephemeral: true });
+                return interaction.reply({ content: '⚠️ **¿Estás seguro de cancelar y eliminar esta subasta?**', components: [row], ephemeral: true });
             }
+        }
+
+        // ====== BOTONES DE HISTORIAL ======
+        if (interaction.isButton() && interaction.customId.startsWith('panel_hist:')) {
+            const [, tipo, sessionId] = interaction.customId.split(':');
+            const subastas = cargarSubastas();
+            const session = subastas[sessionId];
+            if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
+            const db = funciones.cargarDB();
+            const miembros = funciones.cargarMiembros();
+
+            if (tipo === 'res') {
+                const todos = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
+                todos.sort(funciones.compararPrioridad);
+                
+                let compras = db.compras.filter(c => todos.some(t => utils.contarGanador(c.ganadores, t.jugador, miembros) > 0));
+                compras.sort((a, b) => b.fecha.localeCompare(a.fecha));
+                compras = compras.slice(0, 5);
+
+                let out = `📜 **Últimas 5 compras (todos)**\n\n`;
+                if (compras.length === 0) out += 'Sin registros.';
+                else {
+                    for (const c of compras) {
+                        out += `#${c.id} · ${utils.formatearFecha(c.fecha)} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n   🏆 ${c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
+                    }
+                }
+                return interaction.update({ content: out, components: [] });
+            }
+
+            if (tipo === 'det') {
+                const todos = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
+                todos.sort(funciones.compararPrioridad);
+                
+                const rows = [];
+                let row = new ActionRowBuilder();
+                todos.forEach((t, i) => {
+                    const nombre = funciones.aplicarCanonico(t.jugador, miembros);
+                    if (i > 0 && i % 5 === 0) { rows.push(row); row = new ActionRowBuilder(); }
+                    row.addComponents(new ButtonBuilder().setCustomId(`panel_hist_p:${sessionId}:${i}`).setLabel(nombre).setStyle(ButtonStyle.Primary));
+                });
+                rows.push(row);
+                return interaction.update({ content: 'Elegí el jugador:', components: rows });
+            }
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('panel_hist_p:')) {
+            const [, sessionId, index] = interaction.customId.split(':');
+            const subastas = cargarSubastas();
+            const session = subastas[sessionId];
+            if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
+            const db = funciones.cargarDB();
+            const miembros = funciones.cargarMiembros();
+            
+            const todos = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
+            todos.sort(funciones.compararPrioridad);
+            const t = todos[parseInt(index)];
+            if (!t) return interaction.reply({ content: '❌ Jugador inválido.', ephemeral: true });
+            
+            const nombre = funciones.aplicarCanonico(t.jugador, miembros);
+            let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, t.jugador, miembros) > 0).sort((a, b) => b.fecha.localeCompare(a.fecha));
+            
+            let out = `📜 **${nombre}** (Detallado)\n\n`;
+            for (const cat of utils.CATEGORIAS) {
+                const filtradas = comprasJ.filter(c => c.categoria === cat).slice(0, 5);
+                if (filtradas.length === 0) continue;
+                out += `**${cat}** (últimas ${filtradas.length}):\n`;
+                for (const c of filtradas) {
+                    const n = utils.contarGanador(c.ganadores, t.jugador, miembros);
+                    out += `#${c.id} · ${utils.formatearFecha(c.fecha)} · ${n}x ${c.objeto}\n`;
+                }
+                out += `\n`;
+            }
+            
+            // Volver a los jugadores
+            const rows = [];
+            let row = new ActionRowBuilder();
+            todos.forEach((t, i) => {
+                const nom = funciones.aplicarCanonico(t.jugador, miembros);
+                if (i > 0 && i % 5 === 0) { rows.push(row); row = new ActionRowBuilder(); }
+                row.addComponents(new ButtonBuilder().setCustomId(`panel_hist_p:${sessionId}:${i}`).setLabel(nom).setStyle(i === parseInt(index) ? ButtonStyle.Success : ButtonStyle.Secondary));
+            });
+            rows.push(row);
+            
+            return interaction.update({ content: out, components: rows });
         }
 
         // ====== MENÚ EDITAR DEL PANEL ======
@@ -704,19 +800,42 @@ function setupPanel(client, funciones) {
 
                 pendingPanel.delete(id);
                 await interaction.editReply({ content: '✅ Acción completada.', components: [] });
-                await interaction.followUp({ content: msg, ephemeral: false }); // Punto 6: Público
+                await interaction.followUp({ content: msg, ephemeral: false });
+                
+                // Preguntar por ping
+                if (entrada.ganadores.length > 0) {
+                    const members = await interaction.guild.members.fetch();
+                    const menciones = entrada.ganadores.map(g => {
+                        const member = members.find(m => utils.normalizar(m.user.username) === utils.normalizar(g) || utils.normalizar(m.displayName) === utils.normalizar(g) || utils.normalizar(funciones.aplicarCanonico(m.displayName, miembros)) === utils.normalizar(g));
+                        return member ? `<@${member.id}>` : `**${g}**`;
+                    });
+                    const pingId = funciones.guardarPendiente('ping', { menciones, mensajeBase: `✅ Registro guardado.` }, interaction.user.id);
+                    const rowPing = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`ping_confirm_${pingId}`).setLabel('Sí, pingear').setStyle(ButtonStyle.Success),
+                        new ButtonBuilder().setCustomId(`ping_cancel_${pingId}`).setLabel('No, gracias').setStyle(ButtonStyle.Secondary)
+                    );
+                    await interaction.followUp({ content: '🔔 ¿Querés avisar a los ganadores?', components: [rowPing], ephemeral: true });
+                }
                 return;
             }
 
             if (p.tipo === 'cancelar_subasta') {
                 session.estado = 'cancelada';
-                pushHistorial(session, interaction, 'Subasta cancelada');
+                pushHistorial(session, interaction, 'Subasta cancelada y eliminada');
                 guardarSubastas(subastas);
                 const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
                 delete subastas[session.id]; guardarSubastas(subastas);
+                
+                // Punto 2: Eliminar el mensaje del panel
+                try {
+                    const canal = await client.channels.fetch(session.channelId);
+                    const msg = await canal.messages.fetch(session.messageId);
+                    await msg.delete();
+                } catch (e) { /* ignorar si ya no existe */ }
+
                 await refrescarTodo(client, funciones);
                 pendingPanel.delete(id);
-                return interaction.editReply({ content: '🗑️ Subasta cancelada y archivada sin registrar.', components: [] });
+                return interaction.editReply({ content: '🗑️ Subasta cancelada, panel eliminado y archivada sin registrar.', components: [] });
             }
         }
 
@@ -774,7 +893,7 @@ function setupPanel(client, funciones) {
                 const objeto = interaction.fields.getTextInputValue('objeto');
                 const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10);
                 const db = funciones.cargarDB();
-                const cat = inferirCategoria(objeto, db);
+                const cat = logic.inferirCategoria(objeto, db);
                 const ev = obtenerEventoPorHora();
                 const f = funciones.fechaHoyArgentina();
 
@@ -810,13 +929,20 @@ function setupPanel(client, funciones) {
                         subastas[id].estado = 'cancelada';
                         pushHistorial(subastas[id], interaction, 'Cancelada por Control Global');
                         archivadas[id] = subastas[id];
+                        
+                        try {
+                            const canal = await client.channels.fetch(subastas[id].channelId);
+                            const msg = await canal.messages.fetch(subastas[id].messageId);
+                            await msg.delete();
+                        } catch (e) { /* ignorar */ }
+
                         delete subastas[id];
                         cerradas++;
                     }
                 }
                 guardarSubastas(subastas); guardarArchivadas(archivadas);
                 await refrescarTodo(client, funciones);
-                return interaction.editReply({ content: `✅ Se cancelaron **${cerradas}** subastas.` });
+                return interaction.editReply({ content: `✅ Se cancelaron y eliminaron **${cerradas}** subastas.` });
             }
 
             if (accion === 'abrir_todos') {
@@ -824,7 +950,7 @@ function setupPanel(client, funciones) {
                 const objeto = interaction.fields.getTextInputValue('objeto');
                 const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10);
                 const db = funciones.cargarDB();
-                const cat = inferirCategoria(objeto, db);
+                const cat = logic.inferirCategoria(objeto, db);
                 const ev = obtenerEventoPorHora();
                 const f = funciones.fechaHoyArgentina();
                 const fijos = cargarThreadsFijos();
