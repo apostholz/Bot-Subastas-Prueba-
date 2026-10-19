@@ -119,7 +119,6 @@ const commandsData = [
 
     new SlashCommandBuilder().setName('ayuda').setDescription('Lista los comandos'),
     
-    // ====== PANELES DE SUBASTA (Los maneja panel.js) ======
     new SlashCommandBuilder().setName('panel').setDescription('Gestionar panel de subasta')
         .addSubcommand(sub => sub.setName('crear').setDescription('Crear panel en el thread actual (categoría automática)').addStringOption(o => o.setName('objeto').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true)).addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true)).addStringOption(o => o.setName('evento').setDescription('Evento (opcional)').setRequired(false).addChoices(...eventoChoices)))
         .addSubcommand(sub => sub.setName('ver').setDescription('Mostrar el panel activo de este thread'))
@@ -129,10 +128,9 @@ const commandsData = [
         .addSubcommand(sub => sub.setName('indice').setDescription('Crear/actualizar índice privado en este canal (solo líder/helper)'))
         .addSubcommand(sub => sub.setName('refresh').setDescription('Forzar actualización de todos los paneles')),
 
-    // ====== PANEL DE CONTROL ======
     new SlashCommandBuilder().setName('control').setDescription('Gestionar el Panel de Control de Subastas')
         .addSubcommand(sub => sub.setName('agregar').setDescription('Añadir un thread a la lista fija').addChannelOption(o => o.setName('canal').setDescription('Thread a fijar (o usa este mismo)').setRequired(false)))
-        .addSubcommand(sub => sub.setName('quitar').setDescription('Quitar un thread de la lista fija').addChannelOption(o => o.setName('canal').setDescription('Thread a quitar').setRequired(true)))
+        .addSubcommand(sub => sub.setName('quitar').setDescription('Quitar un thread de la lista fija').addChannelOption(o => o.setName('canal').setDescription('Thread a quitar (o usa este mismo)').setRequired(false)))
         .addSubcommand(sub => sub.setName('panel').setDescription('Crear/actualizar el Panel de Control en este canal'))
 ];
 
