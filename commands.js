@@ -5,7 +5,8 @@ const catChoices = utils.CATEGORIAS.map(cat => ({ name: cat, value: cat }));
 const catChoicesTodo = [...catChoices, { name: 'Todas', value: 'Todas' }];
 const visibilidadChoices = [{ name: 'Privado', value: 'Privado' }, { name: 'Visible', value: 'Visible' }];
 const periodoChoices = [{ name: '7 días', value: '7d' }, { name: 'Total', value: 'Total' }];
-const formatoChoices = [{ name: 'Clasificación', value: 'Clasificación' }, { name: 'Lista', value: 'Lista' }];
+const formatoObjetoChoices = [{ name: 'Clasificación', value: 'Clasificación' }, { name: 'Lista', value: 'Lista' }];
+const formatoHistorialChoices = [{ name: 'Detallado', value: 'Detallado' }, { name: 'Resumido', value: 'Resumido' }];
 const eventoChoices = [{ name: 'Invasión diurna', value: 'Invasión diurna' }, { name: 'Invasión nocturna', value: 'Invasión nocturna' }, { name: 'Banquete', value: 'Banquete' }];
 
 const commandsData = [
@@ -32,12 +33,12 @@ const commandsData = [
     new SlashCommandBuilder().setName('historial').setDescription('Historial privado de compras de uno o varios jugadores')
         .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('categoria').setDescription('Filtrar por categoría').setRequired(false).addChoices(...catChoicesTodo))
-        .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false).addChoices({ name: 'Detallado', value: 'Detallado' }, { name: 'Recientes', value: 'Recientes' })),
+        .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false).addChoices(...formatoHistorialChoices)),
 
     new SlashCommandBuilder().setName('historial2').setDescription('Historial público de compras de uno o varios jugadores')
         .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('categoria').setDescription('Filtrar por categoría').setRequired(false).addChoices(...catChoicesTodo))
-        .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false).addChoices({ name: 'Detallado', value: 'Detallado' }, { name: 'Recientes', value: 'Recientes' })),
+        .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false).addChoices(...formatoHistorialChoices)),
 
     new SlashCommandBuilder().setName('dia').setDescription('Ver todas las compras de un día específico')
         .addStringOption(o => o.setName('fecha').setDescription('DD/MM/YY, "hoy" o "ayer"').setRequired(true))
@@ -64,7 +65,7 @@ const commandsData = [
     new SlashCommandBuilder().setName('objeto').setDescription('Ver apariciones de un objeto específico')
         .addStringOption(o => o.setName('nombre').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('periodo').setDescription('Periodo a considerar').setRequired(false).addChoices(...periodoChoices))
-        .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false).addChoices(...formatoChoices))
+        .addStringOption(o => o.setName('formato').setDescription('Tipo de salida').setRequired(false).addChoices(...formatoObjetoChoices))
         .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
     new SlashCommandBuilder().setName('categoria').setDescription('Ver todas las apariciones de una categoría (filtrado opcional)')
@@ -85,25 +86,40 @@ const commandsData = [
         .addSubcommand(sub => sub.setName('excluidos').setDescription('Listar excluidos')),
 
     new SlashCommandBuilder().setName('editar').setDescription('Editar una entrada existente')
-        // NOTA: Se quita el setDefaultMemberPermissions para que Helpers puedan usarlo (validación en index.js)
-        .addSubcommand(sub => sub.setName('agregar-ganador').setDescription('Agregar ganadores').addIntegerOption(o => o.setName('id').setDescription('ID').setRequired(true)).addStringOption(o => o.setName('jugador').setDescription('Nombres').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(sub => sub.setName('quitar-ganador').setDescription('Quitar ganadores').addIntegerOption(o => o.setName('id').setDescription('ID').setRequired(true)).addStringOption(o => o.setName('jugador').setDescription('Nombres').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(sub => sub.setName('cambiar-ganador').setDescription('Cambiar ganador').addIntegerOption(o => o.setName('id').setDescription('ID').setRequired(true)).addStringOption(o => o.setName('quitar').setDescription('Actual').setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName('poner').setDescription('Nuevo').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(sub => sub.setName('agregar-perdedor').setDescription('Agregar perdedores').addIntegerOption(o => o.setName('id').setDescription('ID').setRequired(true)).addStringOption(o => o.setName('jugador').setDescription('Nombres').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(sub => sub.setName('quitar-perdedor').setDescription('Quitar perdedores').addIntegerOption(o => o.setName('id').setDescription('ID').setRequired(true)).addStringOption(o => o.setName('jugador').setDescription('Nombres').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(sub => sub.setName('set-nota').setDescription('Establecer nota').addIntegerOption(o => o.setName('id').setDescription('ID').setRequired(true)).addStringOption(o => o.setName('nota').setDescription('Texto').setRequired(true)))
-        .addSubcommand(sub => sub.setName('borrar-nota').setDescription('Borrar nota').addIntegerOption(o => o.setName('id').setDescription('ID').setRequired(true)))
-        .addSubcommand(sub => sub.setName('set-evento').setDescription('Reemplazar evento').addIntegerOption(o => o.setName('id').setDescription('ID').setRequired(true)).addStringOption(o => o.setName('evento').setDescription('Evento').setRequired(true).addChoices(...eventoChoices)))
-        .addSubcommand(sub => sub.setName('set-categoria').setDescription('Reemplazar categoría').addIntegerOption(o => o.setName('id').setDescription('ID').setRequired(true)).addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true).addChoices(...catChoices)))
-        .addSubcommand(sub => sub.setName('set-cantidad').setDescription('Reemplazar cantidad').addIntegerOption(o => o.setName('id').setDescription('ID').setRequired(true)).addIntegerOption(o => o.setName('cantidad').setDescription('Nueva cantidad').setRequired(true))),
+        .addSubcommand(sub => sub.setName('ganador').setDescription('Agregar o quitar ganadores')
+            .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+            .addStringOption(o => o.setName('accion').setDescription('Acción a realizar').setRequired(true).addChoices({ name: 'Agregar', value: 'agregar' }, { name: 'Quitar', value: 'quitar' }))
+            .addStringOption(o => o.setName('jugador').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(sub => sub.setName('perdedor').setDescription('Agregar o quitar perdedores')
+            .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+            .addStringOption(o => o.setName('accion').setDescription('Acción a realizar').setRequired(true).addChoices({ name: 'Agregar', value: 'agregar' }, { name: 'Quitar', value: 'quitar' }))
+            .addStringOption(o => o.setName('jugador').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(sub => sub.setName('reemplazar-ganador').setDescription('Reemplazar un ganador por otro')
+            .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+            .addStringOption(o => o.setName('jugador').setDescription('Nombre actual a quitar').setRequired(true).setAutocomplete(true))
+            .addStringOption(o => o.setName('por').setDescription('Nombre nuevo a poner').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(sub => sub.setName('reemplazar-perdedor').setDescription('Reemplazar un perdedor por otro')
+            .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+            .addStringOption(o => o.setName('jugador').setDescription('Nombre actual a quitar').setRequired(true).setAutocomplete(true))
+            .addStringOption(o => o.setName('por').setDescription('Nombre nuevo a poner').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(sub => sub.setName('set').setDescription('Cambiar objeto, cantidad, categoría o evento')
+            .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+            .addStringOption(o => o.setName('objeto').setDescription('Nuevo objeto (opcional)').setRequired(false).setAutocomplete(true))
+            .addIntegerOption(o => o.setName('cantidad').setDescription('Nueva cantidad (opcional)').setRequired(false))
+            .addStringOption(o => o.setName('categoria').setDescription('Nueva categoría (opcional)').setRequired(false).addChoices(...catChoices))
+            .addStringOption(o => o.setName('evento').setDescription('Nuevo evento (opcional)').setRequired(false).addChoices(...eventoChoices)))
+        .addSubcommand(sub => sub.setName('set-nota').setDescription('Establecer nota de una entrada')
+            .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))
+            .addStringOption(o => o.setName('nota').setDescription('Texto de la nota').setRequired(true)))
+        .addSubcommand(sub => sub.setName('borrar-nota').setDescription('Borrar nota de una entrada')
+            .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true))),
 
-    new SlashCommandBuilder().setName('borrar').setDescription('Borrar una entrada por ID')
-        // NOTA: Se quita el setDefaultMemberPermissions para que Helpers puedan usarlo (validación en index.js)
-        .addIntegerOption(o => o.setName('id').setDescription('ID de la entrada').setRequired(true)),
+    new SlashCommandBuilder().setName('borrar').setDescription('Borrar entradas por ID')
+        .addStringOption(o => o.setName('ids').setDescription('IDs separados por coma (ej: 301,302)').setRequired(true)),
 
     new SlashCommandBuilder().setName('ayuda').setDescription('Lista los comandos'),
-
-    // ====== PANELES DE SUBASTA ======
+    
+    // ====== PANELES DE SUBASTA (Los maneja panel.js) ======
     new SlashCommandBuilder().setName('panel').setDescription('Gestionar panel de subasta')
         .addSubcommand(sub => sub.setName('crear').setDescription('Crear panel en el thread actual (categoría automática)').addStringOption(o => o.setName('objeto').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true)).addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true)).addStringOption(o => o.setName('evento').setDescription('Evento (opcional)').setRequired(false).addChoices(...eventoChoices)))
         .addSubcommand(sub => sub.setName('ver').setDescription('Mostrar el panel activo de este thread'))
