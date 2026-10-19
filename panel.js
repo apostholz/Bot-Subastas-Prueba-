@@ -199,7 +199,7 @@ async function actualizarControlPanel(client, funciones) {
         const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Subastas').setDescription(desc).setColor(0x2B2D31);
 
         const rows = [];
-        const chunks = fijos.slice(0, 15); // Máximo 15 para no romper límites de componentes
+        const chunks = fijos.slice(0, 15);
         for (let i = 0; i < chunks.length; i += 3) {
             const row = new ActionRowBuilder();
             for (const tId of chunks.slice(i, i + 3)) {
@@ -213,7 +213,6 @@ async function actualizarControlPanel(client, funciones) {
             rows.push(row);
         }
 
-        // Botones globales
         if (fijos.length > 0) {
             const rowGlobal = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId('control_btn:abrir_todos').setLabel('Abrir TODAS').setStyle(ButtonStyle.Primary),
@@ -370,7 +369,8 @@ function setupPanel(client, funciones) {
             if (!session) return interaction.reply({ content: '❌ No hay panel activo.', ephemeral: true });
 
             if (sub === 'ver') {
-                return interaction.reply({ embeds: [renderPanel(session, funciones).embeds[0]], components: renderPanel(session, funciones).components });
+                const render = renderPanel(session, funciones);
+                return interaction.reply({ embeds: [render.embeds[0]], components: render.components });
             }
 
             if (sub === 'objeto') {
@@ -474,8 +474,13 @@ function setupPanel(client, funciones) {
                 if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
                 const resultados = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
                 resultados.sort(funciones.compararPrioridad);
-                const payload = { categoria: session.item.categoria, resultados, id: interaction.id }; // Usamos interaction.id como dummy id
-                const { content, components } = funciones.renderPrioridad(payload, miembros);
+                
+                // CORREGIDO: Guardar la sesión para que funcione el botón de perdedores
+                const pPayload = { categoria: session.item.categoria, jugadores: session.interesados, resultados };
+                const id = funciones.guardarPendiente('prioridad-page', pPayload, interaction.user.id);
+                pPayload.id = id;
+                
+                const { content, components } = funciones.renderPrioridad(pPayload, miembros);
                 return interaction.reply({ content, components, ephemeral: true });
             }
 
