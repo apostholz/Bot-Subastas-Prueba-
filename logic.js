@@ -400,5 +400,6 @@ module.exports = {
     obtenerCategoriasAfectantes, calcularPerdedores7d,
     construirBotonesPaginacion, renderPrioridad, renderPerdedores,
     renderRankingPagina, renderObjetoPagina, renderCategoriaPagina,
-    responderLargo, obtenerNombresUnicos, obtenerObjetosUnicos, sugerirNombresMultiples
+    responderLargo, obtenerNombresUnicos, obtenerObjetosUnicos, sugerirNombresMultiples,
+    huella // <-- La función que faltaba
 };
