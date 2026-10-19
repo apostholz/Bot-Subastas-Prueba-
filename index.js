@@ -80,7 +80,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (['panel', 'control'].includes(cmd)) return;
 
-        if ((cmd === 'objeto' || cmd === 'sub' || cmd === 'subf') && focused.name === 'objeto') {
+        if ((cmd === 'sub' || cmd === 'subf') && focused.name === 'objeto') {
+            const objetos = logic.obtenerObjetosUnicos(db);
+            const q = utils.normalizar(focused.value);
+            return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
+        }
+
+        if (cmd === 'objeto' && focused.name === 'nombre') {
             const objetos = logic.obtenerObjetosUnicos(db);
             const q = utils.normalizar(focused.value);
             return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
@@ -93,7 +99,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (focused.name === 'jugador' || (cmd === 'miembro' && focused.name === 'nombre')) {
             const nombres = logic.obtenerNombresUnicos(db, miembros);
-            if (cmd === 'miembro') return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+            if (cmd === 'editar' || cmd === 'miembro') return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
             const q = utils.normalizar(focused.value);
             return interaction.respond(nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
         }
@@ -816,7 +822,7 @@ setupPanel(client, {
     normalizar: utils.normalizar,
     fechaHoyArgentina: utils.fechaHoyArgentina,
     renderPrioridad: logic.renderPrioridad,
-    guardarPendiente: guardarPendiente, // <-- AGREGADO PARA EL BOTON DE PRIORIDAD
+    guardarPendiente: guardarPendiente, 
     ROL_LIDER: utils.ROL_LIDER,
     ROL_HELPER: utils.ROL_HELPER
 });
