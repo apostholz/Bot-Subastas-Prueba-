@@ -7,7 +7,6 @@ const logic = require('./logic');
 const { commandsData } = require('./commands');
 const { setupPanel } = require('./panel');
 
-// ====== PENDIENTES (Confirmaciones) ======
 const pendingActions = new Map();
 function guardarPendiente(tipo, payload, userId) {
     const id = Math.random().toString(36).slice(2, 10);
@@ -18,7 +17,6 @@ function guardarPendiente(tipo, payload, userId) {
     return id;
 }
 
-// ====== CLIENTE ======
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -44,7 +42,6 @@ client.once(Events.ClientReady, async (c) => {
     }
 });
 
-// ====== HELPERS DE CONFIRMACIÓN ======
 function construirBotonesConfirmacion(id) {
     const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
     return new ActionRowBuilder().addComponents(
@@ -74,9 +71,7 @@ function textoEstadoSync(res) {
     return `\n\n⚠️ Sync con GitHub falló: ${res.motivo}`;
 }
 
-// ====== INTERACCIONES ======
 client.on(Events.InteractionCreate, async (interaction) => {
-    // 1. Autocompletado
     if (interaction.isAutocomplete()) {
         const db = utils.cargarDB();
         const miembros = utils.cargarMiembros();
@@ -117,11 +112,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
     }
 
-    // 2. Botones (Paginación y Confirmaciones)
     if (interaction.isButton()) {
         const cid = interaction.customId;
 
-        // Prioridad
         if (cid.startsWith('prio_')) {
             const esPerdedores = cid.startsWith('prio_perdedores_');
             const id = cid.replace('prio_perdedores_', '').replace('prio_volver_', '');
@@ -138,7 +131,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
         }
 
-        // Navegación de días
         if (cid.startsWith('dia_')) {
             const match = cid.match(/^dia_(first|prev|next|last)_(.+)$/);
             if (!match) return;
@@ -196,7 +188,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.update({ content: out, components: [row] });
         }
 
-        // Paginación genérica
         const pagMatch = cid.match(/^(rank|obj|cat)_(first|prev|next|last)_(.+)$/);
         if (pagMatch) {
             const [_, prefijo, accion, id] = pagMatch;
@@ -225,7 +216,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.update({ content: render.content, components: [row] });
         }
 
-        // Confirmaciones pendientes
         if (cid.startsWith('pend_confirm_') || cid.startsWith('pend_cancel_')) {
             const esConfirm = cid.startsWith('pend_confirm_');
             const id = cid.replace('pend_confirm_', '').replace('pend_cancel_', '');
@@ -345,7 +335,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         );
                         return member ? `<@${member.id}>` : `**${g}**`;
                     });
-                    const pingId = guardarPendiente('ping', { menciones, mensajeBase: resultado }, interaction.user.id);
+                    const pingId = guardarPendiente('ping', { menciones }, interaction.user.id);
                     const rowPing = new (require('discord.js').ActionRowBuilder)().addComponents(
                         new (require('discord.js').ButtonBuilder)().setCustomId(`ping_confirm_${pingId}`).setLabel('Sí, pingear').setStyle(require('discord.js').ButtonStyle.Success),
                         new (require('discord.js').ButtonBuilder)().setCustomId(`ping_cancel_${pingId}`).setLabel('No, gracias').setStyle(require('discord.js').ButtonStyle.Secondary)
@@ -356,7 +346,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
         }
 
-        // Ping de ganadores
         if (cid.startsWith('ping_confirm_') || cid.startsWith('ping_cancel_')) {
             const esConfirm = cid.startsWith('ping_confirm_');
             const id = cid.replace('ping_confirm_', '').replace('ping_cancel_', '');
@@ -367,14 +356,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (!esConfirm) return interaction.update({ content: '❌ Aviso cancelado.', components: [] });
 
             await interaction.update({ content: '✅ Aviso enviado.', components: [] });
-            await interaction.channel.send(`${p.payload.mensajeBase}\n🔔 Aviso para: ${p.payload.menciones.join(', ')}`);
+            await interaction.channel.send(`🔔 Aviso para: ${p.payload.menciones.join(', ')}`);
             return;
         }
 
         return;
     }
 
-    // 3. Comandos Slash
     if (!interaction.isChatInputCommand()) return;
     
     const comandosLider = ['miembro', 'backup', 'sync'];
@@ -842,6 +830,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             let cuerpo = `Se borrarán **${validos.length}** entradas:\n\n`;
             validos.forEach(c => {
                 cuerpo += `#${c.id} · ${utils.formatearFecha(c.fecha)} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
+                cuerpo += `   🏆 ${c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
+                if (c.perdedores && c.perdedores.length > 0) {
+                    cuerpo += `   💔 ${c.perdedores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
+                }
             });
             if (noExisten.length > 0) {
                 cuerpo += `\n⚠️ **No existen:** ${noExisten.join(', ')}`;
@@ -865,7 +857,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 });
 
-// ====== SETUP PANEL ======
 setupPanel(client, {
     cargarDB: utils.cargarDB,
     guardarDB: utils.guardarDB,
