@@ -1,10 +1,11 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Events, REST, Routes, PermissionFlagsBits } = require('discord.js');
+const { parse } = require('csv-parse/sync');
 
 const utils = require('./utils');
 const logic = require('./logic');
 const { commandsData } = require('./commands');
-const { setupPanel } = require('./panel'); // Lo crearemos en el próximo mensaje
+const { setupPanel } = require('./panel');
 
 // ====== PENDIENTES (Confirmaciones) ======
 const pendingActions = new Map();
@@ -289,10 +290,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 resultado += textoEstadoSync(syncRes);
             }
 
-            // Hacemos el mensaje de resultado PÚBLICO (Punto 6)
             try {
                 await interaction.editReply({ content: '✅ Acción completada.', components: [] });
-                await interaction.followUp({ content: resultado, ephemeral: false });
+                await interaction.followUp({ content: resultado, ephemeral: false }); // Punto 6: Público
             } catch (e) { console.error(e); }
             return;
         }
@@ -345,7 +345,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (!textoConHeader.toLowerCase().startsWith('fecha')) textoConHeader = 'fecha,evento,categoria,objeto,cantidad,ganadores,perdedores,notas\n' + textoConHeader;
             
             let filas;
-            try { filas = require('csv-parse/sync').parse(textoConHeader, { columns: true, skip_empty_lines: true, trim: true }); }
+            try { filas = parse(textoConHeader, { columns: true, skip_empty_lines: true, trim: true }); }
             catch (e) { return interaction.reply({ content: `❌ Error CSV: ${e.message}`, ephemeral: true }); }
 
             const validas = [];
@@ -801,7 +801,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 // ====== SETUP PANEL ======
-// Acá conectamos la lógica del panel, control y los intervalos de actualización.
 setupPanel(client, {
     cargarDB: utils.cargarDB,
     guardarDB: utils.guardarDB,
@@ -816,7 +815,8 @@ setupPanel(client, {
     cargarMiembros: utils.cargarMiembros,
     normalizar: utils.normalizar,
     fechaHoyArgentina: utils.fechaHoyArgentina,
-    renderPrioridad: logic.renderPrioridad, // Lo usamos para el botón de prioridad
+    renderPrioridad: logic.renderPrioridad,
+    guardarPendiente: guardarPendiente, // <-- AGREGADO PARA EL BOTON DE PRIORIDAD
     ROL_LIDER: utils.ROL_LIDER,
     ROL_HELPER: utils.ROL_HELPER
 });
