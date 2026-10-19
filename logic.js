@@ -223,6 +223,32 @@ function calcularPerdedores7d(jugadores, categoria, db, miembros) {
     return res;
 }
 
+// ====== INFERIR CATEGORÍA ======
+function inferirCategoria(objeto, db) {
+    const key = utils.normalizar(objeto);
+    const map = {
+        'lagarto de trueno vil': 'Emblemas Únicos', 'idolo de obsidiana vil': 'Emblemas Únicos',
+        'tiranosaurio vil': 'Emblemas Únicos', 'hidra vil': 'Emblemas Únicos',
+        'elemental de trueno': 'Emblemas Generales', 'gigante de lava': 'Emblemas Generales',
+        'espiritu del viento': 'Emblemas Generales', 'gigante bioquimico': 'Emblemas Generales',
+        'combatiente': 'Emblemas Generales', 'luchador hombre pez': 'Emblemas Generales',
+        'arquero gnoll': 'Emblemas Generales', 'mago': 'Emblemas Generales'
+    };
+    if (map[key]) return map[key];
+    if (key.includes('caja 20k')) return 'Cajas 20k';
+    if (key.includes('collar') || key.includes('anillo') || key.includes('marca') || key.includes('brazal')) return 'Accesorios';
+    if (db && Array.isArray(db.compras)) {
+        const compras = db.compras.filter(c => c.objeto && utils.normalizar(c.objeto) === key);
+        if (compras.length > 0) {
+            const conteo = {};
+            for (const c of compras) conteo[c.categoria] = (conteo[c.categoria] || 0) + 1;
+            const orden = Object.entries(conteo).sort((a, b) => b[1] - a[1]);
+            if (orden.length > 0) return orden[0][0];
+        }
+    }
+    return 'Equipo';
+}
+
 // ====== RENDERIZADO ======
 function construirBotonesPaginacion(prefijo, id, paginaActual, totalPaginas) {
     const alInicio = paginaActual <= 1;
@@ -253,8 +279,6 @@ function renderPrioridad(payload, miembros) {
         out += `   Total en categoría: ${r.historico}\n`;
         out += `   ${histTotalStr}\n`;
     });
-    
-    // Punto 5: Se eliminó la recomendación
     
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`prio_perdedores_${payload.id}`).setLabel('💔 Ver perdedores 7d').setStyle(ButtonStyle.Danger)
@@ -399,7 +423,7 @@ function sugerirNombresMultiples(valorActual, nombres) {
 module.exports = {
     generarCSV, sincronizarConGitHub, leerCSVInicial,
     calcularPrioridad, compararPrioridad, construirRanking,
-    obtenerCategoriasAfectantes, calcularPerdedores7d,
+    obtenerCategoriasAfectantes, calcularPerdedores7d, inferirCategoria,
     construirBotonesPaginacion, renderPrioridad, renderPerdedores,
     renderRankingPagina, renderObjetoPagina, renderCategoriaPagina,
     responderLargo, obtenerNombresUnicos, obtenerObjetosUnicos, sugerirNombresMultiples,
