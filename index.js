@@ -20,7 +20,12 @@ function guardarPendiente(tipo, payload, userId) {
 
 // ====== CLIENTE ======
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
+    ]
 });
 
 client.once(Events.ClientReady, async (c) => {
@@ -179,8 +184,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     }
                 }
             }
-            out += `\n📅 **Compras del ${utils.formatearFecha(nuevaFecha)}**`; // Punto 13: Fecha al final
-            
+            out += `\n📅 **Compras del ${utils.formatearFecha(nuevaFecha)}**`;
+
             const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId(`dia_first_${id}`).setLabel('⏮').setStyle(ButtonStyle.Secondary).setDisabled(nuevaFecha <= p.payload.minDate),
@@ -327,24 +332,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
             await interaction.editReply({ content: '✅ Acción completada.', components: [] });
             await interaction.followUp({ content: resultado, ephemeral: false });
 
-            // Punto 6: Preguntar si pingear ganadores
             if (ganadoresParaPingear.length > 0) {
-                const members = await interaction.guild.members.fetch();
-                const menciones = ganadoresParaPingear.map(g => {
-                    const member = members.find(m => 
-                        utils.normalizar(m.user.username) === utils.normalizar(g) ||
-                        utils.normalizar(m.displayName) === utils.normalizar(g) ||
-                        utils.normalizar(utils.aplicarCanonico(m.displayName, miembros)) === utils.normalizar(g)
+                try {
+                    let members;
+                    try { members = await interaction.guild.members.fetch(); } catch { members = interaction.guild.members.cache; }
+                    const menciones = ganadoresParaPingear.map(g => {
+                        const normG = utils.normalizar(g);
+                        const member = members.find(m =>
+                            utils.normalizar(m.user.username) === normG ||
+                            utils.normalizar(m.displayName) === normG ||
+                            utils.normalizar(utils.aplicarCanonico(m.displayName, miembros)) === normG
+                        );
+                        return member ? `<@${member.id}>` : `**${g}**`;
+                    });
+                    const pingId = guardarPendiente('ping', { menciones, mensajeBase: resultado }, interaction.user.id);
+                    const rowPing = new (require('discord.js').ActionRowBuilder)().addComponents(
+                        new (require('discord.js').ButtonBuilder)().setCustomId(`ping_confirm_${pingId}`).setLabel('Sí, pingear').setStyle(require('discord.js').ButtonStyle.Success),
+                        new (require('discord.js').ButtonBuilder)().setCustomId(`ping_cancel_${pingId}`).setLabel('No, gracias').setStyle(require('discord.js').ButtonStyle.Secondary)
                     );
-                    return member ? `<@${member.id}>` : `**${g}**`;
-                });
-                
-                const pingId = guardarPendiente('ping', { menciones, mensajeBase: `✅ Registro guardado.` }, interaction.user.id);
-                const rowPing = new (require('discord.js').ActionRowBuilder)().addComponents(
-                    new (require('discord.js').ButtonBuilder)().setCustomId(`ping_confirm_${pingId}`).setLabel('Sí, pingear').setStyle(require('discord.js').ButtonStyle.Success),
-                    new (require('discord.js').ButtonBuilder)().setCustomId(`ping_cancel_${pingId}`).setLabel('No, gracias').setStyle(require('discord.js').ButtonStyle.Secondary)
-                );
-                await interaction.followUp({ content: '🔔 ¿Querés avisar a los ganadores?', components: [rowPing], ephemeral: true });
+                    await interaction.followUp({ content: '🔔 ¿Querés avisar a los ganadores?', components: [rowPing], ephemeral: true });
+                } catch (e) { console.error('Error en ping:', e.message); }
             }
             return;
         }
@@ -370,7 +377,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // 3. Comandos Slash
     if (!interaction.isChatInputCommand()) return;
     
-    // Permisos (Punto 12)
     const comandosLider = ['miembro', 'backup', 'sync'];
     const comandosHelper = ['borrar', 'editar', 'registro-rapido', 'sub', 'subf'];
     
@@ -395,7 +401,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const miembros = utils.cargarMiembros();
 
     try {
-        // ---------- /sync ----------
         if (interaction.commandName === 'sync') {
             await interaction.deferReply({ ephemeral: true });
             const res = await logic.sincronizarConGitHub(true);
@@ -404,7 +409,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.editReply({ content: msg });
         }
 
-        // ---------- /registro-rapido ----------
         if (interaction.commandName === 'registro-rapido') {
             const texto = interaction.options.getString('texto') || '';
             if (!texto.trim()) return interaction.reply({ content: '❌ No hay texto.', ephemeral: true });
@@ -444,7 +448,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return mostrarPreview(interaction, 'Confirmar registro rápido', preview, 'registro-rapido', { entradas: validas });
         }
 
-        // ---------- /backup ----------
         if (interaction.commandName === 'backup') {
             const fs = require('fs');
             const { AttachmentBuilder } = require('discord.js');
@@ -454,11 +457,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.reply({ content: `✅ Respaldo guardado. Total: **${db.compras.length}**.`, files: [adjunto] });
         }
 
-        // ---------- /objeto ----------
         if (interaction.commandName === 'objeto') {
             const nombreBuscado = interaction.options.getString('nombre').trim();
             const periodo = interaction.options.getString('periodo') || 'Total';
-            const formato = interaction.options.getString('formato') || 'Lista'; // Punto 14
+            const formato = interaction.options.getString('formato') || 'Lista';
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
             const ephemeral = visibilidad === 'Privado';
 
@@ -488,7 +490,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.reply({ content: render.content, components: [row], ephemeral });
         }
 
-        // ---------- /categoria ----------
         if (interaction.commandName === 'categoria') {
             const categoria = interaction.options.getString('categoria');
             const jugadorFiltro = (interaction.options.getString('jugador') || '').trim();
@@ -510,7 +511,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.reply({ content: render.content, components: [row], ephemeral });
         }
 
-        // ---------- /alertas ----------
         if (interaction.commandName === 'alertas') {
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
             const ephemeral = visibilidad === 'Privado';
@@ -536,7 +536,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return logic.responderLargo(interaction, out, ephemeral);
         }
 
-        // ---------- /miembro ----------
         if (interaction.commandName === 'miembro') {
             const sub = interaction.options.getSubcommand();
             if (sub === 'canonicos') {
@@ -597,7 +596,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
         }
 
-        // ---------- /editar ----------
         if (interaction.commandName === 'editar') {
             const sub = interaction.options.getSubcommand();
             const id = interaction.options.getInteger('id');
@@ -674,7 +672,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return mostrarPreview(interaction, 'Confirmar edición', cuerpo, 'editar', payload);
         }
 
-        // ---------- /sub y /subf ----------
         if (interaction.commandName === 'sub' || interaction.commandName === 'subf') {
             const evento = interaction.options.getString('evento') || '';
             const categoria = interaction.options.getString('categoria');
@@ -697,7 +694,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return mostrarPreview(interaction, 'Confirmar registro', cuerpo, interaction.commandName, entrada);
         }
 
-        // ---------- /dia ----------
         if (interaction.commandName === 'dia') {
             const fecha = utils.convertirFechaDia(interaction.options.getString('fecha'));
             if (!fecha) return interaction.reply({ content: '❌ Fecha inválida.', ephemeral: true });
@@ -738,16 +734,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     }
                 }
             }
-            out += `\n📅 **Compras del ${utils.formatearFecha(fecha)}**`; // Punto 13
+            out += `\n📅 **Compras del ${utils.formatearFecha(fecha)}**`;
             return interaction.reply({ content: out, components: [row], ephemeral });
         }
 
-        // ---------- /historial y /historial2 ----------
         if (interaction.commandName === 'historial' || interaction.commandName === 'historial2') {
             const ephemeral = interaction.commandName === 'historial';
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
             const categoria = interaction.options.getString('categoria') || 'Todas';
-            const formato = interaction.options.getString('formato') || 'Resumido'; // Punto 10
+            const formato = interaction.options.getString('formato') || 'Resumido';
 
             if (formato === 'Detallado' && categoria !== 'Todas') return interaction.reply({ content: '❌ Detallado solo con Categoría = Todas.', ephemeral });
 
@@ -788,7 +783,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return logic.responderLargo(interaction, out, ephemeral);
         }
 
-        // ---------- /total ----------
         if (interaction.commandName === 'total') {
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
             const visibilidad = interaction.options.getString('visibilidad') || 'Visible';
@@ -806,7 +800,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return logic.responderLargo(interaction, out.trimEnd(), visibilidad === 'Privado');
         }
 
-        // ---------- /ranking ----------
         if (interaction.commandName === 'ranking') {
             const visibilidad = interaction.options.getString('visibilidad') || 'Visible';
             const periodo = interaction.options.getString('periodo') || 'Total';
@@ -820,7 +813,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.reply({ content: render.content, components: [row], ephemeral: visibilidad === 'Privado' });
         }
 
-        // ---------- /prioridad ----------
         if (interaction.commandName === 'prioridad') {
             const categoria = interaction.options.getString('categoria');
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
@@ -837,7 +829,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.reply({ content, components, ephemeral });
         }
 
-        // ---------- /borrar ----------
         if (interaction.commandName === 'borrar') {
             const idsStr = interaction.options.getString('ids');
             const ids = idsStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
@@ -859,7 +850,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return mostrarPreview(interaction, '⚠️ Confirmar BORRADO MÚLTIPLE', cuerpo, 'borrar', { ids: validos.map(c => c.id) });
         }
 
-        // ---------- /ayuda ----------
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
                 content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/backup\` · exportar CSV\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control`,
