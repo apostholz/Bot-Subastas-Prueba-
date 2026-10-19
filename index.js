@@ -92,7 +92,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
         }
 
-        if (['jugadores', 'ganadores', 'perdedores', 'quitar', 'poner'].includes(focused.name)) {
+        if (cmd === 'editar' && focused.name === 'objeto') {
+            const objetos = logic.obtenerObjetosUnicos(db);
+            const q = utils.normalizar(focused.value);
+            return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
+        }
+
+        if (['jugadores', 'ganadores', 'perdedores', 'quitar', 'poner', 'por'].includes(focused.name)) {
             const nombres = logic.obtenerNombresUnicos(db, miembros);
             return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
         }
@@ -173,6 +179,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     }
                 }
             }
+            out += `\n📅 **Compras del ${utils.formatearFecha(nuevaFecha)}**`; // Punto 13: Fecha al final
+            
             const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId(`dia_first_${id}`).setLabel('⏮').setStyle(ButtonStyle.Secondary).setDisabled(nuevaFecha <= p.payload.minDate),
@@ -230,6 +238,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const miembros = utils.cargarMiembros();
             let resultado = '';
             let requiereSync = false;
+            let ganadoresParaPingear = [];
 
             if (p.tipo === 'sub' || p.tipo === 'subf') {
                 const e = { id: db.nextId++, ...p.payload };
@@ -237,16 +246,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 utils.guardarDB(db);
                 resultado = `✅ #${e.id} · 📅 ${utils.formatearFecha(e.fecha)} · ${utils.nombreBonitoEvento(e.evento)}\n📦 ${e.cantidad}x ${e.objeto} (${e.categoria})\n🏆 ${e.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}${e.perdedores.length ? `\n💔 ${e.perdedores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}` : ''}`;
                 requiereSync = true;
+                ganadoresParaPingear = e.ganadores;
             }
             else if (p.tipo === 'borrar') {
-                const idx = db.compras.findIndex(c => c.id === p.payload.id);
-                if (idx === -1) resultado = '❌ La entrada ya no existe.';
-                else {
-                    const el = db.compras.splice(idx, 1)[0];
-                    utils.guardarDB(db);
-                    resultado = `🗑️ Borrada #${el.id}: ${el.cantidad}x ${el.objeto}`;
-                    requiereSync = true;
-                }
+                const idsABorrar = p.payload.ids;
+                const borradas = [];
+                db.compras = db.compras.filter(c => {
+                    if (idsABorrar.includes(c.id)) { borradas.push(c); return false; }
+                    return true;
+                });
+                utils.guardarDB(db);
+                resultado = `🗑️ Se borraron **${borradas.length}** entradas:\n` + borradas.map(c => `#${c.id} · ${c.cantidad}x ${c.objeto}`).join('\n');
+                requiereSync = true;
             }
             else if (p.tipo === 'editar') {
                 const idx = db.compras.findIndex(c => c.id === p.payload.id);
@@ -254,17 +265,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 else {
                     const e = db.compras[idx];
                     const { sub, valor } = p.payload;
-                    if (sub === 'agregar-ganador') for (const j of valor) e.ganadores.push(j);
-                    else if (sub === 'quitar-ganador') for (const j of valor) { const pos = utils.buscarJugadorEnLista(e.ganadores, j, miembros); if (pos !== -1) e.ganadores.splice(pos, 1); }
-                    else if (sub === 'cambiar-ganador') { const pos = utils.buscarJugadorEnLista(e.ganadores, valor.quitar, miembros); if (pos !== -1) e.ganadores.splice(pos, 1, valor.poner); }
-                    else if (sub === 'agregar-perdedor') for (const j of valor) e.perdedores.push(j);
-                    else if (sub === 'quitar-perdedor') for (const j of valor) { const pos = utils.buscarJugadorEnLista(e.perdedores, j, miembros); if (pos !== -1) e.perdedores.splice(pos, 1); }
+                    const miembros = utils.cargarMiembros();
+                    
+                    if (sub === 'ganador') {
+                        if (valor.accion === 'agregar') for (const j of valor.nombres) e.ganadores.push(j);
+                        else for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.ganadores, j, miembros); if (pos !== -1) e.ganadores.splice(pos, 1); }
+                    }
+                    else if (sub === 'perdedor') {
+                        if (valor.accion === 'agregar') for (const j of valor.nombres) e.perdedores.push(j);
+                        else for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.perdedores, j, miembros); if (pos !== -1) e.perdedores.splice(pos, 1); }
+                    }
+                    else if (sub === 'reemplazar-ganador') {
+                        const pos = utils.buscarJugadorEnLista(e.ganadores, valor.quitar, miembros);
+                        if (pos !== -1) e.ganadores.splice(pos, 1, valor.poner);
+                    }
+                    else if (sub === 'reemplazar-perdedor') {
+                        const pos = utils.buscarJugadorEnLista(e.perdedores, valor.quitar, miembros);
+                        if (pos !== -1) e.perdedores.splice(pos, 1, valor.poner);
+                    }
+                    else if (sub === 'set') {
+                        if (valor.objeto) { e.objeto = valor.objeto; if (!valor.categoria) e.categoria = logic.inferirCategoria(valor.objeto, db); }
+                        if (valor.cantidad !== undefined && valor.cantidad !== null) e.cantidad = valor.cantidad;
+                        if (valor.categoria) e.categoria = valor.categoria;
+                        if (valor.evento) e.evento = valor.evento;
+                    }
                     else if (sub === 'set-nota') e.notas = valor;
                     else if (sub === 'borrar-nota') e.notas = '';
-                    else if (sub === 'set-evento') e.evento = valor;
-                    else if (sub === 'set-categoria') e.categoria = valor;
-                    else if (sub === 'set-cantidad') e.cantidad = valor;
-
+                    
                     utils.guardarDB(db);
                     resultado = `✅ Edición aplicada a #${e.id}.\n\n#${e.id} · ${utils.formatearFecha(e.fecha)} ${utils.etiquetaDias(e.fecha)} · ${utils.nombreBonitoEvento(e.evento)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n🏆 ${e.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
                     if (e.perdedores.length > 0) resultado += `💔 ${e.perdedores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
@@ -282,6 +309,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     existentes.add(logic.huella(nueva));
                     db.nextId++;
                     agregadas++;
+                    ganadoresParaPingear.push(...nueva.ganadores);
                 }
                 utils.guardarDB(db);
                 resultado = `✅ **${agregadas}** entradas registradas.`;
@@ -296,10 +324,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 resultado += textoEstadoSync(syncRes);
             }
 
-            try {
-                await interaction.editReply({ content: '✅ Acción completada.', components: [] });
-                await interaction.followUp({ content: resultado, ephemeral: false }); // Punto 6: Público
-            } catch (e) { console.error(e); }
+            await interaction.editReply({ content: '✅ Acción completada.', components: [] });
+            await interaction.followUp({ content: resultado, ephemeral: false });
+
+            // Punto 6: Preguntar si pingear ganadores
+            if (ganadoresParaPingear.length > 0) {
+                const members = await interaction.guild.members.fetch();
+                const menciones = ganadoresParaPingear.map(g => {
+                    const member = members.find(m => 
+                        utils.normalizar(m.user.username) === utils.normalizar(g) ||
+                        utils.normalizar(m.displayName) === utils.normalizar(g) ||
+                        utils.normalizar(utils.aplicarCanonico(m.displayName, miembros)) === utils.normalizar(g)
+                    );
+                    return member ? `<@${member.id}>` : `**${g}**`;
+                });
+                
+                const pingId = guardarPendiente('ping', { menciones, mensajeBase: `✅ Registro guardado.` }, interaction.user.id);
+                const rowPing = new (require('discord.js').ActionRowBuilder)().addComponents(
+                    new (require('discord.js').ButtonBuilder)().setCustomId(`ping_confirm_${pingId}`).setLabel('Sí, pingear').setStyle(require('discord.js').ButtonStyle.Success),
+                    new (require('discord.js').ButtonBuilder)().setCustomId(`ping_cancel_${pingId}`).setLabel('No, gracias').setStyle(require('discord.js').ButtonStyle.Secondary)
+                );
+                await interaction.followUp({ content: '🔔 ¿Querés avisar a los ganadores?', components: [rowPing], ephemeral: true });
+            }
+            return;
+        }
+
+        // Ping de ganadores
+        if (cid.startsWith('ping_confirm_') || cid.startsWith('ping_cancel_')) {
+            const esConfirm = cid.startsWith('ping_confirm_');
+            const id = cid.replace('ping_confirm_', '').replace('ping_cancel_', '');
+            const p = pendingActions.get(id);
+            if (!p || p.tipo !== 'ping' || p.userId !== interaction.user.id) return interaction.update({ content: '❌ Sesión expirada.', components: [] });
+            
+            pendingActions.delete(id);
+            if (!esConfirm) return interaction.update({ content: '❌ Aviso cancelado.', components: [] });
+
+            await interaction.update({ content: '✅ Aviso enviado.', components: [] });
+            await interaction.channel.send(`${p.payload.mensajeBase}\n🔔 Aviso para: ${p.payload.menciones.join(', ')}`);
             return;
         }
 
@@ -397,7 +458,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.commandName === 'objeto') {
             const nombreBuscado = interaction.options.getString('nombre').trim();
             const periodo = interaction.options.getString('periodo') || 'Total';
-            const formato = interaction.options.getString('formato') || 'Clasificación';
+            const formato = interaction.options.getString('formato') || 'Lista'; // Punto 14
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
             const ephemeral = visibilidad === 'Privado';
 
@@ -545,73 +606,70 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const e = db.compras[idx];
             let cuerpo = '', payload = null;
 
-            if (sub === 'agregar-ganador') {
+            if (sub === 'ganador' || sub === 'perdedor') {
+                const accion = interaction.options.getString('accion');
                 const str = interaction.options.getString('jugador');
-                const ag = [], sa = [], vistos = new Set();
-                for (const j of str.split(',').map(s => s.trim()).filter(Boolean)) {
-                    if (vistos.has(j.toLowerCase())) { sa.push(j); continue; } vistos.add(j.toLowerCase());
-                    if (utils.buscarJugadorEnLista(e.ganadores, j, miembros) !== -1) sa.push(j); else ag.push(j);
+                const nombres = str.split(',').map(s => s.trim()).filter(Boolean).map(n => utils.aplicarCanonico(n, miembros));
+                const lista = sub === 'ganador' ? e.ganadores : e.perdedores;
+                const listaNombre = sub === 'ganador' ? 'ganadores' : 'perdedores';
+                
+                const ag = [], ya = [], vistos = new Set();
+                for (const j of nombres) {
+                    const k = utils.claveJugador(j, miembros);
+                    if (vistos.has(k)) continue; vistos.add(k);
+                    const enLista = utils.buscarJugadorEnLista(lista, j, miembros) !== -1;
+                    if (accion === 'agregar' && !enLista) ag.push(j);
+                    else if (accion === 'quitar' && enLista) ag.push(j);
+                    else ya.push(j);
                 }
-                if (ag.length === 0) return interaction.reply({ content: `ℹ️ Ninguno se agregó (ya estaban): ${sa.join(', ')}`, ephemeral: true });
-                cuerpo = `Agregar **${ag.join(', ')}** a ganadores de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
-                payload = { id, sub, valor: ag };
-            } else if (sub === 'quitar-ganador') {
-                const str = interaction.options.getString('jugador');
-                const qu = [], sa = [], vistos = new Set();
-                for (const j of str.split(',').map(s => s.trim()).filter(Boolean)) {
-                    if (vistos.has(j.toLowerCase())) { sa.push(j); continue; } vistos.add(j.toLowerCase());
-                    if (utils.buscarJugadorEnLista(e.ganadores, j, miembros) === -1) sa.push(j); else qu.push(j);
-                }
-                if (qu.length === 0) return interaction.reply({ content: `ℹ️ Ninguno se quitó (no estaban): ${sa.join(', ')}`, ephemeral: true });
-                cuerpo = `Quitar **${qu.join(', ')}** de ganadores de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
-                payload = { id, sub, valor: qu };
-            } else if (sub === 'cambiar-ganador') {
-                const q = interaction.options.getString('quitar').trim();
-                const p = interaction.options.getString('poner').trim();
-                if (utils.buscarJugadorEnLista(e.ganadores, q, miembros) === -1) return interaction.reply({ content: `❌ **${q}** no está en ganadores.`, ephemeral: true });
-                if (utils.buscarJugadorEnLista(e.ganadores, p, miembros) !== -1) return interaction.reply({ content: `❌ **${p}** ya está en ganadores.`, ephemeral: true });
-                cuerpo = `Cambiar **${utils.aplicarCanonico(q, miembros)}** por **${utils.aplicarCanonico(p, miembros)}** en ganadores de #${id}.`;
+
+                if (ag.length === 0) return interaction.reply({ content: `ℹ️ No se aplicaron cambios: ${ya.join(', ')}`, ephemeral: true });
+                
+                cuerpo = `${accion === 'agregar' ? 'Agregar' : 'Quitar'} **${ag.join(', ')}** a ${listaNombre} de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
+                payload = { id, sub, valor: { accion, nombres: ag } };
+            }
+            else if (sub === 'reemplazar-ganador' || sub === 'reemplazar-perdedor') {
+                const q = interaction.options.getString('jugador').trim();
+                const p = interaction.options.getString('por').trim();
+                const lista = sub === 'reemplazar-ganador' ? e.ganadores : e.perdedores;
+                const listaNombre = sub === 'reemplazar-ganador' ? 'ganadores' : 'perdedores';
+                
+                if (utils.buscarJugadorEnLista(lista, q, miembros) === -1) return interaction.reply({ content: `❌ **${q}** no está en ${listaNombre}.`, ephemeral: true });
+                if (utils.buscarJugadorEnLista(lista, p, miembros) !== -1) return interaction.reply({ content: `❌ **${p}** ya está en ${listaNombre}.`, ephemeral: true });
+                
+                cuerpo = `Reemplazar a **${utils.aplicarCanonico(q, miembros)}** por **${utils.aplicarCanonico(p, miembros)}** en ${listaNombre} de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
                 payload = { id, sub, valor: { quitar: q, poner: p } };
-            } else if (sub === 'agregar-perdedor') {
-                const str = interaction.options.getString('jugador');
-                const ag = [], sa = [], vistos = new Set();
-                for (const j of str.split(',').map(s => s.trim()).filter(Boolean)) {
-                    if (vistos.has(j.toLowerCase())) { sa.push(j); continue; } vistos.add(j.toLowerCase());
-                    if (utils.buscarJugadorEnLista(e.perdedores, j, miembros) !== -1) sa.push(j); else ag.push(j);
+            }
+            else if (sub === 'set') {
+                const obj = interaction.options.getString('objeto');
+                const cant = interaction.options.getInteger('cantidad');
+                const cat = interaction.options.getString('categoria');
+                const ev = interaction.options.getString('evento');
+                
+                if (!obj && cant === null && !cat && !ev) return interaction.reply({ content: '❌ Tenés que indicar al menos un campo para cambiar.', ephemeral: true });
+                
+                let cambios = [];
+                if (obj) cambios.push(`Objeto: **${obj}**`);
+                if (cant !== null) cambios.push(`Cantidad: **${cant}**`);
+                if (cat) cambios.push(`Categoría: **${cat}**`);
+                if (ev) cambios.push(`Evento: **${ev}**`);
+                
+                if (obj && !cat) {
+                    const catInferida = logic.inferirCategoria(obj, db);
+                    cambios.push(`(Categoría inferida: **${catInferida}**)`);
                 }
-                if (ag.length === 0) return interaction.reply({ content: `ℹ️ Ninguno se agregó (ya estaban): ${sa.join(', ')}`, ephemeral: true });
-                cuerpo = `Agregar **${ag.join(', ')}** a perdedores de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
-                payload = { id, sub, valor: ag };
-            } else if (sub === 'quitar-perdedor') {
-                const str = interaction.options.getString('jugador');
-                const qu = [], sa = [], vistos = new Set();
-                for (const j of str.split(',').map(s => s.trim()).filter(Boolean)) {
-                    if (vistos.has(j.toLowerCase())) { sa.push(j); continue; } vistos.add(j.toLowerCase());
-                    if (utils.buscarJugadorEnLista(e.perdedores, j, miembros) === -1) sa.push(j); else qu.push(j);
-                }
-                if (qu.length === 0) return interaction.reply({ content: `ℹ️ Ninguno se quitó (no estaban): ${sa.join(', ')}`, ephemeral: true });
-                cuerpo = `Quitar **${qu.join(', ')}** de perdedores de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
-                payload = { id, sub, valor: qu };
-            } else if (sub === 'set-nota') {
+                
+                cuerpo = `Cambiar en #${id}:\n` + cambios.join('\n');
+                payload = { id, sub, valor: { objeto: obj, cantidad: cant, categoria: cat, evento: ev } };
+            }
+            else if (sub === 'set-nota') {
                 cuerpo = `Cambiar nota de #${id} a:\n📝 ${interaction.options.getString('nota')}`;
                 payload = { id, sub, valor: interaction.options.getString('nota') };
-            } else if (sub === 'borrar-nota') {
+            }
+            else if (sub === 'borrar-nota') {
                 if (!e.notas) return interaction.reply({ content: `ℹ️ La entrada #${id} no tiene nota.`, ephemeral: true });
                 cuerpo = `Borrar nota de #${id}.\nActual: 📝 ${e.notas}`;
                 payload = { id, sub };
-            } else if (sub === 'set-evento') {
-                const ev = interaction.options.getString('evento');
-                cuerpo = `Cambiar evento de #${id} a **${ev}**.\nActual: ${utils.nombreBonitoEvento(e.evento)}`;
-                payload = { id, sub, valor: ev };
-            } else if (sub === 'set-categoria') {
-                const cat = interaction.options.getString('categoria');
-                cuerpo = `Cambiar categoría de #${id} a **${cat}**.\nActual: ${e.categoria}`;
-                payload = { id, sub, valor: cat };
-            } else if (sub === 'set-cantidad') {
-                const cant = interaction.options.getInteger('cantidad');
-                if (cant < 0) return interaction.reply({ content: '❌ Cantidad inválida.', ephemeral: true });
-                cuerpo = `Cambiar cantidad de #${id} a **${cant}**.\nActual: ${e.cantidad}`;
-                payload = { id, sub, valor: cant };
             }
             return mostrarPreview(interaction, 'Confirmar edición', cuerpo, 'editar', payload);
         }
@@ -680,6 +738,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     }
                 }
             }
+            out += `\n📅 **Compras del ${utils.formatearFecha(fecha)}**`; // Punto 13
             return interaction.reply({ content: out, components: [row], ephemeral });
         }
 
@@ -688,12 +747,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const ephemeral = interaction.commandName === 'historial';
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
             const categoria = interaction.options.getString('categoria') || 'Todas';
-            const formato = interaction.options.getString('formato') || 'Recientes';
+            const formato = interaction.options.getString('formato') || 'Resumido'; // Punto 10
 
             if (formato === 'Detallado' && categoria !== 'Todas') return interaction.reply({ content: '❌ Detallado solo con Categoría = Todas.', ephemeral });
 
             let out = '';
-            if (formato === 'Recientes') {
+            if (formato === 'Resumido') {
                 const bloques = [];
                 for (const j of jugadores) {
                     let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, j, miembros) > 0);
@@ -761,7 +820,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.reply({ content: render.content, components: [row], ephemeral: visibilidad === 'Privado' });
         }
 
-        // ---------- /prioridad (Punto 7) ----------
+        // ---------- /prioridad ----------
         if (interaction.commandName === 'prioridad') {
             const categoria = interaction.options.getString('categoria');
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
@@ -780,14 +839,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // ---------- /borrar ----------
         if (interaction.commandName === 'borrar') {
-            const id = interaction.options.getInteger('id');
-            const idx = db.compras.findIndex(c => c.id === id);
-            if (idx === -1) return interaction.reply({ content: `❌ No existe entrada #${id}.`, ephemeral: true });
-            const e = db.compras[idx];
-            let cuerpo = `#${e.id} · ${utils.formatearFecha(e.fecha)} ${utils.etiquetaDias(e.fecha)} · ${utils.nombreBonitoEvento(e.evento)}\n📦 ${e.cantidad}x ${e.objeto} (${e.categoria})\n🏆 ${e.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
-            if (e.perdedores.length > 0) cuerpo += `\n💔 ${e.perdedores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}`;
-            if (e.notas) cuerpo += `\n📝 ${e.notas}`;
-            return mostrarPreview(interaction, '⚠️ Confirmar BORRADO', cuerpo, 'borrar', { id });
+            const idsStr = interaction.options.getString('ids');
+            const ids = idsStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+            if (ids.length === 0) return interaction.reply({ content: '❌ No se encontraron IDs válidos.', ephemeral: true });
+            
+            const validos = db.compras.filter(c => ids.includes(c.id));
+            const noExisten = ids.filter(id => !db.compras.some(c => c.id === id));
+            
+            if (validos.length === 0) return interaction.reply({ content: '❌ No existe ninguna entrada con esos IDs.', ephemeral: true });
+            
+            let cuerpo = `Se borrarán **${validos.length}** entradas:\n\n`;
+            validos.forEach(c => {
+                cuerpo += `#${c.id} · ${utils.formatearFecha(c.fecha)} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
+            });
+            if (noExisten.length > 0) {
+                cuerpo += `\n⚠️ **No existen:** ${noExisten.join(', ')}`;
+            }
+            
+            return mostrarPreview(interaction, '⚠️ Confirmar BORRADO MÚLTIPLE', cuerpo, 'borrar', { ids: validos.map(c => c.id) });
         }
 
         // ---------- /ayuda ----------
@@ -822,7 +891,7 @@ setupPanel(client, {
     normalizar: utils.normalizar,
     fechaHoyArgentina: utils.fechaHoyArgentina,
     renderPrioridad: logic.renderPrioridad,
-    guardarPendiente: guardarPendiente, 
+    guardarPendiente: guardarPendiente,
     ROL_LIDER: utils.ROL_LIDER,
     ROL_HELPER: utils.ROL_HELPER
 });
