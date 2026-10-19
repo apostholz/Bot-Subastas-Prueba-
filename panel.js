@@ -27,7 +27,6 @@ const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
 
 const pendingPanel = new Map();
 
-// ====== HELPERS DE ARCHIVOS ======
 function cargarJSON(file, def) {
     if (!fs.existsSync(file)) return def;
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -48,7 +47,6 @@ function cargarThreadsFijos() { return cargarJSON(THREADS_FILE, []); }
 function guardarThreadsFijos(d) { guardarJSON(THREADS_FILE, d); }
 function generarId() { return Math.random().toString(36).slice(2, 10); }
 
-// ====== LÓGICA DE NEGOCIO ======
 function esLider(member, funciones) {
     if (!member) return false;
     if (member.id === member.guild.ownerId) return true;
@@ -82,7 +80,6 @@ function pushHistorial(session, interaction, accion) {
     if (session.historial.length > 50) session.historial = session.historial.slice(-50);
 }
 
-// ====== RENDERIZADO ======
 function renderPanel(session, funciones) {
     const item = session.item;
     const miembros = funciones.cargarMiembros();
@@ -105,19 +102,25 @@ function renderPanel(session, funciones) {
 
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`panel_btn:anotarme:${session.id}`).setLabel('Anotarme').setStyle(ButtonStyle.Success).setDisabled(cerrada),
-        new ButtonBuilder().setCustomId(`panel_btn:retirarme:${session.id}`).setLabel('Retirarme').setStyle(ButtonStyle.Danger).setDisabled(cerrada),
+        new ButtonBuilder().setCustomId(`panel_btn:retirarme:${session.id}`).setLabel('Retirarme').setStyle(ButtonStyle.Danger).setDisabled(cerrada)
+    );
+
+    const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`panel_btn:prioridad:${session.id}`).setLabel('Calcular prioridad').setStyle(ButtonStyle.Primary).setDisabled(cerrada),
         new ButtonBuilder().setCustomId(`panel_btn:historial:${session.id}`).setLabel('Ver historial').setStyle(ButtonStyle.Primary).setDisabled(cerrada)
     );
 
-    const row2 = new ActionRowBuilder().addComponents(
+    const row3 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`panel_btn:editar:${session.id}`).setLabel('Editar').setStyle(ButtonStyle.Secondary).setDisabled(cerrada),
-        new ButtonBuilder().setCustomId(`panel_btn:logs:${session.id}`).setLabel('Logs').setStyle(ButtonStyle.Secondary).setDisabled(cerrada),
+        new ButtonBuilder().setCustomId(`panel_btn:logs:${session.id}`).setLabel('Logs').setStyle(ButtonStyle.Secondary).setDisabled(cerrada)
+    );
+
+    const row4 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`panel_btn:registrar:${session.id}`).setLabel('Registrar resultado').setStyle(ButtonStyle.Primary).setDisabled(cerrada),
         new ButtonBuilder().setCustomId(`panel_btn:cancelar:${session.id}`).setLabel('Cancelar subasta').setStyle(ButtonStyle.Secondary).setDisabled(cerrada)
     );
 
-    return { embeds: [embed], components: [row1, row2] };
+    return { embeds: [embed], components: [row1, row2, row3, row4] };
 }
 
 async function actualizarMensajePanel(client, session, funciones) {
@@ -181,25 +184,32 @@ async function actualizarControlPanel(client, funciones) {
         
         let desc = 'No hay threads fijos configurados.';
         if (fijos.length > 0) {
-            desc = fijos.map(tId => {
+            const lineas = [];
+            for (const tId of fijos.slice(0, 16)) {
+                let nombre = tId;
+                try {
+                    const ch = await client.channels.fetch(tId);
+                    if (ch && ch.name) nombre = ch.name;
+                } catch {}
                 const session = Object.values(subastas).find(s => s.threadId === tId && s.estado === 'abierta');
-                const estado = session ? `🔴 **Activa** - ${session.item.objeto}` : '🟢 Libre';
-                return `• <#${tId}> — ${estado}`;
-            }).join('\n');
+                const estado = session ? `🔴 Activo — ${session.item.objeto} (${session.interesados.length}/${session.item.cantidad})` : '🟢 Libre';
+                lineas.push(`• **${nombre}** (${tId}) — ${estado}`);
+            }
+            desc = lineas.join('\n');
         }
 
         const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Subastas').setDescription(desc).setColor(0x2B2D31);
 
         const rows = [];
-        const chunks = fijos.slice(0, 15);
-        for (let i = 0; i < chunks.length; i += 3) {
+        const chunks = fijos.slice(0, 16);
+        for (let i = 0; i < chunks.length; i += 4) {
             const row = new ActionRowBuilder();
-            for (const tId of chunks.slice(i, i + 3)) {
+            for (const tId of chunks.slice(i, i + 4)) {
                 const session = Object.values(subastas).find(s => s.threadId === tId && s.estado === 'abierta');
                 if (session) {
-                    row.addComponents(new ButtonBuilder().setCustomId(`control_btn:cerrar:${tId}`).setLabel(`Cerrar ${tId.slice(-4)}`).setStyle(ButtonStyle.Danger));
+                    row.addComponents(new ButtonBuilder().setCustomId(`control_btn:cerrar:${tId}`).setLabel(`Cerrar ${tId}`).setStyle(ButtonStyle.Danger));
                 } else {
-                    row.addComponents(new ButtonBuilder().setCustomId(`control_btn:abrir:${tId}`).setLabel(`Abrir ${tId.slice(-4)}`).setStyle(ButtonStyle.Success));
+                    row.addComponents(new ButtonBuilder().setCustomId(`control_btn:abrir:${tId}`).setLabel(`Abrir ${tId}`).setStyle(ButtonStyle.Success));
                 }
             }
             rows.push(row);
@@ -232,7 +242,6 @@ async function refrescarTodo(client, funciones) {
     return actualizadas;
 }
 
-// ====== FLUJOS DE SUBAGREGAR INTERESADOS ======
 async function mostrarConfirmacionAgregar(interaction, session, nombresRaw, funciones) {
     const miembros = funciones.cargarMiembros();
     const partes = nombresRaw.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
@@ -260,15 +269,12 @@ async function mostrarConfirmacionAgregar(interaction, session, nombresRaw, func
     return interaction.reply({ content: txt, components: [row], ephemeral: true });
 }
 
-// ====== SETUP PRINCIPAL ======
 function setupPanel(client, funciones) {
-    // 1. Hilo de Auto-actualización (cada 60s)
     setInterval(async () => {
         await refrescarTodo(client, funciones);
     }, 60 * 1000);
 
     client.on('interactionCreate', async (interaction) => {
-        // Autocompletado de /panel
         if (interaction.isAutocomplete() && interaction.commandName === 'panel') {
             const focused = interaction.options.getFocused(true);
             const db = funciones.cargarDB();
@@ -286,7 +292,6 @@ function setupPanel(client, funciones) {
             return;
         }
 
-        // ====== COMANDO /PANEL ======
         if (interaction.isChatInputCommand() && interaction.commandName === 'panel') {
             const sub = interaction.options.getSubcommand();
             const subastas = cargarSubastas();
@@ -406,7 +411,6 @@ function setupPanel(client, funciones) {
             }
         }
 
-        // ====== COMANDO /CONTROL ======
         if (interaction.isChatInputCommand() && interaction.commandName === 'control') {
             const sub = interaction.options.getSubcommand();
             if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
@@ -421,7 +425,7 @@ function setupPanel(client, funciones) {
                 return interaction.reply({ content: `✅ Thread <#${tId}> fijado.` });
             }
             if (sub === 'quitar') {
-                const tId = interaction.options.getChannel('canal').id;
+                const tId = interaction.options.getChannel('canal')?.id || interaction.channelId;
                 let fijos = cargarThreadsFijos();
                 if (!fijos.includes(tId)) return interaction.reply({ content: 'ℹ️ No está en la lista.', ephemeral: true });
                 fijos = fijos.filter(id => id !== tId);
@@ -441,7 +445,6 @@ function setupPanel(client, funciones) {
             }
         }
 
-        // ====== BOTONES DEL PANEL DE SUBASTA ======
         if (interaction.isButton() && interaction.customId.startsWith('panel_btn:')) {
             const [, accion, sessionId] = interaction.customId.split(':');
             const subastas = cargarSubastas();
@@ -542,7 +545,6 @@ function setupPanel(client, funciones) {
             }
         }
 
-        // ====== BOTONES DE HISTORIAL ======
         if (interaction.isButton() && interaction.customId.startsWith('panel_hist:')) {
             const [, tipo, sessionId] = interaction.customId.split(':');
             const subastas = cargarSubastas();
@@ -633,7 +635,6 @@ function setupPanel(client, funciones) {
             return interaction.update({ content: out, components: rows });
         }
 
-        // ====== MENÚ EDITAR DEL PANEL ======
         if (interaction.isButton() && interaction.customId.startsWith('panel_edit:')) {
             const [, campo, sessionId] = interaction.customId.split(':');
             const subastas = cargarSubastas();
@@ -695,7 +696,6 @@ function setupPanel(client, funciones) {
             return interaction.reply({ content: `⚠️ **¿Quitar a ${canon}?**`, components: [row], ephemeral: true });
         }
 
-        // ====== MODALES DEL PANEL ======
         if (interaction.isModalSubmit() && interaction.customId.startsWith('panel_modal:')) {
             const [, tipo, sessionId] = interaction.customId.split(':');
             const subastas = cargarSubastas();
@@ -738,7 +738,6 @@ function setupPanel(client, funciones) {
             }
         }
 
-        // ====== CONFIRMACIONES DEL PANEL ======
         if (interaction.isButton() && (interaction.customId.startsWith('panel_pending_confirm:') || interaction.customId.startsWith('panel_pending_cancel:'))) {
             const esConfirm = interaction.customId.startsWith('panel_pending_confirm:');
             const id = interaction.customId.replace('panel_pending_confirm:', '').replace('panel_pending_cancel:', '');
@@ -795,7 +794,6 @@ function setupPanel(client, funciones) {
                 pushHistorial(session, interaction, 'Registró resultado');
                 guardarSubastas(subastas);
 
-                // Borrar mensaje del panel
                 try {
                     const canal = await client.channels.fetch(session.channelId);
                     const msgPanel = await canal.messages.fetch(session.messageId);
@@ -815,7 +813,6 @@ function setupPanel(client, funciones) {
                 await interaction.editReply({ content: '✅ Acción completada.', components: [] });
                 await interaction.followUp({ content: msg, ephemeral: false });
                 
-                // Preguntar por ping (con try/catch)
                 if (entrada.ganadores.length > 0) {
                     try {
                         let members;
@@ -829,7 +826,7 @@ function setupPanel(client, funciones) {
                             );
                             return member ? `<@${member.id}>` : `**${g}**`;
                         });
-                        const pingId = funciones.guardarPendiente('ping', { menciones, mensajeBase: msg }, interaction.user.id);
+                        const pingId = funciones.guardarPendiente('ping', { menciones }, interaction.user.id);
                         const rowPing = new ActionRowBuilder().addComponents(
                             new ButtonBuilder().setCustomId(`ping_confirm_${pingId}`).setLabel('Sí, pingear').setStyle(ButtonStyle.Success),
                             new ButtonBuilder().setCustomId(`ping_cancel_${pingId}`).setLabel('No, gracias').setStyle(ButtonStyle.Secondary)
@@ -859,7 +856,6 @@ function setupPanel(client, funciones) {
             }
         }
 
-        // ====== BOTONES DEL PANEL DE CONTROL ======
         if (interaction.isButton() && interaction.customId.startsWith('control_btn:')) {
             if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
             const partes = interaction.customId.split(':');
@@ -901,7 +897,6 @@ function setupPanel(client, funciones) {
             }
         }
 
-        // ====== MODALES DEL CONTROL ======
         if (interaction.isModalSubmit() && interaction.customId.startsWith('control_modal:')) {
             if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
             const partes = interaction.customId.split(':');
