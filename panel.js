@@ -106,12 +106,12 @@ function renderPanel(session, funciones) {
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`panel_btn:anotarme:${session.id}`).setLabel('Anotarme').setStyle(ButtonStyle.Success).setDisabled(cerrada),
         new ButtonBuilder().setCustomId(`panel_btn:retirarme:${session.id}`).setLabel('Retirarme').setStyle(ButtonStyle.Danger).setDisabled(cerrada),
-        new ButtonBuilder().setCustomId(`panel_btn:prioridad:${session.id}`).setLabel('Calcular prioridad').setStyle(ButtonStyle.Primary).setDisabled(cerrada)
+        new ButtonBuilder().setCustomId(`panel_btn:prioridad:${session.id}`).setLabel('Calcular prioridad').setStyle(ButtonStyle.Primary).setDisabled(cerrada),
+        new ButtonBuilder().setCustomId(`panel_btn:historial:${session.id}`).setLabel('Ver historial').setStyle(ButtonStyle.Primary).setDisabled(cerrada)
     );
 
     const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`panel_btn:editar:${session.id}`).setLabel('Editar').setStyle(ButtonStyle.Secondary).setDisabled(cerrada),
-        new ButtonBuilder().setCustomId(`panel_btn:historial:${session.id}`).setLabel('Ver historial').setStyle(ButtonStyle.Secondary).setDisabled(cerrada),
         new ButtonBuilder().setCustomId(`panel_btn:logs:${session.id}`).setLabel('Logs').setStyle(ButtonStyle.Secondary).setDisabled(cerrada),
         new ButtonBuilder().setCustomId(`panel_btn:registrar:${session.id}`).setLabel('Registrar resultado').setStyle(ButtonStyle.Primary).setDisabled(cerrada),
         new ButtonBuilder().setCustomId(`panel_btn:cancelar:${session.id}`).setLabel('Cancelar subasta').setStyle(ButtonStyle.Secondary).setDisabled(cerrada)
@@ -128,7 +128,7 @@ async function actualizarMensajePanel(client, session, funciones) {
         const { embeds, components } = renderPanel(session, funciones);
         await msg.edit({ embeds, components });
     } catch (e) {
-        if (e.code === 10008) { // Unknown Message
+        if (e.code === 10008) {
             console.log(`[Panel] Mensaje no encontrado en <#${session.threadId}>. Recreando...`);
             try {
                 const canal = await client.channels.fetch(session.channelId);
@@ -361,7 +361,6 @@ function setupPanel(client, funciones) {
             if (!session) return interaction.reply({ content: '❌ No hay panel activo.', ephemeral: true });
 
             if (sub === 'ver') {
-                // Punto 4: Borrar el mensaje anterior
                 if (session.messageId) {
                     try {
                         const canal = await client.channels.fetch(session.channelId);
@@ -492,7 +491,6 @@ function setupPanel(client, funciones) {
             }
 
             if (accion === 'historial') {
-                // Punto 9: Nuevo botón de Historial
                 if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`panel_hist:res:${sessionId}`).setLabel('Resumido').setStyle(ButtonStyle.Primary),
@@ -557,18 +555,26 @@ function setupPanel(client, funciones) {
                 const todos = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
                 todos.sort(funciones.compararPrioridad);
                 
-                let compras = db.compras.filter(c => todos.some(t => utils.contarGanador(c.ganadores, t.jugador, miembros) > 0));
-                compras.sort((a, b) => b.fecha.localeCompare(a.fecha));
-                compras = compras.slice(0, 5);
-
-                let out = `📜 **Últimas 5 compras (todos)**\n\n`;
-                if (compras.length === 0) out += 'Sin registros.';
+                let out = `📜 **Últimas 5 compras por jugador**\n\n`;
+                if (todos.length === 0) out += 'Sin interesados.';
                 else {
-                    for (const c of compras) {
-                        out += `#${c.id} · ${utils.formatearFecha(c.fecha)} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n   🏆 ${c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
+                    for (const t of todos) {
+                        const nombre = funciones.aplicarCanonico(t.jugador, miembros);
+                        let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, t.jugador, miembros) > 0);
+                        comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
+                        const ultimas = comprasJ.slice(0, 5);
+                        out += `**${nombre}** (últimas ${ultimas.length}):\n`;
+                        if (ultimas.length === 0) out += `Sin compras.\n`;
+                        else {
+                            for (const c of ultimas) {
+                                const n = utils.contarGanador(c.ganadores, t.jugador, miembros);
+                                out += `#${c.id} · ${utils.formatearFecha(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
+                            }
+                        }
+                        out += `\n`;
                     }
                 }
-                return interaction.update({ content: out, components: [] });
+                return logic.responderLargo(interaction, out, true);
             }
 
             if (tipo === 'det') {
@@ -615,7 +621,6 @@ function setupPanel(client, funciones) {
                 out += `\n`;
             }
             
-            // Volver a los jugadores
             const rows = [];
             let row = new ActionRowBuilder();
             todos.forEach((t, i) => {
@@ -789,12 +794,20 @@ function setupPanel(client, funciones) {
                 session.estado = 'cerrada';
                 pushHistorial(session, interaction, 'Registró resultado');
                 guardarSubastas(subastas);
+
+                // Borrar mensaje del panel
+                try {
+                    const canal = await client.channels.fetch(session.channelId);
+                    const msgPanel = await canal.messages.fetch(session.messageId);
+                    await msgPanel.delete();
+                } catch {}
+
                 const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
                 delete subastas[session.id]; guardarSubastas(subastas);
                 
                 await refrescarTodo(client, funciones);
 
-                let msg = `✅ Resultado registrado: #${entrada.id} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})\n🏆 ${entrada.ganadores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
+                let msg = `✅ Resultado registrado: #${entrada.id} · 📅 ${utils.formatearFecha(entrada.fecha)} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})\n🏆 ${entrada.ganadores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
                 if (entrada.perdedores.length > 0) msg += `\n💔 ${entrada.perdedores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ')}`;
                 if (!syncRes.ok) msg += `\n⚠️ Sync falló: ${syncRes.motivo}`;
 
@@ -802,19 +815,27 @@ function setupPanel(client, funciones) {
                 await interaction.editReply({ content: '✅ Acción completada.', components: [] });
                 await interaction.followUp({ content: msg, ephemeral: false });
                 
-                // Preguntar por ping
+                // Preguntar por ping (con try/catch)
                 if (entrada.ganadores.length > 0) {
-                    const members = await interaction.guild.members.fetch();
-                    const menciones = entrada.ganadores.map(g => {
-                        const member = members.find(m => utils.normalizar(m.user.username) === utils.normalizar(g) || utils.normalizar(m.displayName) === utils.normalizar(g) || utils.normalizar(funciones.aplicarCanonico(m.displayName, miembros)) === utils.normalizar(g));
-                        return member ? `<@${member.id}>` : `**${g}**`;
-                    });
-                    const pingId = funciones.guardarPendiente('ping', { menciones, mensajeBase: `✅ Registro guardado.` }, interaction.user.id);
-                    const rowPing = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder().setCustomId(`ping_confirm_${pingId}`).setLabel('Sí, pingear').setStyle(ButtonStyle.Success),
-                        new ButtonBuilder().setCustomId(`ping_cancel_${pingId}`).setLabel('No, gracias').setStyle(ButtonStyle.Secondary)
-                    );
-                    await interaction.followUp({ content: '🔔 ¿Querés avisar a los ganadores?', components: [rowPing], ephemeral: true });
+                    try {
+                        let members;
+                        try { members = await interaction.guild.members.fetch(); } catch { members = interaction.guild.members.cache; }
+                        const menciones = entrada.ganadores.map(g => {
+                            const normG = utils.normalizar(g);
+                            const member = members.find(m =>
+                                utils.normalizar(m.user.username) === normG ||
+                                utils.normalizar(m.displayName) === normG ||
+                                utils.normalizar(funciones.aplicarCanonico(m.displayName, miembros)) === normG
+                            );
+                            return member ? `<@${member.id}>` : `**${g}**`;
+                        });
+                        const pingId = funciones.guardarPendiente('ping', { menciones, mensajeBase: msg }, interaction.user.id);
+                        const rowPing = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder().setCustomId(`ping_confirm_${pingId}`).setLabel('Sí, pingear').setStyle(ButtonStyle.Success),
+                            new ButtonBuilder().setCustomId(`ping_cancel_${pingId}`).setLabel('No, gracias').setStyle(ButtonStyle.Secondary)
+                        );
+                        await interaction.followUp({ content: '🔔 ¿Querés avisar a los ganadores?', components: [rowPing], ephemeral: true });
+                    } catch (e) { console.error('Error en ping:', e.message); }
                 }
                 return;
             }
@@ -826,12 +847,11 @@ function setupPanel(client, funciones) {
                 const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
                 delete subastas[session.id]; guardarSubastas(subastas);
                 
-                // Punto 2: Eliminar el mensaje del panel
                 try {
                     const canal = await client.channels.fetch(session.channelId);
                     const msg = await canal.messages.fetch(session.messageId);
                     await msg.delete();
-                } catch (e) { /* ignorar si ya no existe */ }
+                } catch {}
 
                 await refrescarTodo(client, funciones);
                 pendingPanel.delete(id);
@@ -934,7 +954,7 @@ function setupPanel(client, funciones) {
                             const canal = await client.channels.fetch(subastas[id].channelId);
                             const msg = await canal.messages.fetch(subastas[id].messageId);
                             await msg.delete();
-                        } catch (e) { /* ignorar */ }
+                        } catch { /* ignorar */ }
 
                         delete subastas[id];
                         cerradas++;
