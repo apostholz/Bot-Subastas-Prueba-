@@ -253,7 +253,9 @@ function renderPrioridad(payload, miembros) {
         out += `   Total en categoría: ${r.historico}\n`;
         out += `   ${histTotalStr}\n`;
     });
-    out += `\n**Recomendación:** ${utils.aplicarCanonico(resultados[0].jugador, miembros)}`;
+    
+    // Punto 5: Se eliminó la recomendación
+    
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`prio_perdedores_${payload.id}`).setLabel('💔 Ver perdedores 7d').setStyle(ButtonStyle.Danger)
     );
@@ -401,5 +403,5 @@ module.exports = {
     construirBotonesPaginacion, renderPrioridad, renderPerdedores,
     renderRankingPagina, renderObjetoPagina, renderCategoriaPagina,
     responderLargo, obtenerNombresUnicos, obtenerObjetosUnicos, sugerirNombresMultiples,
-    huella // <-- La función que faltaba
+    huella
 };
