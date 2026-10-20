@@ -143,27 +143,42 @@ function calcularPrioridad(jugador, categoria, compras, miembros) {
     for (const c of compras) {
         const n = utils.contarGanador(c.ganadores, jugador, miembros);
         if (n === 0) continue;
+
+        const dias = utils.diasDesde(c.fecha);
+
+        if (c.categoria === 'Emblemas Únicos' && (categoria === 'Equipo' || categoria === 'Accesorios')) {
+            if (dias > 1) continue;
+            const pesoUnico = dias === 0 ? 1.5 : 1.0;
+            impacto += n * pesoUnico;
+            if (dias <= 6) {
+                unidades7d += n;
+                desglose[c.categoria] = (desglose[c.categoria] || 0) + n;
+            }
+            continue;
+        }
+
         const peso = pesosCategoria[c.categoria];
         if (peso === undefined) continue;
-        const dias = utils.diasDesde(c.fecha);
-        if (c.categoria === 'Emblemas Únicos' && (categoria === 'Equipo' || categoria === 'Accesorios') && dias > 2) continue;
-        
+
         impacto += n * peso * utils.getFactorTemporal(dias);
         if (dias <= 6) {
             unidades7d += n;
             desglose[c.categoria] = (desglose[c.categoria] || 0) + n;
         }
     }
+
     for (const c of compras) {
         if (c.categoria !== categoria) continue;
         historico += utils.contarGanador(c.ganadores, jugador, miembros);
     }
+
     const historicoTotal = {};
     for (const cat of utils.CATEGORIAS) historicoTotal[cat] = 0;
     for (const c of compras) {
         const n = utils.contarGanador(c.ganadores, jugador, miembros);
         if (n > 0 && historicoTotal[c.categoria] !== undefined) historicoTotal[c.categoria] += n;
     }
+
     return { impacto, unidades7d, historico, desglose, historicoTotal };
 }
 
@@ -389,7 +404,7 @@ function obtenerNombresUnicos(db, miembros) {
     const map = new Map();
     const agregar = (nombreConSufijo) => {
         if (!nombreConSufijo) return;
-        const match = nombreConSufijo.match(/^(.+?)(?:\s+x(\d+))?$/);
+        const match = nombreConSufijo.match(/^(.+?)(?:\s+[xX](\d+))?$/);
         const nombre = match ? match[1].trim() : nombreConSufijo.trim();
         if (!nombre) return;
         const key = utils.claveJugador(nombre, miembros);
