@@ -137,7 +137,7 @@ async function actualizarMensajePanel(client, session, funciones) {
         const { embeds, components } = renderPanel(session, funciones);
         await msg.edit({ embeds, components });
     } catch (e) {
-        if (e.code === 10008) { // Unknown Message
+        if (e.code === 10008) {
             console.log(`[Panel] Mensaje no encontrado en <#${session.threadId}>. Recreando...`);
             try {
                 const canal = await client.channels.fetch(session.channelId);
@@ -168,7 +168,6 @@ async function actualizarIndice(client, funciones) {
         let desc = 'No hay subastas activas.';
         if (activas.length > 0) {
             desc = 'Referencia: (interesados / unidades)\n\n';
-            // Arreglo: Solo el link <#ID> y el objeto. Se borra el nombre en texto plano.
             desc += activas.map(s => `• <#${s.threadId}> — ${s.item.objeto} (${s.interesados.length} / ${s.item.cantidad})`).join('\n');
         }
 
@@ -201,7 +200,6 @@ async function actualizarControlPanel(client, funciones) {
                 } else {
                     estado = '🔴 Cerrado';
                 }
-                // Arreglo: [N] <#ID> para link y referencia numérica
                 desc += `• **[${i + 1}]** <#${fijo.id}> — ${estado}\n`;
             });
         }
@@ -210,9 +208,10 @@ async function actualizarControlPanel(client, funciones) {
 
         const rows = [];
         const chunks = fijos.slice(0, 16);
-        for (let i = 0; i < chunks.length; i += 4) {
+        // Punto 2: Filas de 3 botones
+        for (let i = 0; i < chunks.length; i += 3) {
             const row = new ActionRowBuilder();
-            for (let j = 0; j < 4 && i + j < chunks.length; j++) {
+            for (let j = 0; j < 3 && i + j < chunks.length; j++) {
                 const idx = i + j;
                 const fijo = chunks[idx];
                 const session = Object.values(subastas).find(s => s.threadId === fijo.id && s.estado === 'abierta');
@@ -224,9 +223,9 @@ async function actualizarControlPanel(client, funciones) {
             rows.push(row);
         }
 
+        // Punto 1: Ya no está "Abrir TODAS", solo dejamos "Cerrar TODAS" si hay threads
         if (fijos.length > 0) {
             const rowGlobal = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('control_btn:abrir_todos').setLabel('Abrir TODAS').setStyle(ButtonStyle.Primary),
                 new ButtonBuilder().setCustomId('control_btn:cerrar_todos').setLabel('Cerrar TODAS').setStyle(ButtonStyle.Secondary)
             );
             rows.push(rowGlobal);
@@ -935,16 +934,9 @@ function setupPanel(client, funciones) {
                 return interaction.reply({ content: `⚠️ **¿Cancelar subasta de <#${threadId}> y borrar el panel?**`, components: [row], ephemeral: true });
             }
 
-            if (accion === 'abrir_todos' || accion === 'cerrar_todos') {
-                const modal = new ModalBuilder().setCustomId(`control_modal:${accion}`).setTitle(accion === 'abrir_todos' ? 'Abrir Todas las Subastas' : 'Cerrar Todas las Subastas');
-                if (accion === 'abrir_todos') {
-                    modal.addComponents(
-                        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('objeto').setLabel('Objeto para todas').setStyle(TextInputStyle.Short).setRequired(true)),
-                        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cantidad').setLabel('Cantidad por thread').setStyle(TextInputStyle.Short).setValue('1').setRequired(true))
-                    );
-                } else {
-                    modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('confirmar').setLabel('Escribí "CONFIRMAR" para cerrar todas').setStyle(TextInputStyle.Short).setRequired(true)));
-                }
+            if (accion === 'cerrar_todos') {
+                const modal = new ModalBuilder().setCustomId(`control_modal:cerrar_todos`).setTitle('Cerrar Todas las Subastas');
+                modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('confirmar').setLabel('Escribí "CONFIRMAR" para cerrar todas').setStyle(TextInputStyle.Short).setRequired(true)));
                 return interaction.showModal(modal);
             }
         }
@@ -1049,40 +1041,6 @@ function setupPanel(client, funciones) {
                 guardarSubastas(subastas); guardarArchivadas(archivadas);
                 await refrescarTodo(client, funciones);
                 return interaction.editReply({ content: `✅ Se cancelaron y eliminaron **${cerradas}** subastas.` });
-            }
-
-            if (accion === 'abrir_todos') {
-                await interaction.deferReply({ ephemeral: true });
-                const objeto = interaction.fields.getTextInputValue('objeto');
-                const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10) || 1;
-                const db = funciones.cargarDB();
-                const cat = logic.inferirCategoria(objeto, db);
-                const ev = obtenerEventoPorHora();
-                const f = funciones.fechaHoyArgentina();
-                const fijos = cargarThreadsFijos();
-                const subastas = cargarSubastas();
-                let abiertas = 0;
-
-                for (const fijo of fijos) {
-                    if (Object.values(subastas).find(s => s.threadId === fijo.id && s.estado === 'abierta')) continue;
-                    const session = {
-                        id: generarId(), threadId: fijo.id, channelId: fijo.id, messageId: null, threadName: fijo.nombre,
-                        item: { fecha: f, evento: ev, categoria: cat, objeto, cantidad: cant },
-                        interesados: [], estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
-                    };
-                    pushHistorial(session, interaction, 'Panel creado por Control Global');
-                    subastas[session.id] = session;
-                    try {
-                        const canal = await client.channels.fetch(fijo.id);
-                        const { embeds, components } = renderPanel(session, funciones);
-                        const msg = await canal.send({ embeds, components });
-                        session.messageId = msg.id;
-                        abiertas++;
-                    } catch (e) { console.error(e); }
-                }
-                guardarSubastas(subastas);
-                await refrescarTodo(client, funciones);
-                return interaction.editReply({ content: `✅ Se abrieron **${abiertas}** subastas en los threads fijos.` });
             }
         }
     });
