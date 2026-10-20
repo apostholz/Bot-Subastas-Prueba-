@@ -254,6 +254,49 @@ async function refrescarTodo(client, funciones) {
     }
 }
 
+async function moverPanelesAlFinal(client, funciones) {
+    const subastas = cargarSubastas();
+    let movidos = 0;
+    let huboCambios = false;
+
+    for (const id in subastas) {
+        const session = subastas[id];
+        if (!session || session.estado !== 'abierta' || !session.channelId) continue;
+
+        try {
+            const canal = await client.channels.fetch(session.channelId);
+            if (!canal) continue;
+
+            const mensajes = await canal.messages.fetch({ limit: 1 });
+            const ultimo = mensajes.first();
+
+            if (ultimo && ultimo.id === session.messageId) continue;
+
+            const { embeds, components } = renderPanel(session, funciones);
+            const nuevo = await canal.send({ embeds, components });
+
+            const viejoId = session.messageId;
+            session.messageId = nuevo.id;
+            subastas[id] = session;
+            huboCambios = true;
+
+            if (viejoId) {
+                try {
+                    const viejo = await canal.messages.fetch(viejoId);
+                    if (viejo) await viejo.delete();
+                } catch (e) { /* ignorar */ }
+            }
+
+            movidos++;
+        } catch (e) {
+            console.error(`[Panel] Error moviendo panel de <#${session.threadId}>:`, e.message);
+        }
+    }
+
+    if (huboCambios) guardarSubastas(subastas);
+    return movidos;
+}
+
 async function mostrarConfirmacionAgregar(interaction, session, nombresRaw, funciones) {
     const miembros = funciones.cargarMiembros();
     const partes = nombresRaw.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
@@ -285,6 +328,10 @@ function setupPanel(client, funciones) {
     setInterval(async () => {
         await refrescarTodo(client, funciones);
     }, 60 * 1000);
+
+    setInterval(async () => {
+        await moverPanelesAlFinal(client, funciones);
+    }, 2 * 60 * 1000);
 
     client.on('interactionCreate', async (interaction) => {
         if (interaction.isAutocomplete() && interaction.commandName === 'panel') {
@@ -323,7 +370,8 @@ function setupPanel(client, funciones) {
             if (sub === 'refresh') {
                 await interaction.deferReply({ ephemeral: true });
                 const cant = await refrescarTodo(client, funciones);
-                return interaction.editReply({ content: `✅ Refrescados **${cant}** paneles activos.` });
+                const movidos = await moverPanelesAlFinal(client, funciones);
+                return interaction.editReply({ content: `✅ Refrescados **${cant}** paneles activos. Movidos al final: **${movidos}**.` });
             }
 
             if (sub === 'crear') {
