@@ -315,6 +315,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 requiereSync = true;
             }
 
+            resultado = resultado.trimEnd();
+
             pendingActions.delete(id);
             if (requiereSync) {
                 const syncRes = await logic.sincronizarConGitHub(false);
