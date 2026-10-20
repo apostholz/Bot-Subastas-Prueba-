@@ -43,7 +43,14 @@ function cargarIndice() { return cargarJSON(INDICE_FILE, { channelId: null, mess
 function guardarIndice(d) { guardarJSON(INDICE_FILE, d); }
 function cargarControl() { return cargarJSON(CONTROL_FILE, { channelId: null, messageId: null }); }
 function guardarControl(d) { guardarJSON(CONTROL_FILE, d); }
-function cargarThreadsFijos() { return cargarJSON(THREADS_FILE, []); }
+function cargarThreadsFijos() {
+    const raw = cargarJSON(THREADS_FILE, []);
+    // Migración de formato viejo (array de strings) a nuevo (array de objetos)
+    return raw.map(item => {
+        if (typeof item === 'string') return { id: item, nombre: null, objeto: null };
+        return item;
+    });
+}
 function guardarThreadsFijos(d) { guardarJSON(THREADS_FILE, d); }
 function generarId() { return Math.random().toString(36).slice(2, 10); }
 
@@ -131,7 +138,7 @@ async function actualizarMensajePanel(client, session, funciones) {
         const { embeds, components } = renderPanel(session, funciones);
         await msg.edit({ embeds, components });
     } catch (e) {
-        if (e.code === 10008) {
+        if (e.code === 10008) { // Unknown Message
             console.log(`[Panel] Mensaje no encontrado en <#${session.threadId}>. Recreando...`);
             try {
                 const canal = await client.channels.fetch(session.channelId);
@@ -162,7 +169,15 @@ async function actualizarIndice(client, funciones) {
         let desc = 'No hay subastas activas.';
         if (activas.length > 0) {
             desc = 'Referencia: (interesados / unidades)\n\n';
-            desc += activas.map(s => `• <#${s.threadId}> — ${s.item.objeto} (${s.interesados.length} / ${s.item.cantidad})`).join('\n');
+            desc += activas.map(s => {
+                // Punto 10: Evitar #unknown usando el nombre guardado
+                let nombreThread = s.threadName;
+                if (!nombreThread) {
+                    try { const ch = client.channels.cache.get(s.threadId); if (ch) nombreThread = ch.name; } catch {}
+                }
+                if (!nombreThread) nombreThread = `Thread ${s.threadId.slice(-4)}`;
+                return `• <#${s.threadId}> (${nombreThread}) — ${s.item.objeto} (${s.interesados.length} / ${s.item.cantidad})`;
+            }).join('\n');
         }
 
         const embed = new EmbedBuilder().setTitle('📌 Índice de subastas activas').setDescription(desc).setColor(0x5865F2);
@@ -182,20 +197,21 @@ async function actualizarControlPanel(client, funciones) {
         const fijos = cargarThreadsFijos();
         const subastas = cargarSubastas();
         
-        let desc = 'No hay threads fijos configurados.';
-        if (fijos.length > 0) {
-            const lineas = [];
-            for (const tId of fijos.slice(0, 16)) {
-                let nombre = tId;
-                try {
-                    const ch = await client.channels.fetch(tId);
-                    if (ch && ch.name) nombre = ch.name;
-                } catch {}
-                const session = Object.values(subastas).find(s => s.threadId === tId && s.estado === 'abierta');
-                const estado = session ? `🔴 Activo — ${session.item.objeto} (${session.interesados.length}/${session.item.cantidad})` : '🟢 Libre';
-                lineas.push(`• **${nombre}** (${tId}) — ${estado}`);
-            }
-            desc = lineas.join('\n');
+        let desc = 'Referencia: (interesados / unidades)\n\n';
+        if (fijos.length === 0) {
+            desc += 'No hay threads fijos configurados.';
+        } else {
+            fijos.slice(0, 16).forEach((fijo, i) => {
+                const session = Object.values(subastas).find(s => s.threadId === fijo.id && s.estado === 'abierta');
+                let estado = '';
+                if (session) {
+                    estado = `🟢 Activo — ${session.item.objeto} (${session.interesados.length}/${session.item.cantidad})`; // Punto 11: Verde activo
+                } else {
+                    estado = '🔴 Cerrado'; // Punto 11: Rojo cerrado
+                }
+                const nombre = fijo.nombre || `Thread ${i + 1}`;
+                desc += `• **${nombre}** — ${estado}\n`;
+            });
         }
 
         const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Subastas').setDescription(desc).setColor(0x2B2D31);
@@ -204,13 +220,14 @@ async function actualizarControlPanel(client, funciones) {
         const chunks = fijos.slice(0, 16);
         for (let i = 0; i < chunks.length; i += 4) {
             const row = new ActionRowBuilder();
-            for (const tId of chunks.slice(i, i + 4)) {
-                const session = Object.values(subastas).find(s => s.threadId === tId && s.estado === 'abierta');
-                if (session) {
-                    row.addComponents(new ButtonBuilder().setCustomId(`control_btn:cerrar:${tId}`).setLabel(`Cerrar ${tId}`).setStyle(ButtonStyle.Danger));
-                } else {
-                    row.addComponents(new ButtonBuilder().setCustomId(`control_btn:abrir:${tId}`).setLabel(`Abrir ${tId}`).setStyle(ButtonStyle.Success));
-                }
+            for (let j = 0; j < 4 && i + j < chunks.length; j++) {
+                const idx = i + j;
+                const fijo = chunks[idx];
+                const session = Object.values(subastas).find(s => s.threadId === fijo.id && s.estado === 'abierta');
+                const label = `${session ? 'Cerrar' : 'Abrir'} ${idx + 1}`; // Punto 6: Botones numerados
+                const style = session ? ButtonStyle.Danger : ButtonStyle.Success;
+                const action = session ? 'cerrar' : 'abrir';
+                row.addComponents(new ButtonBuilder().setCustomId(`control_btn:${action}:${fijo.id}`).setLabel(label).setStyle(style));
             }
             rows.push(row);
         }
@@ -229,17 +246,22 @@ async function actualizarControlPanel(client, funciones) {
 }
 
 async function refrescarTodo(client, funciones) {
-    const subastas = cargarSubastas();
-    let actualizadas = 0;
-    for (const id in subastas) {
-        if (subastas[id].estado === 'abierta') {
-            await actualizarMensajePanel(client, subastas[id], funciones);
-            actualizadas++;
+    try { // Punto 2: Try/catch para que no se rompa el setInterval
+        const subastas = cargarSubastas();
+        let actualizadas = 0;
+        for (const id in subastas) {
+            if (subastas[id].estado === 'abierta') {
+                await actualizarMensajePanel(client, subastas[id], funciones);
+                actualizadas++;
+            }
         }
+        await actualizarIndice(client, funciones);
+        await actualizarControlPanel(client, funciones);
+        return actualizadas;
+    } catch (e) {
+        console.error('Error en refrescarTodo:', e.message);
+        return 0;
     }
-    await actualizarIndice(client, funciones);
-    await actualizarControlPanel(client, funciones);
-    return actualizadas;
 }
 
 async function mostrarConfirmacionAgregar(interaction, session, nombresRaw, funciones) {
@@ -270,6 +292,7 @@ async function mostrarConfirmacionAgregar(interaction, session, nombresRaw, func
 }
 
 function setupPanel(client, funciones) {
+    // Punto 2: Intervalo con protección
     setInterval(async () => {
         await refrescarTodo(client, funciones);
     }, 60 * 1000);
@@ -288,6 +311,17 @@ function setupPanel(client, funciones) {
                 const nombres = funciones.obtenerNombresUnicos(db, miembros);
                 const q = funciones.normalizar(focused.value);
                 return interaction.respond(nombres.filter(n => funciones.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
+            }
+            return;
+        }
+        
+        if (interaction.isAutocomplete() && interaction.commandName === 'control') {
+            const focused = interaction.options.getFocused(true);
+            if (focused.name === 'objeto') {
+                const db = funciones.cargarDB();
+                const objetos = funciones.obtenerObjetosUnicos(db);
+                const q = funciones.normalizar(focused.value);
+                return interaction.respond(objetos.filter(n => funciones.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
             }
             return;
         }
@@ -315,9 +349,10 @@ function setupPanel(client, funciones) {
                 const cantidad = interaction.options.getInteger('cantidad');
                 const evento = interaction.options.getString('evento') || obtenerEventoPorHora();
                 const fecha = funciones.fechaHoyArgentina();
+                const threadName = interaction.channel.name;
 
                 const session = {
-                    id: generarId(), threadId, channelId: interaction.channelId, messageId: null,
+                    id: generarId(), threadId, channelId: interaction.channelId, messageId: null, threadName,
                     item: { fecha, evento, categoria, objeto, cantidad },
                     interesados: [], estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
                 };
@@ -374,7 +409,8 @@ function setupPanel(client, funciones) {
                     } catch (e) { /* ignorar si ya no existe */ }
                 }
                 const { embeds, components } = renderPanel(session, funciones);
-                const msg = await interaction.reply({ embeds, components });
+                // Punto 1: fetchReply para guardar el ID correctamente
+                const msg = await interaction.reply({ embeds, components, fetchReply: true });
                 session.messageId = msg.id;
                 guardarSubastas(subastas);
                 return;
@@ -417,9 +453,14 @@ function setupPanel(client, funciones) {
 
             if (sub === 'agregar') {
                 const tId = interaction.options.getChannel('canal')?.id || interaction.channelId;
-                const fijos = cargarThreadsFijos();
-                if (fijos.includes(tId)) return interaction.reply({ content: 'ℹ️ Ya está en la lista.', ephemeral: true });
-                fijos.push(tId);
+                const objeto = interaction.options.getString('objeto') || null;
+                let fijos = cargarThreadsFijos();
+                if (fijos.some(f => f.id === tId)) return interaction.reply({ content: 'ℹ️ Ya está en la lista.', ephemeral: true });
+                
+                let nombre = `Thread ${tId.slice(-4)}`;
+                try { const ch = await client.channels.fetch(tId); if (ch && ch.name) nombre = ch.name; } catch {}
+                
+                fijos.push({ id: tId, nombre, objeto });
                 guardarThreadsFijos(fijos);
                 await actualizarControlPanel(client, funciones);
                 return interaction.reply({ content: `✅ Thread <#${tId}> fijado.` });
@@ -427,8 +468,8 @@ function setupPanel(client, funciones) {
             if (sub === 'quitar') {
                 const tId = interaction.options.getChannel('canal')?.id || interaction.channelId;
                 let fijos = cargarThreadsFijos();
-                if (!fijos.includes(tId)) return interaction.reply({ content: 'ℹ️ No está en la lista.', ephemeral: true });
-                fijos = fijos.filter(id => id !== tId);
+                if (!fijos.some(f => f.id === tId)) return interaction.reply({ content: 'ℹ️ No está en la lista.', ephemeral: true });
+                fijos = fijos.filter(f => f.id !== tId);
                 guardarThreadsFijos(fijos);
                 await actualizarControlPanel(client, funciones);
                 return interaction.reply({ content: `✅ Thread removido.` });
@@ -496,7 +537,7 @@ function setupPanel(client, funciones) {
             if (accion === 'historial') {
                 if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
                 const row = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`panel_hist:res:${sessionId}`).setLabel('Resumido').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId(`panel_hist:res:${sessionId}:1`).setLabel('Resumido').setStyle(ButtonStyle.Primary),
                     new ButtonBuilder().setCustomId(`panel_hist:det:${sessionId}`).setLabel('Detallado').setStyle(ButtonStyle.Secondary)
                 );
                 return interaction.reply({ content: 'Elegí el formato del historial:', components: [row], ephemeral: true });
@@ -546,7 +587,11 @@ function setupPanel(client, funciones) {
         }
 
         if (interaction.isButton() && interaction.customId.startsWith('panel_hist:')) {
-            const [, tipo, sessionId] = interaction.customId.split(':');
+            const partes = interaction.customId.split(':');
+            const tipo = partes[1];
+            const sessionId = partes[2];
+            const page = parseInt(partes[3]) || 1;
+            
             const subastas = cargarSubastas();
             const session = subastas[sessionId];
             if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
@@ -557,10 +602,16 @@ function setupPanel(client, funciones) {
                 const todos = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
                 todos.sort(funciones.compararPrioridad);
                 
-                let out = `📜 **Últimas 5 compras por jugador**\n\n`;
-                if (todos.length === 0) out += 'Sin interesados.';
+                const porPagina = 5;
+                const totalPaginas = Math.max(1, Math.ceil(todos.length / porPagina));
+                const paginaActual = Math.min(Math.max(1, page), totalPaginas);
+                const inicio = (paginaActual - 1) * porPagina;
+                const slice = todos.slice(inicio, inicio + porPagina);
+
+                let out = `📜 **Últimas 5 compras por jugador** (Pág. ${paginaActual}/${totalPaginas})\n\n`;
+                if (slice.length === 0) out += 'Sin interesados.';
                 else {
-                    for (const t of todos) {
+                    for (const t of slice) {
                         const nombre = funciones.aplicarCanonico(t.jugador, miembros);
                         let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, t.jugador, miembros) > 0);
                         comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
@@ -570,13 +621,18 @@ function setupPanel(client, funciones) {
                         else {
                             for (const c of ultimas) {
                                 const n = utils.contarGanador(c.ganadores, t.jugador, miembros);
-                                out += `#${c.id} · ${utils.formatearFecha(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
+                                out += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
                             }
                         }
                         out += `\n`;
                     }
                 }
-                return logic.responderLargo(interaction, out, true);
+                
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`panel_hist:res:${sessionId}:${paginaActual - 1}`).setLabel('◀').setStyle(ButtonStyle.Primary).setDisabled(paginaActual <= 1),
+                    new ButtonBuilder().setCustomId(`panel_hist:res:${sessionId}:${paginaActual + 1}`).setLabel('▶').setStyle(ButtonStyle.Primary).setDisabled(paginaActual >= totalPaginas)
+                );
+                return interaction.update({ content: out, components: [row] });
             }
 
             if (tipo === 'det') {
@@ -618,7 +674,7 @@ function setupPanel(client, funciones) {
                 out += `**${cat}** (últimas ${filtradas.length}):\n`;
                 for (const c of filtradas) {
                     const n = utils.contarGanador(c.ganadores, t.jugador, miembros);
-                    out += `#${c.id} · ${utils.formatearFecha(c.fecha)} · ${n}x ${c.objeto}\n`;
+                    out += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${n}x ${c.objeto}\n`;
                 }
                 out += `\n`;
             }
@@ -794,6 +850,7 @@ function setupPanel(client, funciones) {
                 pushHistorial(session, interaction, 'Registró resultado');
                 guardarSubastas(subastas);
 
+                // Punto 3: Borrar el mensaje del panel
                 try {
                     const canal = await client.channels.fetch(session.channelId);
                     const msgPanel = await canal.messages.fetch(session.messageId);
@@ -805,7 +862,7 @@ function setupPanel(client, funciones) {
                 
                 await refrescarTodo(client, funciones);
 
-                let msg = `✅ Resultado registrado: #${entrada.id} · 📅 ${utils.formatearFecha(entrada.fecha)} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})\n🏆 ${entrada.ganadores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
+                let msg = `✅ Resultado registrado: #${entrada.id} · 📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})\n🏆 ${entrada.ganadores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
                 if (entrada.perdedores.length > 0) msg += `\n💔 ${entrada.perdedores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ')}`;
                 if (!syncRes.ok) msg += `\n⚠️ Sync falló: ${syncRes.motivo}`;
 
@@ -863,11 +920,18 @@ function setupPanel(client, funciones) {
             const threadId = partes[2];
 
             if (accion === 'abrir') {
+                const fijos = cargarThreadsFijos();
+                const fijo = fijos.find(f => f.id === threadId);
                 const modal = new ModalBuilder().setCustomId(`control_modal:abrir:${threadId}`).setTitle('Abrir Subasta');
-                modal.addComponents(
-                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('objeto').setLabel('Objeto').setStyle(TextInputStyle.Short).setRequired(true)),
-                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cantidad').setLabel('Cantidad').setStyle(TextInputStyle.Short).setRequired(true))
-                );
+                if (fijo && fijo.objeto) {
+                    // Punto 8: Solo pide cantidad si ya tiene objeto
+                    modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cantidad').setLabel('Cantidad').setStyle(TextInputStyle.Short).setValue('1').setRequired(true)));
+                } else {
+                    modal.addComponents(
+                        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('objeto').setLabel('Objeto').setStyle(TextInputStyle.Short).setRequired(true)),
+                        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cantidad').setLabel('Cantidad').setStyle(TextInputStyle.Short).setValue('1').setRequired(true))
+                    );
+                }
                 return interaction.showModal(modal);
             }
 
@@ -877,10 +941,10 @@ function setupPanel(client, funciones) {
                 if (!session) return interaction.reply({ content: '❌ No hay subasta activa en ese thread.', ephemeral: true });
                 const id = guardarPendientePanel('control_cancelar_subasta', { sessionId: session.id }, interaction.user.id);
                 const row = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`control_pending_confirm:${id}`).setLabel('Sí, cerrar').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId(`control_pending_confirm:${id}`).setLabel('Sí, cerrar y borrar').setStyle(ButtonStyle.Danger),
                     new ButtonBuilder().setCustomId(`control_pending_cancel:${id}`).setLabel('Volver').setStyle(ButtonStyle.Secondary)
                 );
-                return interaction.reply({ content: `⚠️ **¿Cancelar subasta de <#${threadId}>?**`, components: [row], ephemeral: true });
+                return interaction.reply({ content: `⚠️ **¿Cancelar subasta de <#${threadId}> y borrar el panel?**`, components: [row], ephemeral: true });
             }
 
             if (accion === 'abrir_todos' || accion === 'cerrar_todos') {
@@ -888,12 +952,45 @@ function setupPanel(client, funciones) {
                 if (accion === 'abrir_todos') {
                     modal.addComponents(
                         new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('objeto').setLabel('Objeto para todas').setStyle(TextInputStyle.Short).setRequired(true)),
-                        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cantidad').setLabel('Cantidad por thread').setStyle(TextInputStyle.Short).setRequired(true))
+                        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cantidad').setLabel('Cantidad por thread').setStyle(TextInputStyle.Short).setValue('1').setRequired(true))
                     );
                 } else {
                     modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('confirmar').setLabel('Escribí "CONFIRMAR" para cerrar todas').setStyle(TextInputStyle.Short).setRequired(true)));
                 }
                 return interaction.showModal(modal);
+            }
+        }
+
+        if (interaction.isButton() && (interaction.customId.startsWith('control_pending_confirm:') || interaction.customId.startsWith('control_pending_cancel:'))) {
+            // Punto 7: Manejo del botón de confirmación del control
+            const esConfirm = interaction.customId.startsWith('control_pending_confirm:');
+            const id = interaction.customId.replace('control_pending_confirm:', '').replace('control_pending_cancel:', '');
+            const p = pendingPanel.get(id);
+            if (!p) return interaction.update({ content: '❌ La sesión expiró.', components: [] });
+            if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien inició la acción puede confirmar.', ephemeral: true });
+            if (!esConfirm) { pendingPanel.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
+
+            try { await interaction.deferUpdate(); } catch {}
+            const subastas = cargarSubastas();
+            const session = subastas[p.payload.sessionId];
+            if (!session || session.estado !== 'abierta') { pendingPanel.delete(id); return interaction.editReply({ content: '❌ El panel ya no está activo.', components: [] }); }
+
+            if (p.tipo === 'control_cancelar_subasta') {
+                session.estado = 'cancelada';
+                pushHistorial(session, interaction, 'Subasta cancelada desde Control');
+                guardarSubastas(subastas);
+                const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
+                delete subastas[session.id]; guardarSubastas(subastas);
+                
+                try {
+                    const canal = await client.channels.fetch(session.channelId);
+                    const msg = await canal.messages.fetch(session.messageId);
+                    await msg.delete();
+                } catch {}
+
+                await refrescarTodo(client, funciones);
+                pendingPanel.delete(id);
+                return interaction.editReply({ content: '🗑️ Subasta cancelada y panel eliminado.', components: [] });
             }
         }
 
@@ -905,19 +1002,26 @@ function setupPanel(client, funciones) {
 
             if (accion === 'abrir') {
                 await interaction.deferReply({ ephemeral: true });
-                const objeto = interaction.fields.getTextInputValue('objeto');
-                const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10);
+                const fijos = cargarThreadsFijos();
+                const fijo = fijos.find(f => f.id === threadId);
+                let obj = fijo && fijo.objeto ? fijo.objeto : null;
+                if (!obj) obj = interaction.fields.getTextInputValue('objeto');
+                const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10) || 1;
+                
                 const db = funciones.cargarDB();
-                const cat = logic.inferirCategoria(objeto, db);
+                const cat = logic.inferirCategoria(obj, db);
                 const ev = obtenerEventoPorHora();
                 const f = funciones.fechaHoyArgentina();
 
                 const subastas = cargarSubastas();
                 if (Object.values(subastas).find(s => s.threadId === threadId && s.estado === 'abierta')) return interaction.editReply({ content: '❌ Ese thread ya tiene subasta.' });
 
+                let nombre = fijo ? fijo.nombre : `Thread ${threadId.slice(-4)}`;
+                try { const ch = await client.channels.fetch(threadId); if (ch && ch.name) nombre = ch.name; } catch {}
+
                 const session = {
-                    id: generarId(), threadId, channelId: threadId, messageId: null,
-                    item: { fecha: f, evento: ev, categoria: cat, objeto, cantidad: cant },
+                    id: generarId(), threadId, channelId: threadId, messageId: null, threadName: nombre,
+                    item: { fecha: f, evento: ev, categoria: cat, objeto: obj, cantidad: cant },
                     interesados: [], estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
                 };
                 pushHistorial(session, interaction, 'Panel creado por Control');
@@ -963,7 +1067,7 @@ function setupPanel(client, funciones) {
             if (accion === 'abrir_todos') {
                 await interaction.deferReply({ ephemeral: true });
                 const objeto = interaction.fields.getTextInputValue('objeto');
-                const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10);
+                const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10) || 1;
                 const db = funciones.cargarDB();
                 const cat = logic.inferirCategoria(objeto, db);
                 const ev = obtenerEventoPorHora();
@@ -972,17 +1076,17 @@ function setupPanel(client, funciones) {
                 const subastas = cargarSubastas();
                 let abiertas = 0;
 
-                for (const tId of fijos) {
-                    if (Object.values(subastas).find(s => s.threadId === tId && s.estado === 'abierta')) continue;
+                for (const fijo of fijos) {
+                    if (Object.values(subastas).find(s => s.threadId === fijo.id && s.estado === 'abierta')) continue;
                     const session = {
-                        id: generarId(), threadId: tId, channelId: tId, messageId: null,
+                        id: generarId(), threadId: fijo.id, channelId: fijo.id, messageId: null, threadName: fijo.nombre,
                         item: { fecha: f, evento: ev, categoria: cat, objeto, cantidad: cant },
                         interesados: [], estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
                     };
                     pushHistorial(session, interaction, 'Panel creado por Control Global');
                     subastas[session.id] = session;
                     try {
-                        const canal = await client.channels.fetch(tId);
+                        const canal = await client.channels.fetch(fijo.id);
                         const { embeds, components } = renderPanel(session, funciones);
                         const msg = await canal.send({ embeds, components });
                         session.messageId = msg.id;
