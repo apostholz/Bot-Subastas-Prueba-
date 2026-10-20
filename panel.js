@@ -45,7 +45,6 @@ function cargarControl() { return cargarJSON(CONTROL_FILE, { channelId: null, me
 function guardarControl(d) { guardarJSON(CONTROL_FILE, d); }
 function cargarThreadsFijos() {
     const raw = cargarJSON(THREADS_FILE, []);
-    // Migración de formato viejo (array de strings) a nuevo (array de objetos)
     return raw.map(item => {
         if (typeof item === 'string') return { id: item, nombre: null, objeto: null };
         return item;
@@ -169,15 +168,8 @@ async function actualizarIndice(client, funciones) {
         let desc = 'No hay subastas activas.';
         if (activas.length > 0) {
             desc = 'Referencia: (interesados / unidades)\n\n';
-            desc += activas.map(s => {
-                // Punto 10: Evitar #unknown usando el nombre guardado
-                let nombreThread = s.threadName;
-                if (!nombreThread) {
-                    try { const ch = client.channels.cache.get(s.threadId); if (ch) nombreThread = ch.name; } catch {}
-                }
-                if (!nombreThread) nombreThread = `Thread ${s.threadId.slice(-4)}`;
-                return `• <#${s.threadId}> (${nombreThread}) — ${s.item.objeto} (${s.interesados.length} / ${s.item.cantidad})`;
-            }).join('\n');
+            // Arreglo: Solo el link <#ID> y el objeto. Se borra el nombre en texto plano.
+            desc += activas.map(s => `• <#${s.threadId}> — ${s.item.objeto} (${s.interesados.length} / ${s.item.cantidad})`).join('\n');
         }
 
         const embed = new EmbedBuilder().setTitle('📌 Índice de subastas activas').setDescription(desc).setColor(0x5865F2);
@@ -205,12 +197,12 @@ async function actualizarControlPanel(client, funciones) {
                 const session = Object.values(subastas).find(s => s.threadId === fijo.id && s.estado === 'abierta');
                 let estado = '';
                 if (session) {
-                    estado = `🟢 Activo — ${session.item.objeto} (${session.interesados.length}/${session.item.cantidad})`; // Punto 11: Verde activo
+                    estado = `🟢 Activo — (${session.interesados.length}/${session.item.cantidad})`;
                 } else {
-                    estado = '🔴 Cerrado'; // Punto 11: Rojo cerrado
+                    estado = '🔴 Cerrado';
                 }
-                const nombre = fijo.nombre || `Thread ${i + 1}`;
-                desc += `• **${nombre}** — ${estado}\n`;
+                // Arreglo: [N] <#ID> para link y referencia numérica
+                desc += `• **[${i + 1}]** <#${fijo.id}> — ${estado}\n`;
             });
         }
 
@@ -224,7 +216,7 @@ async function actualizarControlPanel(client, funciones) {
                 const idx = i + j;
                 const fijo = chunks[idx];
                 const session = Object.values(subastas).find(s => s.threadId === fijo.id && s.estado === 'abierta');
-                const label = `${session ? 'Cerrar' : 'Abrir'} ${idx + 1}`; // Punto 6: Botones numerados
+                const label = `${session ? 'Cerrar' : 'Abrir'} ${idx + 1}`;
                 const style = session ? ButtonStyle.Danger : ButtonStyle.Success;
                 const action = session ? 'cerrar' : 'abrir';
                 row.addComponents(new ButtonBuilder().setCustomId(`control_btn:${action}:${fijo.id}`).setLabel(label).setStyle(style));
@@ -246,7 +238,7 @@ async function actualizarControlPanel(client, funciones) {
 }
 
 async function refrescarTodo(client, funciones) {
-    try { // Punto 2: Try/catch para que no se rompa el setInterval
+    try {
         const subastas = cargarSubastas();
         let actualizadas = 0;
         for (const id in subastas) {
@@ -292,7 +284,6 @@ async function mostrarConfirmacionAgregar(interaction, session, nombresRaw, func
 }
 
 function setupPanel(client, funciones) {
-    // Punto 2: Intervalo con protección
     setInterval(async () => {
         await refrescarTodo(client, funciones);
     }, 60 * 1000);
@@ -409,7 +400,6 @@ function setupPanel(client, funciones) {
                     } catch (e) { /* ignorar si ya no existe */ }
                 }
                 const { embeds, components } = renderPanel(session, funciones);
-                // Punto 1: fetchReply para guardar el ID correctamente
                 const msg = await interaction.reply({ embeds, components, fetchReply: true });
                 session.messageId = msg.id;
                 guardarSubastas(subastas);
@@ -850,7 +840,6 @@ function setupPanel(client, funciones) {
                 pushHistorial(session, interaction, 'Registró resultado');
                 guardarSubastas(subastas);
 
-                // Punto 3: Borrar el mensaje del panel
                 try {
                     const canal = await client.channels.fetch(session.channelId);
                     const msgPanel = await canal.messages.fetch(session.messageId);
@@ -924,7 +913,6 @@ function setupPanel(client, funciones) {
                 const fijo = fijos.find(f => f.id === threadId);
                 const modal = new ModalBuilder().setCustomId(`control_modal:abrir:${threadId}`).setTitle('Abrir Subasta');
                 if (fijo && fijo.objeto) {
-                    // Punto 8: Solo pide cantidad si ya tiene objeto
                     modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('cantidad').setLabel('Cantidad').setStyle(TextInputStyle.Short).setValue('1').setRequired(true)));
                 } else {
                     modal.addComponents(
@@ -962,7 +950,6 @@ function setupPanel(client, funciones) {
         }
 
         if (interaction.isButton() && (interaction.customId.startsWith('control_pending_confirm:') || interaction.customId.startsWith('control_pending_cancel:'))) {
-            // Punto 7: Manejo del botón de confirmación del control
             const esConfirm = interaction.customId.startsWith('control_pending_confirm:');
             const id = interaction.customId.replace('control_pending_confirm:', '').replace('control_pending_cancel:', '');
             const p = pendingPanel.get(id);
