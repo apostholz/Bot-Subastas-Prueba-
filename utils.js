@@ -81,7 +81,7 @@ function esExcluido(nombre, miembros) {
 function contarGanador(ganadores, jugador, miembros) {
     const jk = claveJugador(jugador, miembros);
     for (const g of ganadores) {
-        const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
+        const match = g.match(/^(.+?)(?:\s+[xX](\d+))?$/);
         if (match && claveJugador(match[1], miembros) === jk) {
             return match[2] ? parseInt(match[2]) : 1;
         }
@@ -89,14 +89,14 @@ function contarGanador(ganadores, jugador, miembros) {
     return 0;
 }
 function parsearGanador(g) {
-    const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
+    const match = g.match(/^(.+?)(?:\s+[xX](\d+))?$/);
     if (!match) return { nombre: g, cantidad: 1 };
     return { nombre: match[1].trim(), cantidad: match[2] ? parseInt(match[2]) : 1 };
 }
 function buscarJugadorEnLista(lista, nombre, miembros) {
     const jk = claveJugador(nombre, miembros);
     return lista.findIndex(g => {
-        const match = g.match(/^(.+?)(?:\s+x(\d+))?$/);
+        const match = g.match(/^(.+?)(?:\s+[xX](\d+))?$/);
         return match && claveJugador(match[1], miembros) === jk;
     });
 }
