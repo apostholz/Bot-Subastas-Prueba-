@@ -208,7 +208,6 @@ async function actualizarControlPanel(client, funciones) {
 
         const rows = [];
         const chunks = fijos.slice(0, 16);
-        // Punto 2: Filas de 3 botones
         for (let i = 0; i < chunks.length; i += 3) {
             const row = new ActionRowBuilder();
             for (let j = 0; j < 3 && i + j < chunks.length; j++) {
@@ -223,9 +222,9 @@ async function actualizarControlPanel(client, funciones) {
             rows.push(row);
         }
 
-        // Punto 1: Ya no está "Abrir TODAS", solo dejamos "Cerrar TODAS" si hay threads
         if (fijos.length > 0) {
             const rowGlobal = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('control_btn:abrir_todos').setLabel('Abrir TODAS').setStyle(ButtonStyle.Primary),
                 new ButtonBuilder().setCustomId('control_btn:cerrar_todos').setLabel('Cerrar TODAS').setStyle(ButtonStyle.Secondary)
             );
             rows.push(rowGlobal);
@@ -934,6 +933,42 @@ function setupPanel(client, funciones) {
                 return interaction.reply({ content: `⚠️ **¿Cancelar subasta de <#${threadId}> y borrar el panel?**`, components: [row], ephemeral: true });
             }
 
+            if (accion === 'abrir_todos') {
+                const fijos = cargarThreadsFijos();
+                const subastas = cargarSubastas();
+                const disponibles = [];
+                let activosCount = 0;
+                let sinObjetoCount = 0;
+
+                for (const fijo of fijos) {
+                    if (!fijo.objeto) {
+                        sinObjetoCount++;
+                        continue;
+                    }
+                    const activa = Object.values(subastas).find(s => s.threadId === fijo.id && s.estado === 'abierta');
+                    if (activa) {
+                        activosCount++;
+                    } else {
+                        disponibles.push(fijo);
+                    }
+                }
+
+                if (disponibles.length === 0) {
+                    return interaction.reply({ content: '❌ No hay threads disponibles con objeto configurado.', ephemeral: true });
+                }
+
+                let txt = `⚠️ **¿Abrir subasta en ${disponibles.length} thread(s)?**\n`;
+                if (activosCount > 0) txt += `ℹ️ Se omitirán **${activosCount}** thread(s) que ya tienen subasta activa.\n`;
+                if (sinObjetoCount > 0) txt += `ℹ️ Se omitirán **${sinObjetoCount}** thread(s) sin objeto configurado.\n`;
+                
+                const id = guardarPendientePanel('control_abrir_todos', { disponibles }, interaction.user.id);
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`control_pending_confirm:${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
+                    new ButtonBuilder().setCustomId(`control_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
+                );
+                return interaction.reply({ content: txt, components: [row], ephemeral: true });
+            }
+
             if (accion === 'cerrar_todos') {
                 const modal = new ModalBuilder().setCustomId(`control_modal:cerrar_todos`).setTitle('Cerrar Todas las Subastas');
                 modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('confirmar').setLabel('Escribí "CONFIRMAR" para cerrar todas').setStyle(TextInputStyle.Short).setRequired(true)));
@@ -951,6 +986,37 @@ function setupPanel(client, funciones) {
 
             try { await interaction.deferUpdate(); } catch {}
             const subastas = cargarSubastas();
+
+            if (p.tipo === 'control_abrir_todos') {
+                const disponibles = p.payload.disponibles;
+                const f = funciones.fechaHoyArgentina();
+                const ev = obtenerEventoPorHora();
+                const db = funciones.cargarDB();
+                let abiertas = 0;
+
+                for (const fijo of disponibles) {
+                    const cat = logic.inferirCategoria(fijo.objeto, db);
+                    const session = {
+                        id: generarId(), threadId: fijo.id, channelId: fijo.id, messageId: null, threadName: fijo.nombre,
+                        item: { fecha: f, evento: ev, categoria: cat, objeto: fijo.objeto, cantidad: 1 },
+                        interesados: [], estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
+                    };
+                    pushHistorial(session, interaction, 'Panel creado por Abrir TODAS');
+                    subastas[session.id] = session;
+                    try {
+                        const canal = await client.channels.fetch(fijo.id);
+                        const { embeds, components } = renderPanel(session, funciones);
+                        const msg = await canal.send({ embeds, components });
+                        session.messageId = msg.id;
+                        abiertas++;
+                    } catch (e) { console.error(e); }
+                }
+                guardarSubastas(subastas);
+                await refrescarTodo(client, funciones);
+                pendingPanel.delete(id);
+                return interaction.editReply({ content: `✅ Se abrieron **${abiertas}** subastas.`, components: [] });
+            }
+
             const session = subastas[p.payload.sessionId];
             if (!session || session.estado !== 'abierta') { pendingPanel.delete(id); return interaction.editReply({ content: '❌ El panel ya no está activo.', components: [] }); }
 
