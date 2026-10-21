@@ -202,12 +202,22 @@ function bloqueDeCategoria(evento, categoria) {
     return null;
 }
 
+// ====== ORDEN CRONOLÓGICO DESCENDENTE ======
+function ordenarComprasDesc(a, b) {
+    const f = (b.fecha || '').localeCompare(a.fecha || '');
+    if (f !== 0) return f;
+    const ea = ordenEvento(a.evento);
+    const eb = ordenEvento(b.evento);
+    if (ea !== eb) return eb - ea;
+    return (b.id || 0) - (a.id || 0);
+}
+
 module.exports = {
     cargarDB, guardarDB, cargarMiembros, guardarMiembros,
     normalizar, normalizarNombre, claveJugador, aplicarCanonico, formatearNombreConCantidad, esExcluido,
     contarGanador, parsearGanador, buscarJugadorEnLista,
     fechaHoyArgentina, convertirFecha, convertirFechaDia, formatearFecha, diasDesde, etiquetaDias, filtrarPorPeriodo,
     CATEGORIAS, CATEGORIAS_TOTAL, ABREVIATURAS, OBJETOS_PROHIBIDOS, PESOS, getFactorTemporal,
-    nombreBonitoEvento, ordenEvento, ordenCategoria, bloqueDeCategoria,
+    nombreBonitoEvento, ordenEvento, ordenCategoria, bloqueDeCategoria, ordenarComprasDesc,
     ROL_LIDER, ROL_HELPER, CSV_FILE, BACKUP_FILE
 };
