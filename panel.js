@@ -26,6 +26,8 @@ const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos',
 const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
 
 const pendingPanel = new Map();
+let refrescandoPaneles = false;
+let moviendoPaneles = false;
 
 function cargarJSON(file, def) {
     if (!fs.existsSync(file)) return def;
@@ -255,45 +257,50 @@ async function refrescarTodo(client, funciones) {
 }
 
 async function moverPanelesAlFinal(client, funciones) {
+    if (moviendoPaneles) return 0;
+    moviendoPaneles = true;
+
     const subastas = cargarSubastas();
     let movidos = 0;
-    let huboCambios = false;
 
-    for (const id in subastas) {
-        const session = subastas[id];
-        if (!session || session.estado !== 'abierta' || !session.channelId) continue;
+    try {
+        for (const id in subastas) {
+            const session = subastas[id];
+            if (!session || session.estado !== 'abierta' || !session.channelId) continue;
 
-        try {
-            const canal = await client.channels.fetch(session.channelId);
-            if (!canal) continue;
+            try {
+                const canal = await client.channels.fetch(session.channelId);
+                if (!canal) continue;
 
-            const mensajes = await canal.messages.fetch({ limit: 1 });
-            const ultimo = mensajes.first();
+                const mensajes = await canal.messages.fetch({ limit: 1 });
+                const ultimo = mensajes.first();
 
-            if (ultimo && ultimo.id === session.messageId) continue;
+                if (ultimo && ultimo.id === session.messageId) continue;
 
-            const { embeds, components } = renderPanel(session, funciones);
-            const nuevo = await canal.send({ embeds, components });
+                const { embeds, components } = renderPanel(session, funciones);
+                const nuevo = await canal.send({ embeds, components });
 
-            const viejoId = session.messageId;
-            session.messageId = nuevo.id;
-            subastas[id] = session;
-            huboCambios = true;
+                const viejoId = session.messageId;
+                session.messageId = nuevo.id;
+                subastas[id] = session;
+                guardarSubastas(subastas);
 
-            if (viejoId) {
-                try {
-                    const viejo = await canal.messages.fetch(viejoId);
-                    if (viejo) await viejo.delete();
-                } catch (e) { /* ignorar */ }
+                if (viejoId) {
+                    try {
+                        const viejo = await canal.messages.fetch(viejoId);
+                        if (viejo) await viejo.delete();
+                    } catch (e) { /* ignorar */ }
+                }
+
+                movidos++;
+            } catch (e) {
+                console.error(`[Panel] Error moviendo panel de <#${session.threadId}>:`, e.message);
             }
-
-            movidos++;
-        } catch (e) {
-            console.error(`[Panel] Error moviendo panel de <#${session.threadId}>:`, e.message);
         }
+    } finally {
+        moviendoPaneles = false;
     }
 
-    if (huboCambios) guardarSubastas(subastas);
     return movidos;
 }
 
@@ -326,7 +333,13 @@ async function mostrarConfirmacionAgregar(interaction, session, nombresRaw, func
 
 function setupPanel(client, funciones) {
     setInterval(async () => {
-        await refrescarTodo(client, funciones);
+        if (refrescandoPaneles) return;
+        refrescandoPaneles = true;
+        try {
+            await refrescarTodo(client, funciones);
+        } finally {
+            refrescandoPaneles = false;
+        }
     }, 60 * 1000);
 
     setInterval(async () => {
@@ -368,10 +381,16 @@ function setupPanel(client, funciones) {
             const esLiderUsuario = esLider(interaction.member, funciones);
 
             if (sub === 'refresh') {
-                await interaction.deferReply({ ephemeral: true });
-                const cant = await refrescarTodo(client, funciones);
-                const movidos = await moverPanelesAlFinal(client, funciones);
-                return interaction.editReply({ content: `✅ Refrescados **${cant}** paneles activos. Movidos al final: **${movidos}**.` });
+                if (refrescandoPaneles) return interaction.reply({ content: '⏳ Ya hay un refresco en curso.', ephemeral: true });
+                refrescandoPaneles = true;
+                try {
+                    await interaction.deferReply({ ephemeral: true });
+                    const cant = await refrescarTodo(client, funciones);
+                    const movidos = await moverPanelesAlFinal(client, funciones);
+                    return interaction.editReply({ content: `✅ Refrescados **${cant}** paneles activos. Movidos al final: **${movidos}**.` });
+                } finally {
+                    refrescandoPaneles = false;
+                }
             }
 
             if (sub === 'crear') {
@@ -650,7 +669,7 @@ function setupPanel(client, funciones) {
                     for (const t of slice) {
                         const nombre = funciones.aplicarCanonico(t.jugador, miembros);
                         let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, t.jugador, miembros) > 0);
-                        comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
+                        comprasJ.sort(utils.ordenarComprasDesc);
                         const ultimas = comprasJ.slice(0, 5);
                         out += `**${nombre}** (últimas ${ultimas.length}):\n`;
                         if (ultimas.length === 0) out += `Sin compras.\n`;
@@ -701,7 +720,7 @@ function setupPanel(client, funciones) {
             if (!t) return interaction.reply({ content: '❌ Jugador inválido.', ephemeral: true });
             
             const nombre = funciones.aplicarCanonico(t.jugador, miembros);
-            let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, t.jugador, miembros) > 0).sort((a, b) => b.fecha.localeCompare(a.fecha));
+            let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, t.jugador, miembros) > 0).sort(utils.ordenarComprasDesc);
             
             let out = `📜 **${nombre}** (Detallado)\n\n`;
             for (const cat of utils.CATEGORIAS) {
