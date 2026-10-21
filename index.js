@@ -459,7 +459,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             const keyBuscado = utils.normalizar(nombreBuscado);
             const comprasFiltradas = utils.filtrarPorPeriodo(db.compras, periodo);
-            const apariciones = comprasFiltradas.filter(c => c.objeto && utils.normalizar(c.objeto) === keyBuscado && c.ganadores.length > 0).sort((a, b) => b.fecha.localeCompare(a.fecha));
+            const apariciones = comprasFiltradas.filter(c => c.objeto && utils.normalizar(c.objeto) === keyBuscado && c.ganadores.length > 0).sort(utils.ordenarComprasDesc);
 
             if (apariciones.length === 0) return interaction.reply({ content: `❌ No hay apariciones de **${nombreBuscado}** en ${periodo}.`, ephemeral });
 
@@ -493,7 +493,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const comprasFiltradas = utils.filtrarPorPeriodo(db.compras, periodo);
             let apariciones = comprasFiltradas.filter(c => c.categoria === categoria);
             if (jugadorFiltro) apariciones = apariciones.filter(c => utils.contarGanador(c.ganadores, jugadorFiltro, miembros) > 0);
-            apariciones = apariciones.sort((a, b) => b.fecha.localeCompare(a.fecha));
+            apariciones = apariciones.sort(utils.ordenarComprasDesc);
 
             if (apariciones.length === 0) return interaction.reply({ content: `❌ No hay apariciones de **${categoria}**.`, ephemeral });
 
@@ -745,7 +745,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 for (const j of jugadores) {
                     let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, j, miembros) > 0);
                     if (categoria !== 'Todas') comprasJ = comprasJ.filter(c => c.categoria === categoria);
-                    comprasJ.sort((a, b) => b.fecha.localeCompare(a.fecha));
+                    comprasJ.sort(utils.ordenarComprasDesc);
                     const ultimas = comprasJ.slice(0, 5);
                     let bloque = `📜 **${utils.aplicarCanonico(j, miembros)}** (últimas ${ultimas.length})\n`;
                     for (const c of ultimas) {
@@ -758,7 +758,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             } else {
                 const bloques = [];
                 for (const j of jugadores) {
-                    let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, j, miembros) > 0).sort((a, b) => b.fecha.localeCompare(a.fecha));
+                    let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, j, miembros) > 0).sort(utils.ordenarComprasDesc);
                     let bloque = `📜 **${utils.aplicarCanonico(j, miembros)}** (por categoría)\n`;
                     for (const cat of utils.CATEGORIAS) {
                         const filtradas = comprasJ.filter(c => c.categoria === cat).slice(0, 5);
