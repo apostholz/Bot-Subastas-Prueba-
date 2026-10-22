@@ -48,7 +48,7 @@ function guardarControl(d) { guardarJSON(CONTROL_FILE, d); }
 function cargarThreadsFijos() {
     const raw = cargarJSON(THREADS_FILE, []);
     return raw.map(item => {
-        if (typeof item === 'string') return { id: item, nombre: null, objeto: null };
+        if (typeof item === 'string') return { id: item, nombre: null, objeto: null, categoria: null };
         return item;
     });
 }
@@ -277,7 +277,6 @@ async function moverPanelesAlFinal(client, funciones) {
 
                 if (ultimo && ultimo.id === session.messageId) continue;
 
-                // BORRAR EL VIEJO PRIMERO PARA EVITAR DUPLICADOS
                 const viejoId = session.messageId;
                 if (viejoId) {
                     try {
@@ -286,7 +285,6 @@ async function moverPanelesAlFinal(client, funciones) {
                     } catch (e) { /* ignorar si ya no existe */ }
                 }
 
-                // ENVIAR EL NUEVO
                 const { embeds, components } = renderPanel(session, funciones);
                 const nuevo = await canal.send({ embeds, components });
 
@@ -511,13 +509,14 @@ function setupPanel(client, funciones) {
             if (sub === 'agregar') {
                 const tId = interaction.options.getChannel('canal')?.id || interaction.channelId;
                 const objeto = interaction.options.getString('objeto') || null;
+                const categoria = interaction.options.getString('categoria') || null;
                 let fijos = cargarThreadsFijos();
                 if (fijos.some(f => f.id === tId)) return interaction.reply({ content: 'ℹ️ Ya está en la lista.', ephemeral: true });
                 
                 let nombre = `Thread ${tId.slice(-4)}`;
                 try { const ch = await client.channels.fetch(tId); if (ch && ch.name) nombre = ch.name; } catch {}
                 
-                fijos.push({ id: tId, nombre, objeto });
+                fijos.push({ id: tId, nombre, objeto, categoria });
                 guardarThreadsFijos(fijos);
                 await actualizarControlPanel(client, funciones);
                 return interaction.reply({ content: `✅ Thread <#${tId}> fijado.` });
@@ -1064,7 +1063,8 @@ function setupPanel(client, funciones) {
                 let abiertas = 0;
 
                 for (const fijo of disponibles) {
-                    const cat = logic.inferirCategoria(fijo.objeto, db);
+                    // Usar categoría guardada o inferirla
+                    const cat = (fijo && fijo.categoria) ? fijo.categoria : logic.inferirCategoria(fijo.objeto, db);
                     const session = {
                         id: generarId(), threadId: fijo.id, channelId: fijo.id, messageId: null, threadName: fijo.nombre,
                         item: { fecha: f, evento: ev, categoria: cat, objeto: fijo.objeto, cantidad: 1 },
@@ -1123,7 +1123,8 @@ function setupPanel(client, funciones) {
                 const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10) || 1;
                 
                 const db = funciones.cargarDB();
-                const cat = logic.inferirCategoria(obj, db);
+                // Usar categoría guardada o inferirla
+                const cat = (fijo && fijo.categoria) ? fijo.categoria : logic.inferirCategoria(obj, db);
                 const ev = obtenerEventoPorHora();
                 const f = funciones.fechaHoyArgentina();
 
