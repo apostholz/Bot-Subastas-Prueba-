@@ -104,9 +104,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
         }
 
-        if (focused.name === 'jugador' || (cmd === 'miembro' && focused.name === 'nombre')) {
+        if (focused.name === 'jugador' || (cmd === 'miembros' && focused.name === 'nombre')) {
             const nombres = logic.obtenerNombresUnicos(db, miembros);
-            if (cmd === 'editar' || cmd === 'miembro') return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+            if (cmd === 'editar' || cmd === 'miembros') return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
             const q = utils.normalizar(focused.value);
             return interaction.respond(nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
         }
@@ -370,18 +370,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // 3. Comandos Slash
     if (!interaction.isChatInputCommand()) return;
     
-    const comandosLider = ['miembro', 'backup', 'sync'];
-    const comandosHelper = ['borrar', 'editar', 'registro-rapido', 'sub', 'subf'];
+    const comandosAdmin = ['backup', 'sync', 'registro-rapido'];
+    const comandosLider = ['miembros'];
+    const comandosHelper = ['borrar', 'editar', 'sub', 'subf'];
     
-    if (comandosLider.includes(interaction.commandName) || comandosHelper.includes(interaction.commandName)) {
+    if (comandosAdmin.includes(interaction.commandName) || comandosLider.includes(interaction.commandName) || comandosHelper.includes(interaction.commandName)) {
         const esDueño = interaction.guild && interaction.guild.ownerId === interaction.user.id;
         const tieneLider = interaction.member && interaction.member.roles.cache.has(utils.ROL_LIDER);
         const tieneHelper = interaction.member && interaction.member.roles.cache.has(utils.ROL_HELPER);
         const esAdmin = interaction.member && interaction.member.permissions.has(PermissionFlagsBits.Administrator);
         
-        const puedeLider = esDueño || tieneLider || esAdmin;
+        const puedeAdmin = esDueño || esAdmin;
+        const puedeLider = puedeAdmin || tieneLider;
         const puedeHelper = puedeLider || tieneHelper;
 
+        if (comandosAdmin.includes(interaction.commandName) && !puedeAdmin) {
+            return interaction.reply({ content: '❌ No tienes permiso (solo Administradores).', ephemeral: true });
+        }
         if (comandosLider.includes(interaction.commandName) && !puedeLider) {
             return interaction.reply({ content: '❌ No tienes permiso (solo Líderes/Admins).', ephemeral: true });
         }
@@ -529,11 +534,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return logic.responderLargo(interaction, out, ephemeral);
         }
 
-        if (interaction.commandName === 'miembro') {
+        if (interaction.commandName === 'miembros') {
             const sub = interaction.options.getSubcommand();
-            if (sub === 'canonicos') {
+            if (sub === 'lista') {
                 const can = Object.entries(miembros.canonicos || {}).map(([k, v]) => `\`${k}\` → **${v}**`).join('\n') || '(ninguno)';
-                return interaction.reply({ content: `**Canónicos registrados:**\n${can}`, ephemeral: true });
+                const ex = miembros.excluidos.map(e => `• ${e}`).join('\n') || '(ninguno)';
+                return interaction.reply({ content: `**Canónicos registrados:**\n${can}\n\n**Excluidos del ranking:**\n${ex}`, ephemeral: true });
             }
             if (sub === 'excluidos') {
                 const ex = miembros.excluidos.map(e => `• ${e}`).join('\n') || '(ninguno)';
@@ -849,7 +855,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/backup\` · exportar CSV\n\`/sync\` · sincronizar con GitHub\n\`/miembro\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control`,
                 ephemeral: true
             });
         }
