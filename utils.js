@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = '/app/data';
+const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'compras_v2.json');
 const MIEMBROS_FILE = path.join(DATA_DIR, 'miembros.json');
 const CSV_FILE = path.join(__dirname, 'historial.csv');
