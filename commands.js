@@ -131,6 +131,7 @@ const commandsData = [
     new SlashCommandBuilder().setName('control').setDescription('Gestionar el Panel de Control de Subastas')
         .addSubcommand(sub => sub.setName('agregar').setDescription('Añadir un thread a la lista fija')
             .addStringOption(o => o.setName('objeto').setDescription('Objeto por defecto para este thread').setRequired(false).setAutocomplete(true))
+            .addStringOption(o => o.setName('categoria').setDescription('Categoría por defecto para este thread').setRequired(false).addChoices(...catChoices))
             .addChannelOption(o => o.setName('canal').setDescription('Thread a fijar (o usa este mismo)').setRequired(false)))
         .addSubcommand(sub => sub.setName('quitar').setDescription('Quitar un thread de la lista fija').addChannelOption(o => o.setName('canal').setDescription('Thread a quitar (o usa este mismo)').setRequired(false)))
         .addSubcommand(sub => sub.setName('panel').setDescription('Crear/actualizar el Panel de Control en este canal'))
