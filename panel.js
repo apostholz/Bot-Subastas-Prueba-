@@ -15,7 +15,7 @@ const {
 const utils = require('./utils');
 const logic = require('./logic');
 
-const DATA_DIR = '/app/data';
+const DATA_DIR = path.join(__dirname, 'data');
 const SUBASTAS_FILE = path.join(DATA_DIR, 'subastas_activas.json');
 const ARCHIVADAS_FILE = path.join(DATA_DIR, 'subastas_archivadas.json');
 const INDICE_FILE = path.join(DATA_DIR, 'indice.json');
