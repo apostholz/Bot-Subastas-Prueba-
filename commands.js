@@ -10,7 +10,7 @@ const formatoHistorialChoices = [{ name: 'Detallado', value: 'Detallado' }, { na
 const eventoChoices = [{ name: 'Invasión diurna', value: 'Invasión diurna' }, { name: 'Invasión nocturna', value: 'Invasión nocturna' }, { name: 'Banquete', value: 'Banquete' }];
 
 const commandsData = [
-    new SlashCommandBuilder().setName('sub').setDescription('Registrar compra de hoy').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    new SlashCommandBuilder().setName('sub').setDescription('Registrar compra de hoy')
         .addStringOption(o => o.setName('evento').setDescription('Evento al que pertenece').setRequired(true).addChoices(...eventoChoices))
         .addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true).addChoices(...catChoices))
         .addStringOption(o => o.setName('objeto').setDescription('Nombre del ítem').setRequired(true).setAutocomplete(true))
@@ -18,7 +18,7 @@ const commandsData = [
         .addStringOption(o => o.setName('ganadores').setDescription('Ganadores separados por coma').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('perdedores').setDescription('Perdedores separados por coma').setRequired(false).setAutocomplete(true)),
 
-    new SlashCommandBuilder().setName('subf').setDescription('Registrar compra con fecha específica').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    new SlashCommandBuilder().setName('subf').setDescription('Registrar compra con fecha específica')
         .addStringOption(o => o.setName('fecha').setDescription('DD/MM/YY o "hoy"').setRequired(true))
         .addStringOption(o => o.setName('evento').setDescription('Evento al que pertenece').setRequired(true).addChoices(...eventoChoices))
         .addStringOption(o => o.setName('categoria').setDescription('Categoría').setRequired(true).addChoices(...catChoices))
@@ -77,12 +77,12 @@ const commandsData = [
     new SlashCommandBuilder().setName('backup').setDescription('Exportar todas las compras a un CSV').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder().setName('sync').setDescription('Sincronizar la base local con GitHub').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-    new SlashCommandBuilder().setName('miembro').setDescription('Gestionar nombres y exclusiones').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    new SlashCommandBuilder().setName('miembros').setDescription('Gestionar nombres y exclusiones').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addSubcommand(sub => sub.setName('excluir').setDescription('Excluir nombres').addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
         .addSubcommand(sub => sub.setName('incluir').setDescription('Reincluir nombres').addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
         .addSubcommand(sub => sub.setName('canonico').setDescription('Definir canónicos').addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName('como').setDescription('Forma correcta').setRequired(true)))
         .addSubcommand(sub => sub.setName('quitar-canonico').setDescription('Eliminar canónico').addStringOption(o => o.setName('nombre').setDescription('Nombre').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(sub => sub.setName('canonicos').setDescription('Listar canónicos'))
+        .addSubcommand(sub => sub.setName('lista').setDescription('Listar canónicos y excluidos'))
         .addSubcommand(sub => sub.setName('excluidos').setDescription('Listar excluidos')),
 
     new SlashCommandBuilder().setName('editar').setDescription('Editar una entrada existente')
