@@ -277,20 +277,22 @@ async function moverPanelesAlFinal(client, funciones) {
 
                 if (ultimo && ultimo.id === session.messageId) continue;
 
-                const { embeds, components } = renderPanel(session, funciones);
-                const nuevo = await canal.send({ embeds, components });
-
+                // BORRAR EL VIEJO PRIMERO PARA EVITAR DUPLICADOS
                 const viejoId = session.messageId;
-                session.messageId = nuevo.id;
-                subastas[id] = session;
-                guardarSubastas(subastas);
-
                 if (viejoId) {
                     try {
                         const viejo = await canal.messages.fetch(viejoId);
                         if (viejo) await viejo.delete();
-                    } catch (e) { /* ignorar */ }
+                    } catch (e) { /* ignorar si ya no existe */ }
                 }
+
+                // ENVIAR EL NUEVO
+                const { embeds, components } = renderPanel(session, funciones);
+                const nuevo = await canal.send({ embeds, components });
+
+                session.messageId = nuevo.id;
+                subastas[id] = session;
+                guardarSubastas(subastas);
 
                 movidos++;
             } catch (e) {
