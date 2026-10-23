@@ -4,6 +4,7 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'compras_v2.json');
 const MIEMBROS_FILE = path.join(DATA_DIR, 'miembros.json');
+const CATALOGO_FILE = path.join(DATA_DIR, 'catalogo.json');
 const CSV_FILE = path.join(__dirname, 'historial.csv');
 const BACKUP_FILE = path.join(DATA_DIR, 'backup.csv');
 
@@ -35,6 +36,18 @@ function cargarMiembros() {
 }
 function guardarMiembros(m) {
     fs.writeFileSync(MIEMBROS_FILE, JSON.stringify(m, null, 2));
+}
+
+// ====== CATALOGO ======
+function cargarCatalogo() {
+    if (fs.existsSync(CATALOGO_FILE)) {
+        try { return JSON.parse(fs.readFileSync(CATALOGO_FILE, 'utf8')); }
+        catch { return {}; }
+    }
+    return {};
+}
+function guardarCatalogo(c) {
+    fs.writeFileSync(CATALOGO_FILE, JSON.stringify(c, null, 2));
 }
 
 // ====== NORMALIZAR Y CANÓNICOS ======
@@ -213,11 +226,11 @@ function ordenarComprasDesc(a, b) {
 }
 
 module.exports = {
-    cargarDB, guardarDB, cargarMiembros, guardarMiembros,
+    cargarDB, guardarDB, cargarMiembros, guardarMiembros, cargarCatalogo, guardarCatalogo,
     normalizar, normalizarNombre, claveJugador, aplicarCanonico, formatearNombreConCantidad, esExcluido,
     contarGanador, parsearGanador, buscarJugadorEnLista,
     fechaHoyArgentina, convertirFecha, convertirFechaDia, formatearFecha, diasDesde, etiquetaDias, filtrarPorPeriodo,
     CATEGORIAS, CATEGORIAS_TOTAL, ABREVIATURAS, OBJETOS_PROHIBIDOS, PESOS, getFactorTemporal,
     nombreBonitoEvento, ordenEvento, ordenCategoria, bloqueDeCategoria, ordenarComprasDesc,
-    ROL_LIDER, ROL_HELPER, CSV_FILE, BACKUP_FILE
+    ROL_LIDER, ROL_HELPER, CSV_FILE, BACKUP_FILE, DATA_DIR
 };
