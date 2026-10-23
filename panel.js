@@ -103,7 +103,7 @@ function renderPanel(session, funciones) {
     const bloqueada = session.estado === 'bloqueada';
 
     if (cerrada) {
-        embed.setTitle(`✅ ${icon} ${item.cantidad}x ${item.objeto} (Registrado)`);
+        embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} ( ✅ Registrado )`);
         embed.setColor(0x95A5A6);
         const regPor = session.registradoPor || 'Líder';
         const regFecha = session.fechaRegistro ? new Date(session.fechaRegistro).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : 'Reciente';
@@ -115,7 +115,7 @@ function renderPanel(session, funciones) {
         } else {
             embed.setTitle(title);
             if (interesados.length > item.cantidad) {
-                embed.setColor(0x2B2D31); // Azul oscuro
+                embed.setColor(0x1E3A8A); // Azul oscuro
             } else {
                 embed.setColor(0x00FF00); // Verde
             }
@@ -427,8 +427,7 @@ function setupPanel(client, funciones) {
 
                 const db = funciones.cargarDB();
                 const objeto = interaction.options.getString('objeto');
-                const catManual = interaction.options.getString('categoria');
-                const categoria = catManual || logic.inferirCategoria(objeto, db);
+                const categoria = logic.inferirCategoria(objeto, db);
                 const cantidad = interaction.options.getInteger('cantidad');
                 const evento = interaction.options.getString('evento') || obtenerEventoPorHora();
                 const fecha = funciones.fechaHoyArgentina();
@@ -649,7 +648,6 @@ function setupPanel(client, funciones) {
                     new ButtonBuilder().setCustomId(`panel_edit:cantidad:${sessionId}`).setLabel('Cantidad').setStyle(ButtonStyle.Secondary)
                 );
                 const row2 = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`panel_edit:fecha:${sessionId}`).setLabel('Fecha').setStyle(ButtonStyle.Secondary),
                     new ButtonBuilder().setCustomId(`panel_edit:objeto:${sessionId}`).setLabel('Objeto').setStyle(ButtonStyle.Secondary),
                     new ButtonBuilder().setCustomId(`panel_edit:agregar_interesado:${sessionId}`).setLabel('Añadir interesado').setStyle(ButtonStyle.Success)
                 );
@@ -811,11 +809,6 @@ function setupPanel(client, funciones) {
                 modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('valor').setLabel('Nueva cantidad').setStyle(TextInputStyle.Short).setRequired(true).setValue(String(session.item.cantidad))));
                 return interaction.showModal(modal);
             }
-            if (campo === 'fecha') {
-                const modal = new ModalBuilder().setCustomId(`panel_modal:fecha:${sessionId}`).setTitle('Editar fecha');
-                modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('valor').setLabel('Nueva fecha (DD/MM/YY o hoy)').setStyle(TextInputStyle.Short).setRequired(true).setValue(utils.formatearFecha(session.item.fecha))));
-                return interaction.showModal(modal);
-            }
             if (campo === 'objeto') return interaction.reply({ content: 'Para cambiar el objeto usá el comando `/panel objeto` (tocalo para copiar).', ephemeral: true });
             if (campo === 'agregar_interesado') {
                 const modal = new ModalBuilder().setCustomId(`panel_modal:agregar_interesado:${sessionId}`).setTitle('Añadir interesado');
@@ -875,17 +868,6 @@ function setupPanel(client, funciones) {
                 guardarSubastas(subastas);
                 await refrescarTodo(client, funciones);
                 return interaction.reply({ content: `✅ Cantidad cambiada a **${valor}**.`, ephemeral: true });
-            }
-
-            if (tipo === 'fecha') {
-                const valor = interaction.fields.getTextInputValue('valor').trim();
-                const f = utils.convertirFecha(valor);
-                if (!f) return interaction.reply({ content: '❌ Fecha inválida.', ephemeral: true });
-                session.item.fecha = f;
-                pushHistorial(session, interaction, `Cambió fecha a ${utils.formatearFecha(f)}`);
-                guardarSubastas(subastas);
-                await refrescarTodo(client, funciones);
-                return interaction.reply({ content: `✅ Fecha cambiada a **${utils.formatearFecha(f)}**.`, ephemeral: true });
             }
 
             if (tipo === 'agregar_interesado') {
@@ -981,16 +963,45 @@ function setupPanel(client, funciones) {
                 await refrescarTodo(client, funciones);
 
                 let msg = `✅ Resultado registrado: #${entrada.id} · 📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})`;
+                msg += `\n🏆 **Ganadores:** ${entrada.ganadores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
+                if (entrada.perdedores.length > 0) msg += `\n💔 **Perdedores:** ${entrada.perdedores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ')}`;
                 if (!syncRes.ok) msg += `\n⚠️ Sync falló: ${syncRes.motivo}`;
 
                 pendingPanel.delete(id);
                 await interaction.editReply({ content: '✅ Acción completada.', components: [] });
-                
-                const resultados = session.interesados.map(j => ({ jugador: j, ...logic.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
-                resultados.sort(logic.compararPrioridad);
-                const pingText = funciones.formatearPingGanadores(entrada.ganadores, resultados, miembros, interaction.guild);
-                
-                await interaction.followUp({ content: `${msg}\n\n${pingText}`, ephemeral: false });
+                await interaction.followUp({ content: msg, ephemeral: false });
+
+                if (entrada.ganadores.length > 0) {
+                    try {
+                        let members;
+                        try { members = await interaction.guild.members.fetch(); } catch { members = interaction.guild.members.cache; }
+
+                        const menciones = entrada.ganadores.map(g => {
+                            const normG = utils.normalizar(g);
+                            const canonG = utils.normalizar(funciones.aplicarCanonico(g, miembros));
+                            const member = members.find(m => {
+                                if (!m) return false;
+                                const username = utils.normalizar(m.user?.username || '');
+                                const displayName = utils.normalizar(m.displayName || '');
+                                const nickname = utils.normalizar(m.nickname || '');
+                                const canonDisplay = utils.normalizar(funciones.aplicarCanonico(m.displayName || '', miembros));
+                                return (
+                                    username === normG || displayName === normG || nickname === normG || canonDisplay === normG ||
+                                    username === canonG || displayName === canonG || nickname === canonG || canonDisplay === canonG
+                                );
+                            });
+                            return member ? `<@${member.id}>` : `**${g}**`;
+                        });
+
+                        const pingId = funciones.guardarPendiente('ping', { menciones }, interaction.user.id);
+                        const rowPing = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder().setCustomId(`ping_confirm_${pingId}`).setLabel('Sí, pingear').setStyle(ButtonStyle.Success),
+                            new ButtonBuilder().setCustomId(`ping_cancel_${pingId}`).setLabel('No, gracias').setStyle(ButtonStyle.Secondary)
+                        );
+
+                        await interaction.followUp({ content: '🔔 ¿Querés avisar a los ganadores?', components: [rowPing], ephemeral: true });
+                    } catch (e) { console.error('Error en ping:', e.message); }
+                }
                 return;
             }
 
