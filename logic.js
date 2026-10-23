@@ -280,12 +280,10 @@ function calcularPerdedores7d(jugadores, categoria, db, miembros) {
 function inferirCategoria(objeto, db) {
     const key = utils.normalizar(objeto);
     
-    // 1. Buscar en el Catálogo manual
     const catalogo = utils.cargarCatalogo();
     const catEncontrada = Object.keys(catalogo).find(k => utils.normalizar(k) === key);
     if (catEncontrada) return catalogo[catEncontrada];
 
-    // 2. Fallback a la lista estática
     const map = {
         'lagarto de trueno vil': 'Emblemas Únicos', 'idolo de obsidiana vil': 'Emblemas Únicos',
         'tiranosaurio vil': 'Emblemas Únicos', 'hidra vil': 'Emblemas Únicos',
@@ -298,7 +296,6 @@ function inferirCategoria(objeto, db) {
     if (key.includes('caja 20k')) return 'Cajas 20k';
     if (key.includes('collar') || key.includes('anillo') || key.includes('marca') || key.includes('brazal')) return 'Accesorios';
 
-    // 3. Fallback al historial
     if (db && Array.isArray(db.compras)) {
         const compras = db.compras.filter(c => c.objeto && utils.normalizar(c.objeto) === key);
         if (compras.length > 0) {
@@ -308,7 +305,7 @@ function inferirCategoria(objeto, db) {
             if (orden.length > 0) return orden[0][0];
         }
     }
-    return 'Equipo';
+    return 'Sin Categoría';
 }
 
 // ====== RENDERIZADO ======
@@ -468,14 +465,12 @@ function obtenerNombresUnicos(db, miembros) {
 function obtenerObjetosUnicos(db) {
     const map = new Map();
     
-    // 1. Del catálogo
     const catalogo = utils.cargarCatalogo();
     for (const obj of Object.keys(catalogo)) {
         const key = utils.normalizar(obj);
         if (!map.has(key)) map.set(key, obj);
     }
 
-    // 2. Del historial
     for (const c of db.compras) {
         if (!c.objeto || utils.OBJETOS_PROHIBIDOS.some(o => utils.normalizar(o) === utils.normalizar(c.objeto))) continue;
         const key = utils.normalizar(c.objeto);
@@ -493,6 +488,29 @@ function sugerirNombresMultiples(valorActual, nombres) {
     return nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: [...prefijo, n].join(', ') }));
 }
 
+function formatearPingGanadores(ganadores, resultados, miembros, guild) {
+    let expanded = [];
+    for (const g of ganadores) {
+        const parsed = utils.parsearGanador(g);
+        for (let i = 0; i < parsed.cantidad; i++) expanded.push(parsed.nombre);
+    }
+    expanded.sort((a, b) => {
+        const idxA = resultados.findIndex(r => utils.claveJugador(r.jugador, miembros) === utils.claveJugador(a, miembros));
+        const idxB = resultados.findIndex(r => utils.claveJugador(r.jugador, miembros) === utils.claveJugador(b, miembros));
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        return a.localeCompare(b);
+    });
+    let list = expanded.map((name, i) => `${i + 1}. ${utils.aplicarCanonico(name, miembros)}`).join('\n');
+    
+    let members = guild.members.cache;
+    let mentions = [...new Set(expanded)].map(name => {
+        const norm = utils.normalizar(name);
+        const member = members.find(m => utils.normalizar(m.displayName) === norm || utils.normalizar(m.user.username) === norm);
+        return member ? `<@${member.id}>` : `**${name}**`;
+    }).join(' ');
+    return `📋 **Ganadores:**\n${list}\n\n🔔 ${mentions}`;
+}
+
 module.exports = {
     generarCSV, sincronizarConGitHub, sincronizarArchivosJSON, leerCSVInicial,
     calcularPrioridad, compararPrioridad, construirRanking,
@@ -500,5 +518,5 @@ module.exports = {
     construirBotonesPaginacion, renderPrioridad, renderPerdedores,
     renderRankingPagina, renderObjetoPagina, renderCategoriaPagina,
     responderLargo, obtenerNombresUnicos, obtenerObjetosUnicos, sugerirNombresMultiples,
-    huella
+    formatearPingGanadores, huella
 };
