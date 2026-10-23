@@ -234,5 +234,5 @@ module.exports = {
     fechaHoyArgentina, convertirFecha, convertirFechaDia, formatearFecha, diasDesde, etiquetaDias, filtrarPorPeriodo,
     CATEGORIAS, CATEGORIAS_TOTAL, ABREVIATURAS, ICONOS, OBJETOS_PROHIBIDOS, PESOS, getFactorTemporal,
     nombreBonitoEvento, ordenEvento, ordenCategoria, bloqueDeCategoria, ordenarComprasDesc,
-    ROL_LIDER, ROL_HELPER, CSV_FILE, BACKUP_FILE, DATA_DIR
+    ROL_LIDER, ROL_HELPER, DB_FILE, CSV_FILE, BACKUP_FILE, DATA_DIR
 };
