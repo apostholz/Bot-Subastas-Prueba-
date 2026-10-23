@@ -110,12 +110,12 @@ function renderPanel(session, funciones) {
         embed.setFooter({ text: `Subasta registrada por ${regPor} el ${regFecha}` });
     } else {
         if (bloqueada) {
-            embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} (🔒 Bloqueado)`);
+            embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} (🔒Bloqueado )`);
             embed.setColor(0xFF0000);
         } else {
             embed.setTitle(title);
             if (interesados.length > item.cantidad) {
-                embed.setColor(0x1E3A8A); // Azul oscuro
+                embed.setColor(0xFFCF00); // Amarillo
             } else {
                 embed.setColor(0x00FF00); // Verde
             }
@@ -962,10 +962,28 @@ function setupPanel(client, funciones) {
                 
                 await refrescarTodo(client, funciones);
 
+                const ganadoresExpandidos = [];
+                for (const g of entrada.ganadores) {
+                    const parsed = utils.parsearGanador(g);
+                    for (let i = 0; i < parsed.cantidad; i++) ganadoresExpandidos.push(parsed.nombre);
+                }
+
+                const ganadoresNumerados = ganadoresExpandidos
+                    .map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`)
+                    .join('\n');
+
+                const tituloGanadores = ganadoresExpandidos.length === 1 ? '🏆 **Ganador:**' : '🏆 **Ganadores:**';
+
                 let msg = `✅ Resultado registrado: #${entrada.id} · 📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})`;
-                msg += `\n🏆 **Ganadores:** ${entrada.ganadores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
-                if (entrada.perdedores.length > 0) msg += `\n💔 **Perdedores:** ${entrada.perdedores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ')}`;
-                if (!syncRes.ok) msg += `\n⚠️ Sync falló: ${syncRes.motivo}`;
+                msg += `\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
+
+                if (entrada.perdedores.length > 0) {
+                    const perdedoresBase = entrada.perdedores.map(p => funciones.aplicarCanonico(utils.parsearGanador(p).nombre, miembros));
+                    const tituloPerdedores = entrada.perdedores.length === 1 ? '💔 **Perdedor:**' : '💔 **Perdedores:**';
+                    msg += `\n\n${tituloPerdedores}\n${perdedoresBase.join(', ')}`;
+                }
+
+                if (!syncRes.ok) msg += `\n\n⚠️ Sync falló: ${syncRes.motivo}`;
 
                 pendingPanel.delete(id);
                 await interaction.editReply({ content: '✅ Acción completada.', components: [] });
@@ -976,9 +994,20 @@ function setupPanel(client, funciones) {
                         let members;
                         try { members = await interaction.guild.members.fetch(); } catch { members = interaction.guild.members.cache; }
 
-                        const menciones = entrada.ganadores.map(g => {
-                            const normG = utils.normalizar(g);
-                            const canonG = utils.normalizar(funciones.aplicarCanonico(g, miembros));
+                        const nombresBase = [];
+                        const vistosBase = new Set();
+                        for (const g of entrada.ganadores) {
+                            const nombreBase = utils.parsearGanador(g).nombre;
+                            const key = utils.claveJugador(nombreBase, miembros);
+                            if (!vistosBase.has(key)) {
+                                vistosBase.add(key);
+                                nombresBase.push(nombreBase);
+                            }
+                        }
+
+                        const menciones = nombresBase.map(nombreBase => {
+                            const normG = utils.normalizar(nombreBase);
+                            const canonG = utils.normalizar(funciones.aplicarCanonico(nombreBase, miembros));
                             const member = members.find(m => {
                                 if (!m) return false;
                                 const username = utils.normalizar(m.user?.username || '');
@@ -990,7 +1019,7 @@ function setupPanel(client, funciones) {
                                     username === canonG || displayName === canonG || nickname === canonG || canonDisplay === canonG
                                 );
                             });
-                            return member ? `<@${member.id}>` : `**${g}**`;
+                            return member ? `<@${member.id}>` : `**${nombreBase}**`;
                         });
 
                         const pingId = funciones.guardarPendiente('ping', { menciones }, interaction.user.id);
