@@ -127,6 +127,7 @@ function fechaAyerArgentina() { return fechaArgentina(-1); }
 function convertirFecha(fecha) {
     if (!fecha) return null;
     if (fecha.toLowerCase() === 'hoy') return fechaHoyArgentina();
+    if (fecha.toLowerCase() === 'ayer') return fechaAyerArgentina();
     const partes = fecha.split('/');
     if (partes.length !== 3) return null;
     const [dia, mes, anio] = partes;
@@ -165,9 +166,10 @@ function filtrarPorPeriodo(compras, periodo) {
 }
 
 // ====== CATEGORÍAS Y EVENTOS ======
-const CATEGORIAS = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos', 'Equipo', 'Accesorios'];
+const CATEGORIAS = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos', 'Equipo', 'Accesorios', 'Sin Categoría'];
 const CATEGORIAS_TOTAL = CATEGORIAS;
-const ABREVIATURAS = { 'Cajas 20k': '20k', 'Emblemas Generales': 'Gen', 'Emblemas Únicos': 'Únicos', 'Equipo': 'Eq', 'Accesorios': 'Acc' };
+const ABREVIATURAS = { 'Cajas 20k': '20k', 'Emblemas Generales': 'Gen', 'Emblemas Únicos': 'Únicos', 'Equipo': 'Eq', 'Accesorios': 'Acc', 'Sin Categoría': '?' };
+const ICONOS = { 'Cajas 20k': '📦', 'Emblemas Generales': '💠', 'Emblemas Únicos': '💎', 'Equipo': '⚔️', 'Accesorios': '💍', 'Sin Categoría': '❓' };
 const OBJETOS_PROHIBIDOS = ['Combatiente', 'Arquero gnoll'];
 
 const PESOS = {
@@ -230,7 +232,7 @@ module.exports = {
     normalizar, normalizarNombre, claveJugador, aplicarCanonico, formatearNombreConCantidad, esExcluido,
     contarGanador, parsearGanador, buscarJugadorEnLista,
     fechaHoyArgentina, convertirFecha, convertirFechaDia, formatearFecha, diasDesde, etiquetaDias, filtrarPorPeriodo,
-    CATEGORIAS, CATEGORIAS_TOTAL, ABREVIATURAS, OBJETOS_PROHIBIDOS, PESOS, getFactorTemporal,
+    CATEGORIAS, CATEGORIAS_TOTAL, ABREVIATURAS, ICONOS, OBJETOS_PROHIBIDOS, PESOS, getFactorTemporal,
     nombreBonitoEvento, ordenEvento, ordenCategoria, bloqueDeCategoria, ordenarComprasDesc,
     ROL_LIDER, ROL_HELPER, CSV_FILE, BACKUP_FILE, DATA_DIR
 };
