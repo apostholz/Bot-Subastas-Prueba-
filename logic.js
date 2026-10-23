@@ -505,10 +505,21 @@ function formatearPingGanadores(ganadores, resultados, miembros, guild) {
     let members = guild.members.cache;
     let mentions = [...new Set(expanded)].map(name => {
         const norm = utils.normalizar(name);
-        const member = members.find(m => utils.normalizar(m.displayName) === norm || utils.normalizar(m.user.username) === norm);
+        const canon = utils.normalizar(utils.aplicarCanonico(name, miembros));
+        const member = members.find(m => {
+            if (!m) return false;
+            const username = utils.normalizar(m.user?.username || '');
+            const displayName = utils.normalizar(m.displayName || '');
+            const nickname = utils.normalizar(m.nickname || '');
+            const canonDisplay = utils.normalizar(utils.aplicarCanonico(m.displayName || '', miembros));
+            return (
+                username === norm || displayName === norm || nickname === norm || canonDisplay === norm ||
+                username === canon || displayName === canon || nickname === canon || canonDisplay === canon
+            );
+        });
         return member ? `<@${member.id}>` : `**${name}**`;
     }).join(' ');
-    return `📋 **Ganadores:**\n${list}\n\n🔔 ${mentions}`;
+    return `🏆 **Ganadores:**\n${list}\n\n🔔 ${mentions}`;
 }
 
 module.exports = {
