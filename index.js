@@ -256,6 +256,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 requiereSync = true;
                 ganadoresParaPingear = e.ganadores;
             }
+            else if (p.tipo === 'sync') {
+                const res = await logic.sincronizarConGitHub(true);
+                let msg = res.ok ? `✅ Sync OK\n📤 CSV actualizado con ${res.total} entradas.` : `❌ Sync falló: ${res.motivo}`;
+                if (res.ok && res.agregadas > 0) msg += `\n📥 ${res.agregadas} nuevas absorvidas.`;
+                await logic.sincronizarArchivosJSON();
+                resultado = msg;
+                requiereSync = false;
+            }
             else if (p.tipo === 'borrar') {
                 const idsABorrar = p.payload.ids;
                 const borradas = [];
@@ -397,12 +405,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     try {
         if (interaction.commandName === 'sync') {
-            await interaction.deferReply({ ephemeral: true });
-            const res = await logic.sincronizarConGitHub(true);
-            let msg = res.ok ? `✅ Sync OK\n📤 CSV actualizado con ${res.total} entradas.` : `❌ Sync falló: ${res.motivo}`;
-            if (res.ok && res.agregadas > 0) msg += `\n📥 ${res.agregadas} nuevas absorvidas.`;
-            await logic.sincronizarArchivosJSON();
-            return interaction.editReply({ content: msg });
+            let cuerpo = `Esta acción fusionará el archivo \`historial.csv\` de GitHub con tu base de datos local, y luego subirá los datos combinados de vuelta a GitHub.\n\n⚠️ **Advertencias:**\n• Si borraste una compra recientemente y no llegó a subirse a GitHub, el /sync podría "resucitarla".\n• Si el archivo en GitHub fue editado manualmente con errores, esos errores se importarán al bot.\n\n¿Estás seguro de que deseas continuar?`;
+            return mostrarPreview(interaction, 'Confirmar Sincronización', cuerpo, 'sync', {});
         }
 
         if (interaction.commandName === 'registro-rapido') {
