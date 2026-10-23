@@ -277,6 +277,7 @@ async function moverPanelesAlFinal(client, funciones) {
 
                 if (ultimo && ultimo.id === session.messageId) continue;
 
+                // BORRAR EL VIEJO PRIMERO PARA EVITAR DUPLICADOS
                 const viejoId = session.messageId;
                 if (viejoId) {
                     try {
@@ -285,6 +286,7 @@ async function moverPanelesAlFinal(client, funciones) {
                     } catch (e) { /* ignorar si ya no existe */ }
                 }
 
+                // ENVIAR EL NUEVO
                 const { embeds, components } = renderPanel(session, funciones);
                 const nuevo = await canal.send({ embeds, components });
 
@@ -401,7 +403,8 @@ function setupPanel(client, funciones) {
 
                 const db = funciones.cargarDB();
                 const objeto = interaction.options.getString('objeto');
-                const categoria = logic.inferirCategoria(objeto, db);
+                const catManual = interaction.options.getString('categoria');
+                const categoria = catManual || logic.inferirCategoria(objeto, db);
                 const cantidad = interaction.options.getInteger('cantidad');
                 const evento = interaction.options.getString('evento') || obtenerEventoPorHora();
                 const fecha = funciones.fechaHoyArgentina();
@@ -603,6 +606,7 @@ function setupPanel(client, funciones) {
                 const embed = new EmbedBuilder().setTitle('✏️ Editar panel').setDescription('Elegí qué querés editar:');
                 const row1 = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`panel_edit:evento:${sessionId}`).setLabel('Evento').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId(`panel_edit:categoria:${sessionId}`).setLabel('Categoría').setStyle(ButtonStyle.Secondary),
                     new ButtonBuilder().setCustomId(`panel_edit:cantidad:${sessionId}`).setLabel('Cantidad').setStyle(ButtonStyle.Secondary)
                 );
                 const row2 = new ActionRowBuilder().addComponents(
@@ -758,6 +762,10 @@ function setupPanel(client, funciones) {
                 const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`panel_sel:evento:${sessionId}`).setPlaceholder('Elegir evento').addOptions(EVENTOS_PANEL.map(e => ({ label: e, value: e }))));
                 return interaction.reply({ content: 'Elegí evento:', components: [row], ephemeral: true });
             }
+            if (campo === 'categoria') {
+                const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`panel_sel:categoria:${sessionId}`).setPlaceholder('Elegir categoría').addOptions(CATEGORIAS_PANEL.map(c => ({ label: c, value: c }))));
+                return interaction.reply({ content: 'Elegí categoría:', components: [row], ephemeral: true });
+            }
             if (campo === 'cantidad') {
                 const modal = new ModalBuilder().setCustomId(`panel_modal:cantidad:${sessionId}`).setTitle('Editar cantidad');
                 modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('valor').setLabel('Nueva cantidad').setStyle(TextInputStyle.Short).setRequired(true).setValue(String(session.item.cantidad))));
@@ -900,11 +908,16 @@ function setupPanel(client, funciones) {
                 const entrada = { id: db.nextId++, fecha: session.item.fecha, evento: session.item.evento, categoria: session.item.categoria, objeto: session.item.objeto, cantidad: p.payload.cantidad, ganadores: p.payload.ganadores, perdedores: p.payload.perdedores, notas: '' };
                 db.compras.push(entrada);
                 funciones.guardarDB(db);
-                const syncRes = await funciones.sincronizarConGitHub(false);
 
+                // FIX GHOST PANEL: Cerrar y eliminar de la lista inmediatamente
                 session.estado = 'cerrada';
                 pushHistorial(session, interaction, 'Registró resultado');
                 guardarSubastas(subastas);
+                
+                const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
+                delete subastas[session.id]; guardarSubastas(subastas);
+
+                const syncRes = await funciones.sincronizarConGitHub(false);
 
                 try {
                     const canal = await client.channels.fetch(session.channelId);
@@ -912,9 +925,6 @@ function setupPanel(client, funciones) {
                     await msgPanel.delete();
                 } catch {}
 
-                const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
-                delete subastas[session.id]; guardarSubastas(subastas);
-                
                 await refrescarTodo(client, funciones);
 
                 let msg = `✅ Resultado registrado: #${entrada.id} · 📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})\n🏆 ${entrada.ganadores.map(g => funciones.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
@@ -1063,7 +1073,6 @@ function setupPanel(client, funciones) {
                 let abiertas = 0;
 
                 for (const fijo of disponibles) {
-                    // Usar categoría guardada o inferirla
                     const cat = (fijo && fijo.categoria) ? fijo.categoria : logic.inferirCategoria(fijo.objeto, db);
                     const session = {
                         id: generarId(), threadId: fijo.id, channelId: fijo.id, messageId: null, threadName: fijo.nombre,
@@ -1123,7 +1132,6 @@ function setupPanel(client, funciones) {
                 const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10) || 1;
                 
                 const db = funciones.cargarDB();
-                // Usar categoría guardada o inferirla
                 const cat = (fijo && fijo.categoria) ? fijo.categoria : logic.inferirCategoria(obj, db);
                 const ev = obtenerEventoPorHora();
                 const f = funciones.fechaHoyArgentina();
