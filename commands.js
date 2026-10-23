@@ -74,6 +74,14 @@ const commandsData = [
         .addStringOption(o => o.setName('periodo').setDescription('Periodo a considerar').setRequired(false).addChoices(...periodoChoices))
         .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
+    new SlashCommandBuilder().setName('catalogo').setDescription('Gestionar catálogo de objetos').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .addSubcommand(sub => sub.setName('agregar').setDescription('Agregar o actualizar objeto en el catálogo')
+            .addStringOption(o => o.setName('objeto').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true))
+            .addStringOption(o => o.setName('categoria').setDescription('Categoría del objeto').setRequired(true).addChoices(...catChoices)))
+        .addSubcommand(sub => sub.setName('quitar').setDescription('Quitar objeto del catálogo')
+            .addStringOption(o => o.setName('objeto').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(sub => sub.setName('lista').setDescription('Listar catálogo (15 por página)')),
+
     new SlashCommandBuilder().setName('backup').setDescription('Exportar todas las compras a un CSV').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder().setName('sync').setDescription('Sincronizar la base local con GitHub').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
@@ -120,7 +128,11 @@ const commandsData = [
     new SlashCommandBuilder().setName('ayuda').setDescription('Lista los comandos'),
     
     new SlashCommandBuilder().setName('panel').setDescription('Gestionar panel de subasta')
-        .addSubcommand(sub => sub.setName('crear').setDescription('Crear panel en el thread actual (categoría automática)').addStringOption(o => o.setName('objeto').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true)).addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true)).addStringOption(o => o.setName('evento').setDescription('Evento (opcional)').setRequired(false).addChoices(...eventoChoices)))
+        .addSubcommand(sub => sub.setName('crear').setDescription('Crear panel en el thread actual (categoría automática)')
+            .addStringOption(o => o.setName('objeto').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true))
+            .addStringOption(o => o.setName('categoria').setDescription('Categoría manual (opcional)').setRequired(false).addChoices(...catChoices))
+            .addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true))
+            .addStringOption(o => o.setName('evento').setDescription('Evento (opcional)').setRequired(false).addChoices(...eventoChoices)))
         .addSubcommand(sub => sub.setName('ver').setDescription('Mostrar el panel activo de este thread'))
         .addSubcommand(sub => sub.setName('objeto').setDescription('Cambiar el objeto del panel activo').addStringOption(o => o.setName('nombre').setDescription('Nuevo nombre del objeto').setRequired(true).setAutocomplete(true)))
         .addSubcommand(sub => sub.setName('interesado').setDescription('Añadir o quitar interesado').addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName('accion').setDescription('Añadir o Quitar').setRequired(false).addChoices({ name: 'Añadir', value: 'añadir' }, { name: 'Quitar', value: 'quitar' })))
