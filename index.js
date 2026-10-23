@@ -213,18 +213,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
             else if (tipoEsperado === 'objeto-page') render = logic.renderObjetoPagina(payload, utils.cargarMiembros());
             else if (tipoEsperado === 'categoria-page') render = logic.renderCategoriaPagina(payload, utils.cargarMiembros());
             else if (tipoEsperado === 'catalogo-page') {
-                const totalPaginas = Math.max(1, Math.ceil(payload.catalogo.length / 15));
-                const paginaActual = Math.min(Math.max(1, payload.pagina), totalPaginas);
-                const inicio = (paginaActual - 1) * 15;
+                const totalPaginasCat = Math.max(1, Math.ceil(payload.catalogo.length / 15));
+                const paginaActualCat = Math.min(Math.max(1, payload.pagina), totalPaginasCat);
+                const inicio = (paginaActualCat - 1) * 15;
                 const slice = payload.catalogo.slice(inicio, inicio + 15);
-                let out = `📖 **Catálogo de Objetos** (Página ${paginaActual}/${totalPaginas})\n\n`;
+                let out = `📖 **Catálogo de Objetos** (Página ${paginaActualCat}/${totalPaginasCat})\n\n`;
                 if (slice.length === 0) out += 'No hay objetos guardados.';
                 else {
-                    for (const item of slice) {
-                        out += `• **${item.objeto}** → ${item.categoria}\n`;
-                    }
+                    for (const item of slice) out += `• **${item.objeto}** → ${item.categoria}\n`;
                 }
-                render = { content: out, totalPaginas, paginaActual };
+                render = { content: out, totalPaginas: totalPaginasCat, paginaActual: paginaActualCat };
             }
 
             const row = logic.construirBotonesPaginacion(prefijo, id, render.paginaActual, render.totalPaginas);
@@ -298,6 +296,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         if (valor.cantidad !== undefined && valor.cantidad !== null) e.cantidad = valor.cantidad;
                         if (valor.categoria) e.categoria = valor.categoria;
                         if (valor.evento) e.evento = valor.evento;
+                        if (valor.fecha) e.fecha = valor.fecha;
                     }
                     else if (sub === 'set-nota') e.notas = valor;
                     else if (sub === 'borrar-nota') e.notas = '';
@@ -337,29 +336,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
 
             await interaction.editReply({ content: '✅ Acción completada.', components: [] });
-            await interaction.followUp({ content: resultado, ephemeral: false });
-
+            
             if (ganadoresParaPingear.length > 0) {
-                try {
-                    let members;
-                    try { members = await interaction.guild.members.fetch(); } catch { members = interaction.guild.members.cache; }
-                    const menciones = ganadoresParaPingear.map(g => {
-                        const normG = utils.normalizar(g);
-                        const member = members.find(m =>
-                            utils.normalizar(m.user.username) === normG ||
-                            utils.normalizar(m.displayName) === normG ||
-                            utils.normalizar(utils.aplicarCanonico(m.displayName, miembros)) === normG
-                        );
-                        return member ? `<@${member.id}>` : `**${g}**`;
-                    });
-                    const pingId = guardarPendiente('ping', { menciones }, interaction.user.id);
-                    const rowPing = new (require('discord.js').ActionRowBuilder)().addComponents(
-                        new (require('discord.js').ButtonBuilder)().setCustomId(`ping_confirm_${pingId}`).setLabel('Sí, pingear').setStyle(require('discord.js').ButtonStyle.Success),
-                        new (require('discord.js').ButtonBuilder)().setCustomId(`ping_cancel_${pingId}`).setLabel('No, gracias').setStyle(require('discord.js').ButtonStyle.Secondary)
-                    );
-                    await interaction.followUp({ content: '🔔 ¿Querés avisar a los ganadores?', components: [rowPing], ephemeral: true });
-                } catch (e) { console.error('Error en ping:', e.message); }
+                const pingText = logic.formatearPingGanadores(ganadoresParaPingear, [], miembros, interaction.guild);
+                await interaction.followUp({ content: `${resultado}\n\n${pingText}`, ephemeral: false });
+            } else {
+                await interaction.followUp({ content: resultado, ephemeral: false });
             }
+            
             return;
         }
 
@@ -698,14 +682,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const cant = interaction.options.getInteger('cantidad');
                 const cat = interaction.options.getString('categoria');
                 const ev = interaction.options.getString('evento');
+                const fechaStr = interaction.options.getString('fecha');
                 
-                if (!obj && cant === null && !cat && !ev) return interaction.reply({ content: '❌ Tenés que indicar al menos un campo para cambiar.', ephemeral: true });
+                if (!obj && cant === null && !cat && !ev && !fechaStr) return interaction.reply({ content: '❌ Tenés que indicar al menos un campo para cambiar.', ephemeral: true });
                 
                 let cambios = [];
+                let fConv = null;
                 if (obj) cambios.push(`Objeto: **${obj}**`);
                 if (cant !== null) cambios.push(`Cantidad: **${cant}**`);
                 if (cat) cambios.push(`Categoría: **${cat}**`);
                 if (ev) cambios.push(`Evento: **${ev}**`);
+                if (fechaStr) {
+                    fConv = utils.convertirFecha(fechaStr);
+                    if (!fConv) return interaction.reply({ content: '❌ Fecha inválida.', ephemeral: true });
+                    cambios.push(`Fecha: **${utils.formatearFecha(fConv)}**`);
+                }
                 
                 if (obj && !cat) {
                     const catInferida = logic.inferirCategoria(obj, db);
@@ -713,7 +704,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 
                 cuerpo = `Cambiar en #${id}:\n` + cambios.join('\n');
-                payload = { id, sub, valor: { objeto: obj, cantidad: cant, categoria: cat, evento: ev } };
+                payload = { id, sub, valor: { objeto: obj, cantidad: cant, categoria: cat, evento: ev, fecha: fConv } };
             }
             else if (sub === 'set-nota') {
                 cuerpo = `Cambiar nota de #${id} a:\n📝 ${interaction.options.getString('nota')}`;
@@ -940,6 +931,7 @@ setupPanel(client, {
     fechaHoyArgentina: utils.fechaHoyArgentina,
     renderPrioridad: logic.renderPrioridad,
     guardarPendiente: guardarPendiente,
+    formatearPingGanadores: logic.formatearPingGanadores,
     ROL_LIDER: utils.ROL_LIDER,
     ROL_HELPER: utils.ROL_HELPER
 });
