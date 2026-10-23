@@ -81,7 +81,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (['panel', 'control'].includes(cmd)) return;
 
-        if ((cmd === 'sub' || cmd === 'subf') && focused.name === 'objeto') {
+        if ((cmd === 'sub' || cmd === 'subf' || cmd === 'catalogo') && focused.name === 'objeto') {
             const objetos = logic.obtenerObjetosUnicos(db);
             const q = utils.normalizar(focused.value);
             return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
@@ -190,16 +190,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.update({ content: out, components: [row] });
         }
 
-        const pagMatch = cid.match(/^(rank|obj|cat)_(first|prev|next|last)_(.+)$/);
+        const pagMatch = cid.match(/^(rank|obj|cat|catg)_(first|prev|next|last)_(.+)$/);
         if (pagMatch) {
             const [_, prefijo, accion, id] = pagMatch;
             const p = pendingActions.get(id);
-            const tipoEsperado = prefijo === 'rank' ? 'ranking' : (prefijo === 'obj' ? 'objeto-page' : 'categoria-page');
+            const tipoEsperado = prefijo === 'rank' ? 'ranking' : (prefijo === 'obj' ? 'objeto-page' : (prefijo === 'cat' ? 'categoria-page' : 'catalogo-page'));
             if (!p || p.tipo !== tipoEsperado || p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Sesión expirada.', ephemeral: true });
 
             const payload = p.payload;
-            let porPagina = prefijo === 'rank' ? (payload.categoria === 'Todas' ? 10 : 15) : (prefijo === 'obj' ? (payload.formato === 'Clasificación' ? 15 : 10) : 10);
-            const totalItems = payload.items ? payload.items.length : payload.jugadores.length;
+            let porPagina = prefijo === 'rank' ? (payload.categoria === 'Todas' ? 10 : 15) : (prefijo === 'obj' ? (payload.formato === 'Clasificación' ? 15 : 10) : (prefijo === 'cat' ? 10 : 15));
+            const totalItems = payload.items ? payload.items.length : (payload.jugadores ? payload.jugadores.length : payload.catalogo.length);
             const totalPaginas = Math.max(1, Math.ceil(totalItems / porPagina));
 
             if (accion === 'first') payload.pagina = 1;
@@ -208,11 +208,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
             else if (accion === 'last') payload.pagina = totalPaginas;
             p.expira = Date.now() + 5 * 60 * 1000;
 
-            const miembros = utils.cargarMiembros();
             let render;
             if (tipoEsperado === 'ranking') render = logic.renderRankingPagina(payload);
-            else if (tipoEsperado === 'objeto-page') render = logic.renderObjetoPagina(payload, miembros);
-            else render = logic.renderCategoriaPagina(payload, miembros);
+            else if (tipoEsperado === 'objeto-page') render = logic.renderObjetoPagina(payload, utils.cargarMiembros());
+            else if (tipoEsperado === 'categoria-page') render = logic.renderCategoriaPagina(payload, utils.cargarMiembros());
+            else if (tipoEsperado === 'catalogo-page') {
+                const totalPaginas = Math.max(1, Math.ceil(payload.catalogo.length / 15));
+                const paginaActual = Math.min(Math.max(1, payload.pagina), totalPaginas);
+                const inicio = (paginaActual - 1) * 15;
+                const slice = payload.catalogo.slice(inicio, inicio + 15);
+                let out = `📖 **Catálogo de Objetos** (Página ${paginaActual}/${totalPaginas})\n\n`;
+                if (slice.length === 0) out += 'No hay objetos guardados.';
+                else {
+                    for (const item of slice) {
+                        out += `• **${item.objeto}** → ${item.categoria}\n`;
+                    }
+                }
+                render = { content: out, totalPaginas, paginaActual };
+            }
 
             const row = logic.construirBotonesPaginacion(prefijo, id, render.paginaActual, render.totalPaginas);
             return interaction.update({ content: render.content, components: [row] });
@@ -371,7 +384,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     
     const comandosAdmin = ['backup', 'sync', 'registro-rapido'];
-    const comandosLider = ['miembros'];
+    const comandosLider = ['miembros', 'catalogo'];
     const comandosHelper = ['borrar', 'editar', 'sub', 'subf'];
     
     if (comandosAdmin.includes(interaction.commandName) || comandosLider.includes(interaction.commandName) || comandosHelper.includes(interaction.commandName)) {
@@ -404,6 +417,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const res = await logic.sincronizarConGitHub(true);
             let msg = res.ok ? `✅ Sync OK\n📤 CSV actualizado con ${res.total} entradas.` : `❌ Sync falló: ${res.motivo}`;
             if (res.ok && res.agregadas > 0) msg += `\n📥 ${res.agregadas} nuevas absorvidas.`;
+            await logic.sincronizarArchivosJSON();
             return interaction.editReply({ content: msg });
         }
 
@@ -453,6 +467,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
             fs.writeFileSync(utils.BACKUP_FILE, contenido);
             const adjunto = new AttachmentBuilder(Buffer.from(contenido, 'utf8'), { name: 'backup.csv' });
             return interaction.reply({ content: `✅ Respaldo guardado. Total: **${db.compras.length}**.`, files: [adjunto] });
+        }
+
+        if (interaction.commandName === 'catalogo') {
+            const sub = interaction.options.getSubcommand();
+            const catalogo = utils.cargarCatalogo();
+
+            if (sub === 'agregar') {
+                const obj = interaction.options.getString('objeto').trim();
+                const cat = interaction.options.getString('categoria');
+                catalogo[obj] = cat;
+                utils.guardarCatalogo(catalogo);
+                await logic.sincronizarArchivosJSON();
+                return interaction.reply({ content: `✅ Objeto **${obj}** guardado en el catálogo como **${cat}**.`, ephemeral: true });
+            }
+            if (sub === 'quitar') {
+                const obj = interaction.options.getString('objeto').trim();
+                const keyEncontrada = Object.keys(catalogo).find(k => utils.normalizar(k) === utils.normalizar(obj));
+                if (!keyEncontrada) return interaction.reply({ content: `ℹ️ El objeto **${obj}** no está en el catálogo.`, ephemeral: true });
+                delete catalogo[keyEncontrada];
+                utils.guardarCatalogo(catalogo);
+                await logic.sincronizarArchivosJSON();
+                return interaction.reply({ content: `✅ Objeto **${keyEncontrada}** eliminado del catálogo.`, ephemeral: true });
+            }
+            if (sub === 'lista') {
+                const items = Object.entries(catalogo).map(([objeto, categoria]) => ({ objeto, categoria })).sort((a, b) => a.objeto.localeCompare(b.objeto));
+                if (items.length === 0) return interaction.reply({ content: 'ℹ️ El catálogo está vacío.', ephemeral: true });
+                
+                const payload = { catalogo: items, pagina: 1 };
+                const id = guardarPendiente('catalogo-page', payload, interaction.user.id);
+                
+                const totalPaginas = Math.max(1, Math.ceil(items.length / 15));
+                const slice = items.slice(0, 15);
+                let out = `📖 **Catálogo de Objetos** (Página 1/${totalPaginas})\n\n`;
+                for (const item of slice) out += `• **${item.objeto}** → ${item.categoria}\n`;
+                
+                const row = logic.construirBotonesPaginacion('catg', id, 1, totalPaginas);
+                return interaction.reply({ content: out, components: [row], ephemeral: true });
+            }
         }
 
         if (interaction.commandName === 'objeto') {
@@ -559,6 +611,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 if (ag.length === 0) return interaction.reply({ content: `ℹ️ Ya estaban excluidos: ${ya.join(', ')}`, ephemeral: true });
                 utils.guardarMiembros(miembros);
+                await logic.sincronizarArchivosJSON();
                 let msg = `✅ **Excluidos:** ${ag.join(', ')}`;
                 if (ya.length > 0) msg += `\nℹ️ Ya estaban: ${ya.join(', ')}`;
                 return interaction.reply({ content: msg });
@@ -575,6 +628,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 if (quit.length === 0) return interaction.reply({ content: `ℹ️ No estaban excluidos: ${no.join(', ')}`, ephemeral: true });
                 utils.guardarMiembros(miembros);
+                await logic.sincronizarArchivosJSON();
                 let msg = `✅ **Reincluidos:** ${quit.join(', ')}`;
                 if (no.length > 0) msg += `\nℹ️ No estaban: ${no.join(', ')}`;
                 return interaction.reply({ content: msg });
@@ -583,6 +637,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const como = interaction.options.getString('como');
                 for (const n of nombres) miembros.canonicos[utils.normalizarNombre(n)] = como;
                 utils.guardarMiembros(miembros);
+                await logic.sincronizarArchivosJSON();
                 return interaction.reply({ content: `✅ ${nombres.join(', ')} se mostrarán como **${como}**.` });
             }
             if (sub === 'quitar-canonico') {
@@ -591,6 +646,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const prev = miembros.canonicos[key];
                 delete miembros.canonicos[key];
                 utils.guardarMiembros(miembros);
+                await logic.sincronizarArchivosJSON();
                 return interaction.reply({ content: `✅ Canónico eliminado para **${prev}**.` });
             }
         }
@@ -855,7 +911,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control`,
                 ephemeral: true
             });
         }
