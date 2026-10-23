@@ -112,6 +112,44 @@ async function sincronizarConGitHub(conMerge = true) {
     } catch (err) { return { ok: false, motivo: err.message }; }
 }
 
+async function sincronizarArchivosJSON() {
+    const token = process.env.GITHUB_TOKEN;
+    const repo = process.env.GITHUB_REPO;
+    const branch = process.env.GITHUB_BRANCH || 'main';
+    if (!token || !repo) return { ok: false, motivo: 'GitHub no configurado.' };
+
+    const archivos = ['miembros.json', 'catalogo.json'];
+    let subidos = 0;
+
+    for (const archivo of archivos) {
+        try {
+            const filePath = path.join(utils.DATA_DIR, archivo);
+            if (!fs.existsSync(filePath)) continue;
+            const contenido = fs.readFileSync(filePath, 'utf8');
+            const contenidoB64 = Buffer.from(contenido, 'utf8').toString('base64');
+
+            const urlGet = `https://api.github.com/repos/${repo}/contents/${archivo}?ref=${branch}`;
+            const rGet = await fetch(urlGet, { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json', 'User-Agent': 'bot-subastas' } });
+
+            let sha = null;
+            if (rGet.ok) {
+                const data = await rGet.json();
+                sha = data.sha;
+            }
+
+            const urlPut = `https://api.github.com/repos/${repo}/contents/${archivo}`;
+            const body = { message: `Sync ${archivo} desde bot`, content: contenidoB64, branch };
+            if (sha) body.sha = sha;
+
+            const rPut = await fetch(urlPut, { method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'bot-subastas' }, body: JSON.stringify(body) });
+            if (rPut.ok) subidos++;
+        } catch (e) {
+            console.error(`Error sincronizando ${archivo}:`, e.message);
+        }
+    }
+    return { ok: true, subidos };
+}
+
 function leerCSVInicial() {
     if (!fs.existsSync(utils.CSV_FILE)) return;
     if (fs.existsSync(utils.DB_FILE)) {
@@ -241,6 +279,13 @@ function calcularPerdedores7d(jugadores, categoria, db, miembros) {
 // ====== INFERIR CATEGORÍA ======
 function inferirCategoria(objeto, db) {
     const key = utils.normalizar(objeto);
+    
+    // 1. Buscar en el Catálogo manual
+    const catalogo = utils.cargarCatalogo();
+    const catEncontrada = Object.keys(catalogo).find(k => utils.normalizar(k) === key);
+    if (catEncontrada) return catalogo[catEncontrada];
+
+    // 2. Fallback a la lista estática
     const map = {
         'lagarto de trueno vil': 'Emblemas Únicos', 'idolo de obsidiana vil': 'Emblemas Únicos',
         'tiranosaurio vil': 'Emblemas Únicos', 'hidra vil': 'Emblemas Únicos',
@@ -252,6 +297,8 @@ function inferirCategoria(objeto, db) {
     if (map[key]) return map[key];
     if (key.includes('caja 20k')) return 'Cajas 20k';
     if (key.includes('collar') || key.includes('anillo') || key.includes('marca') || key.includes('brazal')) return 'Accesorios';
+
+    // 3. Fallback al historial
     if (db && Array.isArray(db.compras)) {
         const compras = db.compras.filter(c => c.objeto && utils.normalizar(c.objeto) === key);
         if (compras.length > 0) {
@@ -417,8 +464,18 @@ function obtenerNombresUnicos(db, miembros) {
     for (const k of Object.keys(miembros.canonicos || {})) agregar(k);
     return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
 }
+
 function obtenerObjetosUnicos(db) {
     const map = new Map();
+    
+    // 1. Del catálogo
+    const catalogo = utils.cargarCatalogo();
+    for (const obj of Object.keys(catalogo)) {
+        const key = utils.normalizar(obj);
+        if (!map.has(key)) map.set(key, obj);
+    }
+
+    // 2. Del historial
     for (const c of db.compras) {
         if (!c.objeto || utils.OBJETOS_PROHIBIDOS.some(o => utils.normalizar(o) === utils.normalizar(c.objeto))) continue;
         const key = utils.normalizar(c.objeto);
@@ -426,6 +483,7 @@ function obtenerObjetosUnicos(db) {
     }
     return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
 }
+
 function sugerirNombresMultiples(valorActual, nombres) {
     const valor = valorActual || '';
     const partes = valor.split(',');
@@ -436,7 +494,7 @@ function sugerirNombresMultiples(valorActual, nombres) {
 }
 
 module.exports = {
-    generarCSV, sincronizarConGitHub, leerCSVInicial,
+    generarCSV, sincronizarConGitHub, sincronizarArchivosJSON, leerCSVInicial,
     calcularPrioridad, compararPrioridad, construirRanking,
     obtenerCategoriasAfectantes, calcularPerdedores7d, inferirCategoria,
     construirBotonesPaginacion, renderPrioridad, renderPerdedores,
