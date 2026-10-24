@@ -3,10 +3,10 @@
   "slots": [
     {
       "slot": 1,
-      "objeto": null,
-      "categoria": null,
-      "texto": null,
-      "imagen": null
+      "objeto": "Lagarto del Trueno Sombrío",
+      "categoria": "Emblemas Generales",
+      "texto": "Shadow Thunderlizard",
+      "imagen": "slot1_1792871974088.png"
     },
     {
       "slot": 2,
