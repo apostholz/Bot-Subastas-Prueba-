@@ -146,7 +146,22 @@ const commandsData = [
             .addStringOption(o => o.setName('categoria').setDescription('Categoría por defecto para este thread').setRequired(false).addChoices(...catChoices))
             .addChannelOption(o => o.setName('canal').setDescription('Thread a fijar (o usa este mismo)').setRequired(false)))
         .addSubcommand(sub => sub.setName('quitar').setDescription('Quitar un thread de la lista fija').addChannelOption(o => o.setName('canal').setDescription('Thread a quitar (o usa este mismo)').setRequired(false)))
-        .addSubcommand(sub => sub.setName('panel').setDescription('Crear/actualizar el Panel de Control en este canal'))
+        .addSubcommand(sub => sub.setName('panel').setDescription('Crear/actualizar el Panel de Control en este canal')),
+
+    new SlashCommandBuilder().setName('control-boss').setDescription('Gestionar anuncios automáticos para subastas')
+        .addSubcommand(sub => sub.setName('canal').setDescription('Configurar canal fijo de anuncios')
+            .addChannelOption(o => o.setName('canal').setDescription('Canal de anuncios').setRequired(true)))
+        .addSubcommandGroup(group => group.setName('objeto').setDescription('Gestionar slots de objetos')
+            .addSubcommand(sub => sub.setName('set').setDescription('Configurar un slot')
+                .addIntegerOption(o => o.setName('slot').setDescription('Slot 1 a 4').setRequired(true).setMinValue(1).setMaxValue(4))
+                .addStringOption(o => o.setName('objeto').setDescription('Objeto del catálogo').setRequired(true).setAutocomplete(true))
+                .addStringOption(o => o.setName('texto').setDescription('Texto del anuncio / título del thread').setRequired(true))
+                .addAttachmentOption(o => o.setName('imagen').setDescription('Imagen del anuncio').setRequired(true)))
+            .addSubcommand(sub => sub.setName('quitar').setDescription('Liberar un slot')
+                .addIntegerOption(o => o.setName('slot').setDescription('Slot 1 a 4').setRequired(true).setMinValue(1).setMaxValue(4)))
+            .addSubcommand(sub => sub.setName('lista').setDescription('Listar slots configurados')))
+        .addSubcommand(sub => sub.setName('panel').setDescription('Crear/actualizar Panel de Control de Anuncios en este canal'))
+        .addSubcommand(sub => sub.setName('estado').setDescription('Ver estado de anuncios pendientes'))
 ];
 
 module.exports = { commandsData };
