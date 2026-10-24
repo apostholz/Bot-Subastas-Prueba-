@@ -71,6 +71,31 @@ function textoEstadoSync(res) {
     return `\n\n⚠️ Sync con GitHub falló: ${res.motivo}`;
 }
 
+function totalUnidadesGanadores(lista) {
+    return lista.reduce((acc, g) => acc + utils.parsearGanador(g).cantidad, 0);
+}
+
+function lineaGanadores(lista, miembros) {
+    if (!lista || lista.length === 0) return '🏆 Ganadores: nadie';
+    const total = totalUnidadesGanadores(lista);
+    const etiqueta = total === 1 ? '🏆 Ganador:' : '🏆 Ganadores:';
+    return `${etiqueta} ${lista.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}`;
+}
+
+function lineaPerdedores(lista, miembros) {
+    if (!lista || lista.length === 0) return '';
+    const etiqueta = lista.length === 1 ? '💔 Perdedor:' : '💔 Perdedores:';
+    return `${etiqueta} ${lista.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}`;
+}
+
+function renderEntradaProyectada(e, miembros) {
+    let out = `#${e.id} · ${utils.formatearFecha(e.fecha)} ${utils.etiquetaDias(e.fecha)} · ${utils.nombreBonitoEvento(e.evento)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
+    out += lineaGanadores(e.ganadores, miembros) + '\n';
+    if (e.perdedores && e.perdedores.length > 0) out += lineaPerdedores(e.perdedores, miembros) + '\n';
+    if (e.notas) out += `📝 ${e.notas}`;
+    return out.trimEnd();
+}
+
 client.on(Events.InteractionCreate, async (interaction) => {
     // 1. Autocompletado
     if (interaction.isAutocomplete()) {
@@ -172,8 +197,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     for (const c of lista) {
                         const bloque = utils.bloqueDeCategoria(key, c.categoria);
                         if (bloque && bloque !== bloqueActual) { out += `\n**${bloque}**\n`; bloqueActual = bloque; }
-                        out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n   🏆 ${c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
-                        if (c.perdedores.length > 0) out += `   💔 ${c.perdedores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
+                        out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n   ${lineaGanadores(c.ganadores, miembros)}\n`;
+                        if (c.perdedores.length > 0) out += `   ${lineaPerdedores(c.perdedores, miembros)}\n`;
                         if (c.notas) out += `   📝 ${c.notas}\n`;
                     }
                 }
@@ -246,15 +271,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const miembros = utils.cargarMiembros();
             let resultado = '';
             let requiereSync = false;
-            let ganadoresParaPingear = [];
 
             if (p.tipo === 'sub' || p.tipo === 'subf') {
                 const e = { id: db.nextId++, ...p.payload };
                 db.compras.push(e);
                 utils.guardarDB(db);
-                resultado = `✅ #${e.id} · 📅 ${utils.formatearFecha(e.fecha)} ${utils.etiquetaDias(e.fecha)} · ${utils.nombreBonitoEvento(e.evento)}\n📦 ${e.cantidad}x ${e.objeto} (${e.categoria})\n🏆 ${e.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}${e.perdedores.length ? `\n💔 ${e.perdedores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}` : ''}`;
+                resultado = `✅ Resultado registrado: #${e.id} · 📅 ${utils.formatearFecha(e.fecha)} ${utils.etiquetaDias(e.fecha)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n${lineaGanadores(e.ganadores, miembros)}${e.perdedores.length ? `\n${lineaPerdedores(e.perdedores, miembros)}` : ''}`;
                 requiereSync = true;
-                ganadoresParaPingear = e.ganadores;
             }
             else if (p.tipo === 'sync') {
                 const res = await logic.sincronizarConGitHub(true);
@@ -310,9 +333,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     else if (sub === 'borrar-nota') e.notas = '';
                     
                     utils.guardarDB(db);
-                    resultado = `✅ Edición aplicada a #${e.id}.\n\n#${e.id} · ${utils.formatearFecha(e.fecha)} ${utils.etiquetaDias(e.fecha)} · ${utils.nombreBonitoEvento(e.evento)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n🏆 ${e.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
-                    if (e.perdedores.length > 0) resultado += `💔 ${e.perdedores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
-                    if (e.notas) resultado += `📝 ${e.notas}`;
+                    resultado = `✅ Edición aplicada a #${e.id}.\n\n` + renderEntradaProyectada(e, miembros);
                     requiereSync = true;
                 }
             }
@@ -326,7 +347,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     existentes.add(logic.huella(nueva));
                     db.nextId++;
                     agregadas++;
-                    ganadoresParaPingear.push(...nueva.ganadores);
                 }
                 utils.guardarDB(db);
                 resultado = `✅ **${agregadas}** entradas registradas.`;
@@ -344,14 +364,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
 
             await interaction.editReply({ content: '✅ Acción completada.', components: [] });
-            
-            if (ganadoresParaPingear.length > 0) {
-                const pingText = logic.formatearPingGanadores(ganadoresParaPingear, [], miembros, interaction.guild);
-                await interaction.followUp({ content: `${resultado}\n\n${pingText}`, ephemeral: false });
-            } else {
-                await interaction.followUp({ content: resultado, ephemeral: false });
-            }
-            
+            await interaction.followUp({ content: resultado, ephemeral: false });
             return;
         }
 
@@ -440,7 +453,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             let preview = `📋 **Preview — ${validas.length} entrada(s)**\n\n`;
             validas.slice(0, 5).forEach((v, i) => {
-                preview += `**${i+1}.** ${utils.formatearFecha(v.fecha)} ${utils.etiquetaDias(v.fecha)} · ${utils.nombreBonitoEvento(v.evento)} · ${v.cantidad}x ${v.objeto} (${v.categoria})\n   🏆 ${v.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
+                preview += `**${i+1}.** ${utils.formatearFecha(v.fecha)} ${utils.etiquetaDias(v.fecha)} · ${utils.nombreBonitoEvento(v.evento)} · ${v.cantidad}x ${v.objeto} (${v.categoria})\n   ${lineaGanadores(v.ganadores, miembros)}\n`;
+                if (v.perdedores.length > 0) preview += `   ${lineaPerdedores(v.perdedores, miembros)}\n`;
             });
             if (validas.length > 5) preview += `... y ${validas.length - 5} más.\n`;
             if (errores.length > 0) preview += `\n⚠️ **${errores.length} errores:**\n${errores.slice(0, 5).join('\n')}`;
@@ -665,8 +679,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
 
                 if (ag.length === 0) return interaction.reply({ content: `ℹ️ No se aplicaron cambios: ${ya.join(', ')}`, ephemeral: true });
+
+                const proj = { ...e, ganadores: [...e.ganadores], perdedores: [...e.perdedores] };
+                const listaProj = sub === 'ganador' ? proj.ganadores : proj.perdedores;
+                if (accion === 'agregar') for (const j of ag) listaProj.push(j);
+                else for (const j of ag) { const pos = utils.buscarJugadorEnLista(listaProj, j, miembros); if (pos !== -1) listaProj.splice(pos, 1); }
                 
-                cuerpo = `${accion === 'agregar' ? 'Agregar' : 'Quitar'} **${ag.join(', ')}** a ${listaNombre} de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
+                cuerpo = `${accion === 'agregar' ? 'Agregar' : 'Quitar'} **${ag.join(', ')}** a ${listaNombre} de #${id}.\n\n` + renderEntradaProyectada(proj, miembros);
                 payload = { id, sub, valor: { accion, nombres: ag } };
             }
             else if (sub === 'reemplazar-ganador' || sub === 'reemplazar-perdedor') {
@@ -678,7 +697,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (utils.buscarJugadorEnLista(lista, q, miembros) === -1) return interaction.reply({ content: `❌ **${q}** no está en ${listaNombre}.`, ephemeral: true });
                 if (utils.buscarJugadorEnLista(lista, p, miembros) !== -1) return interaction.reply({ content: `❌ **${p}** ya está en ${listaNombre}.`, ephemeral: true });
                 
-                cuerpo = `Reemplazar a **${utils.aplicarCanonico(q, miembros)}** por **${utils.aplicarCanonico(p, miembros)}** en ${listaNombre} de #${id}.\n\n#${e.id} · ${e.cantidad}x ${e.objeto} (${e.categoria})`;
+                const proj = { ...e, ganadores: [...e.ganadores], perdedores: [...e.perdedores] };
+                const listaProj = sub === 'reemplazar-ganador' ? proj.ganadores : proj.perdedores;
+                const pos = utils.buscarJugadorEnLista(listaProj, q, miembros);
+                if (pos !== -1) listaProj.splice(pos, 1, p);
+
+                cuerpo = `Reemplazar a **${utils.aplicarCanonico(q, miembros)}** por **${utils.aplicarCanonico(p, miembros)}** en ${listaNombre} de #${id}.\n\n` + renderEntradaProyectada(proj, miembros);
                 payload = { id, sub, valor: { quitar: q, poner: p } };
             }
             else if (sub === 'set') {
@@ -692,31 +716,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 
                 let cambios = [];
                 let fConv = null;
-                if (obj) cambios.push(`Objeto: **${obj}**`);
-                if (cant !== null) cambios.push(`Cantidad: **${cant}**`);
-                if (cat) cambios.push(`Categoría: **${cat}**`);
-                if (ev) cambios.push(`Evento: **${ev}**`);
+                const proj = { ...e, ganadores: [...e.ganadores], perdedores: [...e.perdedores] };
+
+                if (obj) { proj.objeto = obj; cambios.push(`Objeto: **${obj}**`); }
+                if (cant !== null) { proj.cantidad = cant; cambios.push(`Cantidad: **${cant}**`); }
+                if (cat) { proj.categoria = cat; cambios.push(`Categoría: **${cat}**`); }
+                if (ev) { proj.evento = ev; cambios.push(`Evento: **${ev}**`); }
                 if (fechaStr) {
                     fConv = utils.convertirFecha(fechaStr);
                     if (!fConv) return interaction.reply({ content: '❌ Fecha inválida.', ephemeral: true });
+                    proj.fecha = fConv;
                     cambios.push(`Fecha: **${utils.formatearFecha(fConv)}**`);
                 }
                 
                 if (obj && !cat) {
                     const catInferida = logic.inferirCategoria(obj, db);
+                    proj.categoria = catInferida;
                     cambios.push(`(Categoría inferida: **${catInferida}**)`);
                 }
                 
-                cuerpo = `Cambiar en #${id}:\n` + cambios.join('\n');
+                cuerpo = `Cambiar en #${id}:\n` + cambios.join('\n') + '\n\n' + renderEntradaProyectada(proj, miembros);
                 payload = { id, sub, valor: { objeto: obj, cantidad: cant, categoria: cat, evento: ev, fecha: fConv } };
             }
             else if (sub === 'set-nota') {
-                cuerpo = `Cambiar nota de #${id} a:\n📝 ${interaction.options.getString('nota')}`;
-                payload = { id, sub, valor: interaction.options.getString('nota') };
+                const nota = interaction.options.getString('nota');
+                const proj = { ...e, ganadores: [...e.ganadores], perdedores: [...e.perdedores], notas: nota };
+                cuerpo = `Cambiar nota de #${id}.\n\n` + renderEntradaProyectada(proj, miembros);
+                payload = { id, sub, valor: nota };
             }
             else if (sub === 'borrar-nota') {
                 if (!e.notas) return interaction.reply({ content: `ℹ️ La entrada #${id} no tiene nota.`, ephemeral: true });
-                cuerpo = `Borrar nota de #${id}.\nActual: 📝 ${e.notas}`;
+                const proj = { ...e, ganadores: [...e.ganadores], perdedores: [...e.perdedores], notas: '' };
+                cuerpo = `Borrar nota de #${id}.\n\n` + renderEntradaProyectada(proj, miembros);
                 payload = { id, sub };
             }
             return mostrarPreview(interaction, 'Confirmar edición', cuerpo, 'editar', payload);
@@ -739,8 +770,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (utils.OBJETOS_PROHIBIDOS.some(o => utils.normalizar(o) === utils.normalizar(objeto))) return interaction.reply({ content: `❌ Objeto prohibido.`, ephemeral: true });
 
             const entrada = { fecha, evento, categoria, objeto, cantidad, ganadores: gStr.split(',').map(s => s.trim()).filter(Boolean), perdedores: pStr.split(',').map(s => s.trim()).filter(Boolean), notas: '' };
-            let cuerpo = `📅 ${utils.formatearFecha(fecha)} ${utils.etiquetaDias(fecha)} · ${utils.nombreBonitoEvento(evento)}\n📦 ${cantidad}x ${objeto} (${categoria})\n🏆 ${entrada.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}`;
-            if (entrada.perdedores.length > 0) cuerpo += `\n💔 ${entrada.perdedores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}`;
+            let cuerpo = `📅 ${utils.formatearFecha(fecha)} ${utils.etiquetaDias(fecha)} · ${utils.nombreBonitoEvento(evento)}\n📦 ${cantidad}x ${objeto} (${categoria})\n${lineaGanadores(entrada.ganadores, miembros)}`;
+            if (entrada.perdedores.length > 0) cuerpo += `\n${lineaPerdedores(entrada.perdedores, miembros)}`;
             return mostrarPreview(interaction, 'Confirmar registro', cuerpo, interaction.commandName, entrada);
         }
 
@@ -778,8 +809,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     for (const c of lista) {
                         const b = utils.bloqueDeCategoria(k, c.categoria);
                         if (b && b !== bloqueAct) { out += `\n**${b}**\n`; bloqueAct = b; }
-                        out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n   🏆 ${c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
-                        if (c.perdedores.length > 0) out += `   💔 ${c.perdedores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
+                        out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n   ${lineaGanadores(c.ganadores, miembros)}\n`;
+                        if (c.perdedores.length > 0) out += `   ${lineaPerdedores(c.perdedores, miembros)}\n`;
                         if (c.notas) out += `   📝 ${c.notas}\n`;
                     }
                 }
@@ -892,9 +923,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             let cuerpo = `Se borrarán **${validos.length}** entradas:\n\n`;
             validos.forEach(c => {
                 cuerpo += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
-                cuerpo += `   🏆 ${c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n`;
+                cuerpo += `   ${lineaGanadores(c.ganadores, miembros)}\n`;
                 if (c.perdedores && c.perdedores.length > 0) {
-                    cuerpo += `   💔 ${c.perdedores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}\n`;
+                    cuerpo += `   ${lineaPerdedores(c.perdedores, miembros)}\n`;
                 }
             });
             if (noExisten.length > 0) {
