@@ -93,7 +93,7 @@ function renderPanel(session, funciones) {
     const miembros = funciones.cargarMiembros();
     const interesados = session.interesados.map(i => funciones.aplicarCanonico(i, miembros));
     const icon = utils.ICONOS[item.categoria] || '❓';
-    
+
     let title = `${icon} ${item.cantidad}x ${item.objeto}`;
     const embed = new EmbedBuilder()
         .setDescription(`**Evento:** ${item.evento}\n**Categoría:** ${item.categoria}\n**Cantidad:** ${item.cantidad}\n**Fecha:** ${item.fecha}`)
@@ -120,7 +120,7 @@ function renderPanel(session, funciones) {
                 embed.setColor(0x00FF00); // Verde
             }
         }
-        
+
         const ultimo = session.historial[session.historial.length - 1];
         if (ultimo) embed.setFooter({ text: `Últ. mod: ${ultimo.userName} - ${new Date(ultimo.timestamp).toLocaleTimeString('es-AR')}` });
     }
@@ -211,7 +211,7 @@ async function actualizarControlPanel(client, funciones) {
 
         const fijos = cargarThreadsFijos();
         const subastas = cargarSubastas();
-        
+
         let desc = 'Referencia: (interesados / unidades)\n\n';
         if (fijos.length === 0) {
             desc += 'No hay threads fijos configurados.';
@@ -389,7 +389,7 @@ function setupPanel(client, funciones) {
             }
             return;
         }
-        
+
         if (interaction.isAutocomplete() && interaction.commandName === 'control') {
             const focused = interaction.options.getFocused(true);
             if (focused.name === 'objeto') {
@@ -457,7 +457,7 @@ function setupPanel(client, funciones) {
                 const indice = cargarIndice();
                 let canal = interaction.channel, msg = null;
                 if (indice.channelId && indice.messageId) try { const c = await client.channels.fetch(indice.channelId); msg = await c.messages.fetch(indice.messageId); canal = c; } catch { msg = null; }
-                
+
                 const embed = new EmbedBuilder().setTitle('📌 Índice de subastas activas').setDescription('Actualizando...').setColor(0x5865F2);
                 if (msg) await msg.edit({ embeds: [embed] }); else { const nuevo = await canal.send({ embeds: [embed] }); guardarIndice({ channelId: canal.id, messageId: nuevo.id }); }
                 await actualizarIndice(client, funciones);
@@ -542,10 +542,10 @@ function setupPanel(client, funciones) {
                 const categoria = interaction.options.getString('categoria') || null;
                 let fijos = cargarThreadsFijos();
                 if (fijos.some(f => f.id === tId)) return interaction.reply({ content: 'ℹ️ Ya está en la lista.', ephemeral: true });
-                
+
                 let nombre = `Thread ${tId.slice(-4)}`;
                 try { const ch = await client.channels.fetch(tId); if (ch && ch.name) nombre = ch.name; } catch {}
-                
+
                 fijos.push({ id: tId, nombre, objeto, categoria });
                 guardarThreadsFijos(fijos);
                 await actualizarControlPanel(client, funciones);
@@ -593,7 +593,7 @@ function setupPanel(client, funciones) {
 
             if (accion === 'anotarme' || accion === 'retirarme') {
                 if (session.estado === 'bloqueada') return interaction.reply({ content: '❌ La subasta está bloqueada.', ephemeral: true });
-                
+
                 await interaction.deferReply({ ephemeral: true });
                 const nombre = funciones.aplicarCanonico(interaction.member?.displayName || interaction.user.username, miembros);
                 const key = utils.claveJugador(nombre, miembros);
@@ -617,11 +617,11 @@ function setupPanel(client, funciones) {
                 if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
                 const resultados = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
                 resultados.sort(funciones.compararPrioridad);
-                
+
                 const pPayload = { categoria: session.item.categoria, jugadores: session.interesados, resultados };
                 const id = funciones.guardarPendiente('prioridad-page', pPayload, interaction.user.id);
                 pPayload.id = id;
-                
+
                 const { content, components } = funciones.renderPrioridad(pPayload, miembros);
                 return interaction.reply({ content, components, ephemeral: true });
             }
@@ -689,7 +689,7 @@ function setupPanel(client, funciones) {
             const tipo = partes[1];
             const sessionId = partes[2];
             const page = parseInt(partes[3]) || 1;
-            
+
             const subastas = cargarSubastas();
             const session = subastas[sessionId];
             if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
@@ -699,7 +699,7 @@ function setupPanel(client, funciones) {
             if (tipo === 'res') {
                 const todos = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
                 todos.sort(funciones.compararPrioridad);
-                
+
                 const porPagina = 5;
                 const totalPaginas = Math.max(1, Math.ceil(todos.length / porPagina));
                 const paginaActual = Math.min(Math.max(1, page), totalPaginas);
@@ -725,7 +725,7 @@ function setupPanel(client, funciones) {
                         out += `\n`;
                     }
                 }
-                
+
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`panel_hist:res:${sessionId}:${paginaActual - 1}`).setLabel('◀').setStyle(ButtonStyle.Primary).setDisabled(paginaActual <= 1),
                     new ButtonBuilder().setCustomId(`panel_hist:res:${sessionId}:${paginaActual + 1}`).setLabel('▶').setStyle(ButtonStyle.Primary).setDisabled(paginaActual >= totalPaginas)
@@ -736,7 +736,7 @@ function setupPanel(client, funciones) {
             if (tipo === 'det') {
                 const todos = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
                 todos.sort(funciones.compararPrioridad);
-                
+
                 const rows = [];
                 let row = new ActionRowBuilder();
                 todos.forEach((t, i) => {
@@ -756,15 +756,15 @@ function setupPanel(client, funciones) {
             if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
             const db = funciones.cargarDB();
             const miembros = funciones.cargarMiembros();
-            
+
             const todos = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
             todos.sort(funciones.compararPrioridad);
             const t = todos[parseInt(index)];
             if (!t) return interaction.reply({ content: '❌ Jugador inválido.', ephemeral: true });
-            
+
             const nombre = funciones.aplicarCanonico(t.jugador, miembros);
             let comprasJ = db.compras.filter(c => utils.contarGanador(c.ganadores, t.jugador, miembros) > 0).sort(utils.ordenarComprasDesc);
-            
+
             let out = `📜 **${nombre}** (Detallado)\n\n`;
             for (const cat of utils.CATEGORIAS) {
                 const filtradas = comprasJ.filter(c => c.categoria === cat).slice(0, 5);
@@ -776,7 +776,7 @@ function setupPanel(client, funciones) {
                 }
                 out += `\n`;
             }
-            
+
             const rows = [];
             let row = new ActionRowBuilder();
             todos.forEach((t, i) => {
@@ -785,7 +785,7 @@ function setupPanel(client, funciones) {
                 row.addComponents(new ButtonBuilder().setCustomId(`panel_hist_p:${sessionId}:${i}`).setLabel(nom).setStyle(i === parseInt(index) ? ButtonStyle.Success : ButtonStyle.Secondary));
             });
             rows.push(row);
-            
+
             return interaction.update({ content: out, components: rows });
         }
 
@@ -879,11 +879,34 @@ function setupPanel(client, funciones) {
             if (tipo === 'registrar') {
                 if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
                 const miembros = funciones.cargarMiembros();
-                const g = interaction.fields.getTextInputValue('ganadores').split(',').map(s => s.trim()).filter(Boolean).map(x => funciones.aplicarCanonico(x, miembros));
-                const p = interaction.fields.getTextInputValue('perdedores').split(',').map(s => s.trim()).filter(Boolean).map(x => funciones.aplicarCanonico(x, miembros));
+
+                const canonizarGanador = (valor) => {
+                    const parsed = utils.parsearGanador(valor);
+                    const baseCanon = funciones.aplicarCanonico(parsed.nombre, miembros);
+                    return parsed.cantidad > 1 ? `${baseCanon} x${parsed.cantidad}` : baseCanon;
+                };
+
+                const canonizarSimple = (valor) => {
+                    const parsed = utils.parsearGanador(valor);
+                    return funciones.aplicarCanonico(parsed.nombre, miembros);
+                };
+
+                const g = interaction.fields.getTextInputValue('ganadores')
+                    .split(',')
+                    .map(s => s.trim())
+                    .filter(Boolean)
+                    .map(canonizarGanador);
+
+                const p = interaction.fields.getTextInputValue('perdedores')
+                    .split(',')
+                    .map(s => s.trim())
+                    .filter(Boolean)
+                    .map(canonizarSimple);
+
                 const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10) || session.item.cantidad;
 
                 const id = guardarPendientePanel('registrar_resultado', { sessionId, ganadores: g, perdedores: p, cantidad: cant }, interaction.user.id);
+
                 let txt = `📋 **Confirmar registro**\n\n**Objeto:** ${session.item.objeto}\n**Categoría:** ${session.item.categoria}\n**Evento:** ${session.item.evento}\n**Fecha:** ${session.item.fecha}\n**Cantidad:** ${cant}\n\n🏆 **Ganadores:** ${g.map(x => `**${x}**`).join(', ') || 'nadie'}\n`;
                 if (p.length > 0) txt += `💔 **Perdedores:** ${p.join(', ')}\n`;
                 txt += `\n¿Confirmás y guardás en el historial?`;
@@ -959,7 +982,7 @@ function setupPanel(client, funciones) {
 
                 const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
                 delete subastas[session.id]; guardarSubastas(subastas);
-                
+
                 await refrescarTodo(client, funciones);
 
                 const ganadoresExpandidos = [];
@@ -1040,7 +1063,7 @@ function setupPanel(client, funciones) {
                 guardarSubastas(subastas);
                 const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
                 delete subastas[session.id]; guardarSubastas(subastas);
-                
+
                 try {
                     const canal = await client.channels.fetch(session.channelId);
                     const msg = await canal.messages.fetch(session.messageId);
@@ -1113,7 +1136,7 @@ function setupPanel(client, funciones) {
                 let txt = `⚠️ **¿Abrir subasta en ${disponibles.length} thread(s)?**\n`;
                 if (activosCount > 0) txt += `ℹ️ Se omitirán **${activosCount}** thread(s) que ya tienen subasta activa.\n`;
                 if (sinObjetoCount > 0) txt += `ℹ️ Se omitirán **${sinObjetoCount}** thread(s) sin objeto configurado.\n`;
-                
+
                 const id = guardarPendientePanel('control_abrir_todos', { disponibles }, interaction.user.id);
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`control_pending_confirm:${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
@@ -1179,7 +1202,7 @@ function setupPanel(client, funciones) {
                 guardarSubastas(subastas);
                 const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
                 delete subastas[session.id]; guardarSubastas(subastas);
-                
+
                 try {
                     const canal = await client.channels.fetch(session.channelId);
                     const msg = await canal.messages.fetch(session.messageId);
@@ -1205,7 +1228,7 @@ function setupPanel(client, funciones) {
                 let obj = fijo && fijo.objeto ? fijo.objeto : null;
                 if (!obj) obj = interaction.fields.getTextInputValue('objeto');
                 const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10) || 1;
-                
+
                 const db = funciones.cargarDB();
                 const cat = (fijo && fijo.categoria) ? fijo.categoria : logic.inferirCategoria(obj, db);
                 const ev = obtenerEventoPorHora();
@@ -1246,7 +1269,7 @@ function setupPanel(client, funciones) {
                         subastas[id].estado = 'cancelada';
                         pushHistorial(subastas[id], interaction, 'Cancelada por Control Global');
                         archivadas[id] = subastas[id];
-                        
+
                         try {
                             const canal = await client.channels.fetch(subastas[id].channelId);
                             const msg = await canal.messages.fetch(subastas[id].messageId);
