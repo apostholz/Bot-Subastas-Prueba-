@@ -1,4 +1,6 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { Client, GatewayIntentBits, Events, REST, Routes, PermissionFlagsBits } = require('discord.js');
 const { parse } = require('csv-parse/sync');
 
@@ -96,6 +98,56 @@ function renderEntradaProyectada(e, miembros) {
     return out.trimEnd();
 }
 
+async function asegurarArchivosDesdeGitHub() {
+    const repo = process.env.GITHUB_REPO;
+    const branch = process.env.GITHUB_BRANCH || 'main';
+    const token = process.env.GITHUB_TOKEN;
+    if (!repo || !token) {
+        console.warn('GitHub no configurado. No se pueden descargar archivos faltantes.');
+        return;
+    }
+
+    const archivos = [
+        { local: 'control-boss.js', repo: 'control-boss.js' },
+        { local: 'data/control_boss_config.json', repo: 'data/control_boss_config.json' },
+        { local: 'data/control_boss_pendientes.json', repo: 'data/control_boss_pendientes.json' },
+        { local: 'data/control_boss_panel.json', repo: 'data/control_boss_panel.json' }
+    ];
+
+    for (const a of archivos) {
+        if (fs.existsSync(a.local)) continue;
+        const url = `https://raw.githubusercontent.com/${repo}/${branch}/${a.repo}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) {
+            console.error(`No se pudo descargar ${a.repo}: ${res.status}`);
+            continue;
+        }
+        const buf = Buffer.from(await res.arrayBuffer());
+        fs.mkdirSync(path.dirname(a.local), { recursive: true });
+        fs.writeFileSync(a.local, buf);
+        console.log(`Descargado ${a.repo}`);
+    }
+
+    if (fs.existsSync('data/control_boss_config.json')) {
+        try {
+            const config = JSON.parse(fs.readFileSync('data/control_boss_config.json', 'utf8'));
+            for (const s of (config.slots || [])) {
+                if (!s.imagen) continue;
+                const local = path.join('data', 'imagenes', 'anuncios', s.imagen);
+                if (fs.existsSync(local)) continue;
+                const repoPath = `data/imagenes/anuncios/${s.imagen}`;
+                const url = `https://raw.githubusercontent.com/${repo}/${branch}/${repoPath}`;
+                const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+                if (!res.ok) continue;
+                const buf = Buffer.from(await res.arrayBuffer());
+                fs.mkdirSync(path.dirname(local), { recursive: true });
+                fs.writeFileSync(local, buf);
+                console.log(`Descargada imagen ${s.imagen}`);
+            }
+        } catch (e) { console.error('Error descargando imágenes:', e.message); }
+    }
+}
+
 client.on(Events.InteractionCreate, async (interaction) => {
     // 1. Autocompletado
     if (interaction.isAutocomplete()) {
@@ -104,7 +156,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const focused = interaction.options.getFocused(true);
         const cmd = interaction.commandName;
 
-        if (['panel', 'control'].includes(cmd)) return;
+        if (['panel', 'control', 'control-boss'].includes(cmd)) return;
 
         if ((cmd === 'sub' || cmd === 'subf' || cmd === 'catalogo') && focused.name === 'objeto') {
             const objetos = logic.obtenerObjetosUnicos(db);
@@ -389,7 +441,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     
     const comandosAdmin = ['backup', 'sync', 'registro-rapido'];
-    const comandosLider = ['miembros', 'catalogo'];
+    const comandosLider = ['miembros', 'catalogo', 'control-boss'];
     const comandosHelper = ['borrar', 'editar', 'sub', 'subf'];
     
     if (comandosAdmin.includes(interaction.commandName) || comandosLider.includes(interaction.commandName) || comandosHelper.includes(interaction.commandName)) {
@@ -937,7 +989,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control\n\`/control-boss\` · gestionar anuncios automáticos`,
                 ephemeral: true
             });
         }
@@ -950,7 +1002,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 });
 
-setupPanel(client, {
+const funciones = {
     cargarDB: utils.cargarDB,
     guardarDB: utils.guardarDB,
     sincronizarConGitHub: logic.sincronizarConGitHub,
@@ -969,6 +1021,18 @@ setupPanel(client, {
     formatearPingGanadores: logic.formatearPingGanadores,
     ROL_LIDER: utils.ROL_LIDER,
     ROL_HELPER: utils.ROL_HELPER
-});
+};
+
+setupPanel(client, funciones);
+
+(async () => {
+    await asegurarArchivosDesdeGitHub();
+    try {
+        const { setupControlBoss } = require('./control-boss');
+        setupControlBoss(client, funciones);
+    } catch (e) {
+        console.error('No se pudo cargar control-boss:', e);
+    }
+})();
 
 client.login(process.env.DISCORD_TOKEN);
