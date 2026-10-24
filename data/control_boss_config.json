@@ -19,10 +19,11 @@
     },
     {
       "slot": 3,
-      "objeto": null,
-      "categoria": null,
-      "texto": null,
-      "imagen": null
+      "objeto": "Señor de la Caverna Sombría",
+      "categoria": "Emblemas Generales",
+      "texto": "Shadow Cryptlord",
+      "imagen": "slot3_1792882967410.png",
+      "threadId": null
     },
     {
       "slot": 4,
