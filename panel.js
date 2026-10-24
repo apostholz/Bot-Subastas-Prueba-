@@ -97,7 +97,7 @@ function renderPanel(session, funciones) {
     let title = `${icon} ${item.cantidad}x ${item.objeto}`;
     const embed = new EmbedBuilder()
         .setDescription(`**Evento:** ${item.evento}\n**Categoría:** ${item.categoria}\n**Cantidad:** ${item.cantidad}\n**Fecha:** ${item.fecha}`)
-        .addFields({ name: `Interesados (${interesados.length})`, value: interesados.length ? interesados.map(i => `• ${i}`).join('\n') : 'Nadie aún' });
+        .addFields({ name: `Interesados / Interested (${interesados.length})`, value: interesados.length ? interesados.map(i => `• ${i}`).join('\n') : 'Nadie aún' });
 
     const cerrada = session.estado === 'cerrada';
     const bloqueada = session.estado === 'bloqueada';
@@ -130,8 +130,8 @@ function renderPanel(session, funciones) {
     }
 
     const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`panel_btn:anotarme:${session.id}`).setLabel('Anotarme').setStyle(ButtonStyle.Success).setDisabled(bloqueada),
-        new ButtonBuilder().setCustomId(`panel_btn:retirarme:${session.id}`).setLabel('Retirarme').setStyle(ButtonStyle.Danger).setDisabled(bloqueada),
+        new ButtonBuilder().setCustomId(`panel_btn:anotarme:${session.id}`).setLabel('Anotarme / Join').setStyle(ButtonStyle.Success).setDisabled(bloqueada),
+        new ButtonBuilder().setCustomId(`panel_btn:retirarme:${session.id}`).setLabel('Retirarme / Leave').setStyle(ButtonStyle.Danger).setDisabled(bloqueada),
         new ButtonBuilder().setCustomId(`panel_btn:bloquear:${session.id}`).setEmoji(bloqueada ? '🔒' : '🔓').setStyle(ButtonStyle.Secondary)
     );
 
@@ -970,6 +970,7 @@ function setupPanel(client, funciones) {
                 db.compras.push(entrada);
                 funciones.guardarDB(db);
 
+                session.item.cantidad = p.payload.cantidad;
                 session.estado = 'cerrada';
                 session.registradoPor = interaction.member?.displayName || interaction.user.username;
                 session.fechaRegistro = new Date().toISOString();
@@ -995,14 +996,14 @@ function setupPanel(client, funciones) {
                     .map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`)
                     .join('\n');
 
-                const tituloGanadores = ganadoresExpandidos.length === 1 ? '🏆 **Ganador:**' : '🏆 **Ganadores:**';
+                const tituloGanadores = ganadoresExpandidos.length === 1 ? '🏆 **Ganador / Winner:**' : '🏆 **Ganadores / Winners:**';
 
                 let msg = `✅ Resultado registrado: #${entrada.id} · 📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})`;
                 msg += `\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
 
                 if (entrada.perdedores.length > 0) {
                     const perdedoresBase = entrada.perdedores.map(p => funciones.aplicarCanonico(utils.parsearGanador(p).nombre, miembros));
-                    const tituloPerdedores = entrada.perdedores.length === 1 ? '💔 **Perdedor:**' : '💔 **Perdedores:**';
+                    const tituloPerdedores = entrada.perdedores.length === 1 ? '💔 **No ganador / Non-winner:**' : '💔 **No ganadores / Non-winners:**';
                     msg += `\n\n${tituloPerdedores}\n${perdedoresBase.join(', ')}`;
                 }
 
@@ -1169,8 +1170,13 @@ function setupPanel(client, funciones) {
                 const ev = obtenerEventoPorHora();
                 const db = funciones.cargarDB();
                 let abiertas = 0;
+                let omitidas = 0;
 
                 for (const fijo of disponibles) {
+                    if (!fijo || !fijo.objeto) { omitidas++; continue; }
+                    const yaActiva = Object.values(subastas).find(s => s.threadId === fijo.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+                    if (yaActiva) { omitidas++; continue; }
+
                     const cat = (fijo && fijo.categoria) ? fijo.categoria : logic.inferirCategoria(fijo.objeto, db);
                     const session = {
                         id: generarId(), threadId: fijo.id, channelId: fijo.id, messageId: null, threadName: fijo.nombre,
@@ -1185,12 +1191,15 @@ function setupPanel(client, funciones) {
                         const msg = await canal.send({ embeds, components });
                         session.messageId = msg.id;
                         abiertas++;
-                    } catch (e) { console.error(e); }
+                    } catch (e) {
+                        console.error(e);
+                        omitidas++;
+                    }
                 }
                 guardarSubastas(subastas);
                 await refrescarTodo(client, funciones);
                 pendingPanel.delete(id);
-                return interaction.editReply({ content: `✅ Se abrieron **${abiertas}** subastas.`, components: [] });
+                return interaction.editReply({ content: `✅ Se abrieron **${abiertas}** subastas. Se omitieron **${omitidas}**.`, components: [] });
             }
 
             const session = subastas[p.payload.sessionId];
