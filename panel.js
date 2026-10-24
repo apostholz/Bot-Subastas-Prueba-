@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
+    Events,
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
@@ -228,7 +229,7 @@ async function actualizarControlPanel(client, funciones) {
             });
         }
 
-        const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Subastas').setDescription(desc).setColor(0x2B2D31);
+        const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Invasión').setDescription(desc).setColor(0x2B2D31);
 
         const rows = [];
         const chunks = fijos.slice(0, 16);
@@ -409,6 +410,38 @@ function setupPanel(client, funciones) {
     setInterval(async () => {
         await moverPanelesAlFinal(client, funciones);
     }, 2 * 60 * 1000);
+
+    client.on(Events.ThreadDelete, async (thread) => {
+        try {
+            const subastas = cargarSubastas();
+            let cambios = false;
+            for (const id in subastas) {
+                if (subastas[id].threadId === thread.id && (subastas[id].estado === 'abierta' || subastas[id].estado === 'bloqueada')) {
+                    subastas[id].estado = 'cancelada';
+                    subastas[id].historial.push({
+                        timestamp: Date.now(),
+                        userId: 'sistema',
+                        userName: 'Sistema',
+                        accion: 'Thread eliminado, subasta cancelada automáticamente'
+                    });
+                    const archivadas = cargarArchivadas();
+                    archivadas[id] = subastas[id];
+                    guardarArchivadas(archivadas);
+                    delete subastas[id];
+                    cambios = true;
+                }
+            }
+            if (cambios) {
+                guardarSubastas(subastas);
+                await actualizarIndice(client, funciones);
+                await actualizarControlPanel(client, funciones);
+                try {
+                    const { actualizarPanelControlBoss } = require('./control-boss');
+                    await actualizarPanelControlBoss(client);
+                } catch(e) { /* ignorar si control-boss no está cargado */ }
+            }
+        } catch(e) { console.error('Error ThreadDelete:', e.message); }
+    });
 
     client.on('interactionCreate', async (interaction) => {
         if (interaction.isAutocomplete() && interaction.commandName === 'panel') {
@@ -603,10 +636,10 @@ function setupPanel(client, funciones) {
                 const control = cargarControl();
                 let canal = interaction.channel, msg = null;
                 if (control.channelId && control.messageId) try { const c = await client.channels.fetch(control.channelId); msg = await c.messages.fetch(control.messageId); canal = c; } catch { msg = null; }
-                const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Subastas').setDescription('Cargando...').setColor(0x2B2D31);
+                const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Invasión').setDescription('Cargando...').setColor(0x2B2D31);
                 if (msg) await msg.edit({ embeds: [embed], components: [] }); else { const nuevo = await canal.send({ embeds: [embed] }); guardarControl({ channelId: canal.id, messageId: nuevo.id }); }
                 await actualizarControlPanel(client, funciones);
-                return interaction.editReply({ content: '✅ Panel de Control actualizado.' });
+                return interaction.editReply({ content: '✅ Panel de Control de Invasión actualizado.' });
             }
         }
 
