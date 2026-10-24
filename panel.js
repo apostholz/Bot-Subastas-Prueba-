@@ -115,9 +115,9 @@ function renderPanel(session, funciones) {
         } else {
             embed.setTitle(title);
             if (interesados.length > item.cantidad) {
-                embed.setColor(0xFFCF00); // Amarillo
+                embed.setColor(0xFFCF00);
             } else {
-                embed.setColor(0x00FF00); // Verde
+                embed.setColor(0x00FF00);
             }
         }
 
@@ -355,6 +355,44 @@ async function mostrarConfirmacionAgregar(interaction, session, nombresRaw, func
         new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
     );
     return interaction.reply({ content: txt, components: [row], ephemeral: true });
+}
+
+async function crearPanelEnThread(client, thread, item, funciones, creadoPor) {
+    const subastas = cargarSubastas();
+    const threadId = thread.id;
+
+    if (Object.values(subastas).find(s => s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada'))) return null;
+
+    const session = {
+        id: generarId(),
+        threadId,
+        channelId: thread.id,
+        messageId: null,
+        threadName: thread.name,
+        item: {
+            fecha: item.fecha,
+            evento: item.evento,
+            categoria: item.categoria,
+            objeto: item.objeto,
+            cantidad: item.cantidad
+        },
+        interesados: [],
+        estado: 'abierta',
+        historial: [{ timestamp: Date.now(), userId: creadoPor, userName: 'Sistema', accion: 'Panel creado por anuncio' }],
+        creadoPor,
+        createdAt: Date.now()
+    };
+
+    subastas[session.id] = session;
+    guardarSubastas(subastas);
+
+    const { embeds, components } = renderPanel(session, funciones);
+    const msg = await thread.send({ embeds, components });
+    session.messageId = msg.id;
+    guardarSubastas(subastas);
+
+    await refrescarTodo(client, funciones);
+    return session;
 }
 
 function setupPanel(client, funciones) {
@@ -1297,4 +1335,4 @@ function setupPanel(client, funciones) {
     });
 }
 
-module.exports = { setupPanel };
+module.exports = { setupPanel, crearPanelEnThread };
