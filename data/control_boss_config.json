@@ -1,0 +1,9 @@
+{
+  "canalAnunciosId": null,
+  "slots": [
+    { "slot": 1, "objeto": null, "categoria": null, "texto": null, "imagen": null },
+    { "slot": 2, "objeto": null, "categoria": null, "texto": null, "imagen": null },
+    { "slot": 3, "objeto": null, "categoria": null, "texto": null, "imagen": null },
+    { "slot": 4, "objeto": null, "categoria": null, "texto": null, "imagen": null }
+  ]
+}
