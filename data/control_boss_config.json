@@ -27,10 +27,10 @@
     },
     {
       "slot": 4,
-      "objeto": null,
-      "categoria": null,
-      "texto": null,
-      "imagen": null,
+      "objeto": "Matriarca de la prole sombría",
+      "categoria": "Emblemas Generales",
+      "texto": "Shadow Broodmother",
+      "imagen": "slot4_1792883721904.png",
       "threadId": null
     }
   ]
