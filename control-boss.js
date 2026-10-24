@@ -121,7 +121,7 @@ async function publicarImagen(filename) {
 }
 
 async function renderPanelControlBoss(config) {
-    const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Boss').setColor(0x2B2D31);
+    const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Banquete').setColor(0x2B2D31);
     const configurados = config.slots.filter(slotConfigurado);
     
     if (configurados.length === 0) {
@@ -341,7 +341,7 @@ function setupControlBoss(client, funciones) {
                 const msg = await interaction.channel.send(payload);
                 guardarPanel({ channelId: interaction.channelId, messageId: msg.id });
                 await publicarPanel();
-                return interaction.editReply({ content: '✅ Panel de Control de Boss creado/actualizado.' });
+                return interaction.editReply({ content: '✅ Panel de Control de Banquete creado/actualizado.' });
             }
 
             if (sub === 'estado') {
