@@ -494,6 +494,9 @@ function setupControlBoss(client, funciones) {
                 if (esCancel) { confirmaciones.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
                 confirmaciones.delete(id);
 
+                // Defer update para evitar el error 10062
+                try { await interaction.deferUpdate(); } catch (e) {}
+
                 const config = cargarConfig();
                 const subastas = cargarSubastas();
 
@@ -532,7 +535,7 @@ function setupControlBoss(client, funciones) {
                         await publicarPendientes();
                         enviados++;
                     }
-                    return interaction.update({ content: `✅ ${enviados} anuncio(s) enviado(s). Esperando thread(s)...`, components: [] });
+                    return interaction.editReply({ content: `✅ ${enviados} anuncio(s) enviado(s). Esperando thread(s)...`, components: [] });
                 }
 
                 if (tipo === 'cerrar' || tipo === 'cerrar_todos') {
@@ -562,8 +565,12 @@ function setupControlBoss(client, funciones) {
 
                         try {
                             const thread = await client.channels.fetch(session.threadId);
-                            if (thread) await thread.delete();
-                        } catch (e) { console.error('Error al borrar thread:', e.message); }
+                            if (thread) {
+                                const starterMsg = await thread.fetchStarterMessage().catch(() => null);
+                                await thread.delete().catch(() => null);
+                                if (starterMsg) await starterMsg.delete().catch(() => null);
+                            }
+                        } catch (e) { console.error('Error al borrar thread/mensaje:', e.message); }
 
                         s.threadId = null;
                         guardarConfig(config);
@@ -578,7 +585,7 @@ function setupControlBoss(client, funciones) {
                         await actualizarIndice(client, funciones);
                     } catch (e) {}
 
-                    return interaction.update({ content: `✅ ${cerrados} subasta(s) cerrada(s) y thread(s) eliminado(s).`, components: [] });
+                    return interaction.editReply({ content: `✅ ${cerrados} subasta(s) cerrada(s) y thread(s) eliminado(s).`, components: [] });
                 }
             }
         } catch (err) {
