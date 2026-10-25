@@ -190,7 +190,7 @@ function renderPanel(session, funciones) {
 
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`panel_btn:anotarme:${session.id}`).setLabel('Join Auction').setStyle(ButtonStyle.Success).setDisabled(bloqueada),
-        new ButtonBuilder().setCustomId(`panel_btn:retirarme:${session.id}`).setLabel('Leave').setStyle(ButtonStyle.Danger).setDisabled(bloqueada),
+        new ButtonBuilder().setCustomId(`panel_btn:retirarme:${session.id}`).setLabel('Leave').setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`panel_btn:bloquear:${session.id}`).setEmoji(bloqueada ? '🔒' : '🔓').setStyle(ButtonStyle.Secondary)
     );
 
@@ -728,7 +728,7 @@ function setupPanel(client, funciones) {
                 }
 
                 if (accion === 'anotarme' || accion === 'retirarme') {
-                    if (session.estado === 'bloqueada') return interaction.reply({ content: '❌ La subasta está bloqueada.', ephemeral: true });
+                    if (session.estado === 'bloqueada' && accion === 'anotarme') return interaction.reply({ content: '❌ The auction is locked.', ephemeral: true });
 
                     await interaction.deferReply({ ephemeral: true });
                     const nombre = funciones.aplicarCanonico(interaction.member?.displayName || interaction.user.username, miembros);
