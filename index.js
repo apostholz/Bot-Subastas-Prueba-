@@ -597,8 +597,37 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.commandName === 'dado') {
             if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Solo funciona en threads.', ephemeral: true });
             
-            const targetMemberOpt = interaction.options.getMember('jugador');
-            const targetMember = targetMemberOpt || interaction.member;
+            const jugadorOpt = interaction.options.getString('jugador');
+            let targetMember = interaction.member;
+
+            if (jugadorOpt) {
+                const subastasFile = path.join(__dirname, 'data', 'subastas_activas.json');
+                let subastas = {};
+                try { subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8')); } catch {}
+                const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+                
+                let nombreBuscado = jugadorOpt.trim();
+                const miembros = utils.cargarMiembros();
+                
+                // Si está en la subasta, usamos su nombre exacto (canónico)
+                if (session) {
+                    const match = session.interesados.find(i => utils.claveJugador(i, miembros) === utils.claveJugador(nombreBuscado, miembros));
+                    if (match) nombreBuscado = match;
+                }
+                
+                // Buscamos al miembro real en el servidor por apodo o usuario
+                const memberReal = interaction.guild.members.cache.find(m => 
+                    utils.normalizar(m.displayName) === utils.normalizar(nombreBuscado) || 
+                    utils.normalizar(m.user.username) === utils.normalizar(nombreBuscado)
+                );
+                
+                if (memberReal) {
+                    targetMember = memberReal;
+                } else {
+                    // Si no tiene Discord, creamos un "falso" miembro para que el dado se guarde con ese nombre
+                    targetMember = { id: nombreBuscado, displayName: nombreBuscado, username: nombreBuscado };
+                }
+            }
             
             const funciones = {
                 cargarMiembros: utils.cargarMiembros, ROL_LIDER: utils.ROL_LIDER, ROL_HELPER: utils.ROL_HELPER,
