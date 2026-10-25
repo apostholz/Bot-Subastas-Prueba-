@@ -489,9 +489,14 @@ function setupControlBoss(client, funciones) {
                 
                 if (!p || p.userId !== interaction.user.id || p.expira < Date.now()) {
                     confirmaciones.delete(id);
-                    return interaction.update({ content: '❌ Sesión expirada.', components: [] });
+                    try { await interaction.update({ content: '❌ Sesión expirada.', components: [] }); } catch(e) {}
+                    return;
                 }
-                if (esCancel) { confirmaciones.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
+                if (esCancel) { 
+                    confirmaciones.delete(id); 
+                    try { await interaction.update({ content: '❌ Acción cancelada.', components: [] }); } catch(e) {}
+                    return; 
+                }
                 confirmaciones.delete(id);
 
                 // Defer update para evitar el error 10062
@@ -535,7 +540,10 @@ function setupControlBoss(client, funciones) {
                         await publicarPendientes();
                         enviados++;
                     }
-                    return interaction.editReply({ content: `✅ ${enviados} anuncio(s) enviado(s). Esperando thread(s)...`, components: [] });
+                    try {
+                        await interaction.editReply({ content: `✅ ${enviados} anuncio(s) enviado(s). Esperando thread(s)...`, components: [] });
+                    } catch(e) {}
+                    return;
                 }
 
                 if (tipo === 'cerrar' || tipo === 'cerrar_todos') {
@@ -585,7 +593,10 @@ function setupControlBoss(client, funciones) {
                         await actualizarIndice(client, funciones);
                     } catch (e) {}
 
-                    return interaction.editReply({ content: `✅ ${cerrados} subasta(s) cerrada(s) y thread(s) eliminado(s).`, components: [] });
+                    try {
+                        await interaction.editReply({ content: `✅ ${cerrados} subasta(s) cerrada(s) y thread(s) eliminado(s).`, components: [] });
+                    } catch(e) {}
+                    return;
                 }
             }
         } catch (err) {
