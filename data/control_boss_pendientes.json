@@ -178,5 +178,20 @@
     "creadoEn": 1792963645421,
     "expiraEn": 1792963825421,
     "estado": "expirado"
+  },
+  {
+    "id": "dom18ap3",
+    "messageId": "1564029300674400307",
+    "channelId": "1547595718343000135",
+    "slot": 1,
+    "objeto": "Lagarto del Trueno Sombrío",
+    "categoria": "Emblemas Generales",
+    "cantidad": 1,
+    "texto": "Shadow Thunderlizard",
+    "imagen": "slot1_1792871974088.png",
+    "creadoPor": "295365478216368128",
+    "creadoEn": 1792964043791,
+    "expiraEn": 1792964223791,
+    "estado": "pendiente"
   }
 ]
