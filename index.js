@@ -78,15 +78,15 @@ function totalUnidadesGanadores(lista) {
 }
 
 function lineaGanadores(lista, miembros) {
-    if (!lista || lista.length === 0) return '🏆 Ganadores: nadie';
+    if (!lista || lista.length === 0) return '🏆 Winners: none';
     const total = totalUnidadesGanadores(lista);
-    const etiqueta = total === 1 ? '🏆 Ganador:' : '🏆 Ganadores:';
+    const etiqueta = total === 1 ? '🏆 Winner:' : '🏆 Winners:';
     return `${etiqueta} ${lista.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}`;
 }
 
 function lineaPerdedores(lista, miembros) {
     if (!lista || lista.length === 0) return '';
-    const etiqueta = lista.length === 1 ? '💔 Perdedor:' : '💔 Perdedores:';
+    const etiqueta = lista.length === 1 ? '💔 Non-winner:' : '💔 Non-winners:';
     return `${etiqueta} ${lista.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}`;
 }
 
@@ -989,7 +989,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control\n\`/control-boss\` · gestionar anuncios automáticos`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control de Invasión\n\`/control-boss\` · gestionar anuncios automáticos`,
                 ephemeral: true
             });
         }
