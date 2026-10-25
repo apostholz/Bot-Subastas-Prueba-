@@ -1063,7 +1063,9 @@ function setupPanel(client, funciones) {
                 if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien inició la acción puede confirmar.', ephemeral: true });
                 if (!esConfirm) { pendingPanel.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
 
+                // Defer update para evitar el 10062
                 try { await interaction.deferUpdate(); } catch {}
+
                 const subastas = cargarSubastas();
                 const session = subastas[p.payload.sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) { pendingPanel.delete(id); return interaction.editReply({ content: '❌ El panel ya no está activo.', components: [] }); }
@@ -1210,7 +1212,11 @@ function setupPanel(client, funciones) {
                     if (esThreadBoss(session.threadId)) {
                         try {
                             const thread = await client.channels.fetch(session.threadId);
-                            if (thread) await thread.delete();
+                            if (thread) {
+                                const starterMsg = await thread.fetchStarterMessage().catch(() => null);
+                                await thread.delete().catch(() => null);
+                                if (starterMsg) await starterMsg.delete().catch(() => null);
+                            }
                         } catch {}
                     } else {
                         try {
@@ -1310,6 +1316,7 @@ function setupPanel(client, funciones) {
                 if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien inició la acción puede confirmar.', ephemeral: true });
                 if (!esConfirm) { pendingPanel.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
 
+                // Defer update para evitar el 10062
                 try { await interaction.deferUpdate(); } catch {}
                 const subastas = cargarSubastas();
 
@@ -1367,7 +1374,11 @@ function setupPanel(client, funciones) {
                     if (esThreadBoss(session.threadId)) {
                         try {
                             const thread = await client.channels.fetch(session.threadId);
-                            if (thread) await thread.delete();
+                            if (thread) {
+                                const starterMsg = await thread.fetchStarterMessage().catch(() => null);
+                                await thread.delete().catch(() => null);
+                                if (starterMsg) await starterMsg.delete().catch(() => null);
+                            }
                         } catch {}
                     } else {
                         try {
@@ -1444,7 +1455,11 @@ function setupPanel(client, funciones) {
                             if (esThreadBoss(subastas[id].threadId)) {
                                 try {
                                     const thread = await client.channels.fetch(subastas[id].threadId);
-                                    if (thread) await thread.delete();
+                                    if (thread) {
+                                        const starterMsg = await thread.fetchStarterMessage().catch(() => null);
+                                        await thread.delete().catch(() => null);
+                                        if (starterMsg) await starterMsg.delete().catch(() => null);
+                                    }
                                 } catch {}
                             } else {
                                 try {
@@ -1476,4 +1491,4 @@ function setupPanel(client, funciones) {
     });
 }
 
-module.exports = { setupPanel, crearPanelEnThread, actualizarIndice };
+module.exports = { setupPanel, crearPanelEnThread, actualizarIndice, actualizarMensajePanel };
