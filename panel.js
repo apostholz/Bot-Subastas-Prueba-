@@ -23,6 +23,7 @@ const INDICE_FILE = path.join(DATA_DIR, 'indice.json');
 const CONTROL_FILE = path.join(DATA_DIR, 'control.json');
 const THREADS_FILE = path.join(DATA_DIR, 'threads_fijos.json');
 const BOSS_CONFIG_FILE = path.join(DATA_DIR, 'control_boss_config.json');
+const DADOS_PENDIENTES_FILE = path.join(DATA_DIR, 'dados_pendientes.json');
 
 const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos', 'Equipo', 'Accesorios', 'Sin Categoría'];
 const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
@@ -98,16 +99,67 @@ function pushHistorial(session, interaction, accion) {
     if (session.historial.length > 50) session.historial = session.historial.slice(-50);
 }
 
+// ====== LÓGICA DE DADOS PENDIENTES ======
+function aplicarDadosPendientes(session) {
+    if (!fs.existsSync(DADOS_PENDIENTES_FILE)) return;
+    let pendientes = [];
+    try { pendientes = JSON.parse(fs.readFileSync(DADOS_PENDIENTES_FILE, 'utf8')); } catch { return; }
+    
+    const ahora = Date.now();
+    let huboCambios = false;
+    const restantes = [];
+    
+    if (!session.dados) session.dados = {};
+    
+    for (const p of pendientes) {
+        if (p.threadId === session.threadId && p.expiraEn > ahora) {
+            session.dados[p.nombre] = { valor: p.valor, propio: p.propio };
+            huboCambios = true;
+        } else if (p.expiraEn > ahora) {
+            restantes.push(p);
+        } else {
+            huboCambios = true; // Expirado
+        }
+    }
+    
+    if (huboCambios) {
+        fs.writeFileSync(DADOS_PENDIENTES_FILE, JSON.stringify(restantes, null, 2));
+    }
+}
+// =======================================
+
 function renderPanel(session, funciones) {
     const item = session.item;
     const miembros = funciones.cargarMiembros();
-    const interesados = session.interesados.map(i => funciones.aplicarCanonico(i, miembros));
     const icon = utils.ICONOS[item.categoria] || '❓';
+
+    // Ordenar interesados por dado
+    const dados = session.dados || {};
+    const conDado = [];
+    const sinDado = [];
+
+    session.interesados.forEach((nombre, index) => {
+        if (dados[nombre] && dados[nombre].valor) {
+            conDado.push({ nombre, valor: dados[nombre].valor, index });
+        } else {
+            sinDado.push({ nombre, index });
+        }
+    });
+
+    conDado.sort((a, b) => b.valor - a.valor || a.index - b.index);
+    const interesadosOrdenados = [...conDado, ...sinDado].map(obj => {
+        const nombreCanon = funciones.aplicarCanonico(obj.nombre, miembros);
+        if (obj.valor) return `• ${nombreCanon} (🎲 ${obj.valor})`;
+        return `• ${nombreCanon}`;
+    });
 
     let title = `${icon} ${item.cantidad}x ${item.objeto}`;
     const embed = new EmbedBuilder()
         .setDescription(`**Event:** ${item.evento}\n**Category:** ${item.categoria}\n**Amount:** ${item.cantidad}\n**Date:** ${item.fecha}`)
-        .addFields({ name: `Interested (${interesados.length})`, value: interesados.length ? interesados.map(i => `• ${i}`).join('\n') : 'No one yet' });
+        .addFields({ 
+            name: `Interested (${session.interesados.length})`, 
+            value: interesadosOrdenados.length ? interesadosOrdenados.join('\n') : 'No one yet' 
+        });
 
     const cerrada = session.estado === 'cerrada';
     const bloqueada = session.estado === 'bloqueada';
@@ -124,7 +176,7 @@ function renderPanel(session, funciones) {
             embed.setColor(0xFF0000);
         } else {
             embed.setTitle(title);
-            if (interesados.length > item.cantidad) {
+            if (session.interesados.length > item.cantidad) {
                 embed.setColor(0xFFCF00);
             } else {
                 embed.setColor(0x00FF00);
@@ -146,18 +198,18 @@ function renderPanel(session, funciones) {
     );
 
     const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`panel_btn:prioridad:${session.id}`).setLabel('Calculate priority').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`panel_btn:historial:${session.id}`).setLabel('View history').setStyle(ButtonStyle.Primary)
+        new ButtonBuilder().setCustomId(`panel_btn:prioridad:${session.id}`).setLabel('Calcular prioridad').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`panel_btn:historial:${session.id}`).setLabel('Ver historial').setStyle(ButtonStyle.Primary)
     );
 
     const row3 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`panel_btn:editar:${session.id}`).setLabel('Edit').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`panel_btn:editar:${session.id}`).setLabel('Editar').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`panel_btn:logs:${session.id}`).setLabel('Logs').setStyle(ButtonStyle.Secondary)
     );
 
     const row4 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`panel_btn:registrar:${session.id}`).setLabel('Register result').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`panel_btn:cancelar:${session.id}`).setLabel('Cancel auction').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`panel_btn:registrar:${session.id}`).setLabel('Registrar resultado').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`panel_btn:cancelar:${session.id}`).setLabel('Cancelar subasta').setStyle(ButtonStyle.Secondary)
     );
 
     return { embeds: [embed], components: [row1, row2, row3, row4] };
@@ -387,11 +439,14 @@ async function crearPanelEnThread(client, thread, item, funciones, creadoPor) {
             cantidad: item.cantidad
         },
         interesados: [],
+        dados: {},
         estado: 'abierta',
         historial: [{ timestamp: Date.now(), userId: creadoPor, userName: 'Sistema', accion: 'Panel creado por anuncio' }],
         creadoPor,
         createdAt: Date.now()
     };
+
+    aplicarDadosPendientes(session);
 
     subastas[session.id] = session;
     guardarSubastas(subastas);
@@ -516,8 +571,11 @@ function setupPanel(client, funciones) {
                 const session = {
                     id: generarId(), threadId, channelId: interaction.channelId, messageId: null, threadName,
                     item: { fecha, evento, categoria, objeto, cantidad },
-                    interesados: [], estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
+                    interesados: [], dados: {}, estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
                 };
+                
+                aplicarDadosPendientes(session);
+                
                 pushHistorial(session, interaction, 'Panel creado');
                 subastas[session.id] = session;
                 guardarSubastas(subastas);
@@ -1066,17 +1124,24 @@ function setupPanel(client, funciones) {
 
                 await refrescarTodo(client, funciones);
 
+                // Ordenar ganadores: x1 primero, x2 al final
                 const ganadoresExpandidos = [];
+                const ganadoresMultiples = [];
                 for (const g of entrada.ganadores) {
                     const parsed = utils.parsearGanador(g);
-                    for (let i = 0; i < parsed.cantidad; i++) ganadoresExpandidos.push(parsed.nombre);
+                    if (parsed.cantidad > 1) {
+                        for (let i = 0; i < parsed.cantidad; i++) ganadoresMultiples.push(parsed.nombre);
+                    } else {
+                        ganadoresExpandidos.push(parsed.nombre);
+                    }
                 }
+                const ganadoresOrdenados = [...ganadoresExpandidos, ...ganadoresMultiples];
 
-                const ganadoresNumerados = ganadoresExpandidos
+                const ganadoresNumerados = ganadoresOrdenados
                     .map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`)
                     .join('\n');
 
-                const tituloGanadores = ganadoresExpandidos.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
+                const tituloGanadores = ganadoresOrdenados.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
                 let msg = `✅ Resultado registrado: #${entrada.id} · 📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})`;
                 msg += `\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
@@ -1268,8 +1333,11 @@ function setupPanel(client, funciones) {
                     const session = {
                         id: generarId(), threadId: fijo.id, channelId: fijo.id, messageId: null, threadName: fijo.nombre,
                         item: { fecha: f, evento: ev, categoria: cat, objeto: fijo.objeto, cantidad: 1 },
-                        interesados: [], estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
+                        interesados: [], dados: {}, estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
                     };
+                    
+                    aplicarDadosPendientes(session);
+                    
                     pushHistorial(session, interaction, 'Panel creado por Abrir TODAS');
                     subastas[session.id] = session;
                     try {
@@ -1346,8 +1414,11 @@ function setupPanel(client, funciones) {
                 const session = {
                     id: generarId(), threadId, channelId: threadId, messageId: null, threadName: nombre,
                     item: { fecha: f, evento: ev, categoria: cat, objeto: obj, cantidad: cant },
-                    interesados: [], estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
+                    interesados: [], dados: {}, estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
                 };
+                
+                aplicarDadosPendientes(session);
+                
                 pushHistorial(session, interaction, 'Panel creado por Control');
                 subastas[session.id] = session;
                 guardarSubastas(subastas);
