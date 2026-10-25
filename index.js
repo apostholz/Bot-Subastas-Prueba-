@@ -7,7 +7,7 @@ const { parse } = require('csv-parse/sync');
 const utils = require('./utils');
 const logic = require('./logic');
 const { commandsData } = require('./commands');
-const { setupPanel } = require('./panel');
+const { setupPanel, actualizarMensajePanel } = require('./panel');
 
 const pendingActions = new Map();
 function guardarPendiente(tipo, payload, userId) {
@@ -111,7 +111,9 @@ async function asegurarArchivosDesdeGitHub() {
         { local: 'control-boss.js', repo: 'control-boss.js' },
         { local: 'data/control_boss_config.json', repo: 'data/control_boss_config.json' },
         { local: 'data/control_boss_pendientes.json', repo: 'data/control_boss_pendientes.json' },
-        { local: 'data/control_boss_panel.json', repo: 'data/control_boss_panel.json' }
+        { local: 'data/control_boss_panel.json', repo: 'data/control_boss_panel.json' },
+        { local: 'data/dados_pendientes.json', repo: 'data/dados_pendientes.json' },
+        { local: 'data/threads_fijos.json', repo: 'data/threads_fijos.json' }
     ];
 
     for (const a of archivos) {
@@ -147,6 +149,95 @@ async function asegurarArchivosDesdeGitHub() {
         } catch (e) { console.error('Error descargando imágenes:', e.message); }
     }
 }
+
+// ====== LÓGICA DE DADOS ======
+function cargarDadosPendientes() {
+    const f = path.join(__dirname, 'data', 'dados_pendientes.json');
+    if (!fs.existsSync(f)) return [];
+    try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return []; }
+}
+function guardarDadosPendientes(d) {
+    const f = path.join(__dirname, 'data', 'dados_pendientes.json');
+    fs.writeFileSync(f, JSON.stringify(d, null, 2));
+}
+setInterval(() => {
+    const pendientes = cargarDadosPendientes();
+    const ahora = Date.now();
+    const filtrados = pendientes.filter(p => p.expiraEn > ahora);
+    if (filtrados.length !== pendientes.length) guardarDadosPendientes(filtrados);
+}, 60 * 1000);
+
+async function procesarDado(targetUser, authorUser, guild, canalThread, esSlash, funciones) {
+    const subastasFile = path.join(__dirname, 'data', 'subastas_activas.json');
+    const subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8'));
+    
+    let session = Object.values(subastas).find(s => s.threadId === canalThread.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+    
+    const miembros = funciones.cargarMiembros();
+    const nombreCanon = funciones.aplicarCanonico(targetUser.username, miembros);
+    const keyJugador = utils.claveJugador(nombreCanon, miembros);
+    
+    const esLider = esSlash ? (authorUser.id === guild.ownerId || authorUser.permissions.has('Administrator') || authorUser.roles.cache.has(funciones.ROL_LIDER) || authorUser.roles.cache.has(funciones.ROL_HELPER)) : false; 
+    // Nota: para mensajes de texto, la verificación de esLider se hace por roles del member, lo simplificaremos aquí
+    
+    let targetKey = targetUser.id;
+    if (session) {
+        // Buscar si el target está en interesados para usar su nombre exacto
+        const match = session.interesados.find(i => utils.claveJugador(i, miembros) === keyJugador);
+        if (match) targetKey = match;
+    }
+
+    const valor = Math.floor(Math.random() * 50) + 1;
+    
+    if (session) {
+        if (!session.dados) session.dados = {};
+        const dadoActual = session.dados[targetKey];
+        
+        const esMismoTarget = targetUser.id === authorUser.id;
+        
+        if (dadoActual && dadoActual.propio && !esMismoTarget && !esLider) {
+            return { error: `❌ **${nombreCanon}** ya tiró su propio dado (sacó un ${dadoActual.valor}). Solo un líder puede reemplazarlo.` };
+        }
+        
+        session.dados[targetKey] = {
+            valor: valor,
+            propio: esMismoTarget
+        };
+        
+        fs.writeFileSync(subastasFile, JSON.stringify(subastas, null, 2));
+        
+        // Actualizar el panel visual
+        try {
+            const { actualizarMensajePanel } = require('./panel');
+            await actualizarMensajePanel(global.client, session, funciones);
+        } catch (e) { console.error('Error actualizando panel tras dado:', e.message); }
+        
+        return { valor, targetNombre: nombreCanon };
+    } else {
+        const pendientes = cargarDadosPendientes();
+        pendientes.push({
+            threadId: canalThread.id,
+            targetId: targetUser.id,
+            targetKey: targetKey,
+            nombre: nombreCanon,
+            valor: valor,
+            propio: targetUser.id === authorUser.id,
+            expiraEn: Date.now() + 10 * 60 * 1000
+        });
+        guardarDadosPendientes(pendientes);
+        return { valor, targetNombre: nombreCanon, pendiente: true };
+    }
+}
+
+function generarEmbedDado(targetName, valor, esPendiente) {
+    const { EmbedBuilder } = require('discord.js');
+    const embed = new EmbedBuilder()
+        .setColor(0x2B2D31)
+        .setDescription(`✨ **Lanzamiento de dado**\n\n**${targetName}** has rolled a 50-sided dice and got: **${valor}** 🎲`);
+    if (esPendiente) embed.setFooter({ text: '⏳ Se guardará si se abre una subasta en los próximos 10 minutos.' });
+    return embed;
+}
+// =============================
 
 client.on(Events.InteractionCreate, async (interaction) => {
     // 1. Autocompletado
@@ -369,10 +460,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     else if (sub === 'reemplazar-ganador') {
                         const pos = utils.buscarJugadorEnLista(e.ganadores, valor.quitar, miembros);
                         if (pos !== -1) e.ganadores.splice(pos, 1, valor.poner);
+                        // Fix: Eliminar de perdedores si estaba ahí
+                        const posPerd = utils.buscarJugadorEnLista(e.perdedores, valor.poner, miembros);
+                        if (posPerd !== -1) e.perdedores.splice(posPerd, 1);
                     }
                     else if (sub === 'reemplazar-perdedor') {
                         const pos = utils.buscarJugadorEnLista(e.perdedores, valor.quitar, miembros);
                         if (pos !== -1) e.perdedores.splice(pos, 1, valor.poner);
+                        // Fix: Eliminar de ganadores si estaba ahí
+                        const posGan = utils.buscarJugadorEnLista(e.ganadores, valor.poner, miembros);
+                        if (posGan !== -1) e.ganadores.splice(posGan, 1);
                     }
                     else if (sub === 'set') {
                         if (valor.objeto) { e.objeto = valor.objeto; if (!valor.categoria) e.categoria = logic.inferirCategoria(valor.objeto, db); }
@@ -430,7 +527,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (!esConfirm) return interaction.update({ content: '❌ Aviso cancelado.', components: [] });
 
             await interaction.update({ content: '✅ Aviso enviado.', components: [] });
-            await interaction.channel.send(`🔔 Notice for: ${p.payload.menciones.join(', ')}`);
+            await interaction.channel.send(`🔔 Aviso para: ${p.payload.menciones.join(', ')}`);
             return;
         }
 
@@ -469,6 +566,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const miembros = utils.cargarMiembros();
 
     try {
+        if (interaction.commandName === 'dado') {
+            if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Solo funciona en threads.', ephemeral: true });
+            
+            const targetOption = interaction.options.getUser('jugador');
+            const targetUser = targetOption || interaction.user;
+            
+            const res = await procesarDado(targetUser, interaction.user, interaction.guild, interaction.channel, true, funciones);
+            if (res.error) return interaction.reply({ content: res.error, ephemeral: true });
+            
+            const embed = generarEmbedDado(res.targetNombre, res.valor, res.pendiente);
+            return interaction.reply({ embeds: [embed] });
+        }
+
         if (interaction.commandName === 'sync') {
             let cuerpo = `Esta acción fusionará el archivo \`historial.csv\` de GitHub con tu base de datos local, y luego subirá los datos combinados de vuelta a GitHub.\n\n⚠️ **Advertencias:**\n• Si borraste una compra recientemente y no llegó a subirse a GitHub, el /sync podría "resucitarla".\n• Si el archivo en GitHub fue editado manualmente con errores, esos errores se importarán al bot.\n\n¿Estás seguro de que deseas continuar?`;
             return mostrarPreview(interaction, 'Confirmar Sincronización', cuerpo, 'sync', {});
@@ -989,7 +1099,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control de Invasión\n\`/control-boss\` · gestionar anuncios automáticos`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/dado\` · tirar dado para un jugador en la subasta actual\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control de Invasión\n\`/control-boss\` · gestionar anuncios automáticos\n\n**Prefijo:**\n\`!dado\` o \`!dado @Amigo\``,
                 ephemeral: true
             });
         }
@@ -1000,6 +1110,73 @@ client.on(Events.InteractionCreate, async (interaction) => {
             try { interaction.reply({ content: '❌ Error. Revisa los logs.', ephemeral: true }); } catch (e) {}
         }
     }
+});
+
+client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot) return;
+    if (!message.content.toLowerCase().startsWith('!dado')) return;
+    
+    if (!message.channel.isThread()) return message.reply({ content: '❌ Solo funciona en threads.' });
+
+    // Extraer target
+    let targetUser = message.author;
+    let targetName = message.author.username;
+    
+    const args = message.content.slice(5).trim();
+    if (args.length > 0) {
+        // Si menciona a alguien
+        if (message.mentions.members.size > 0) {
+            targetUser = message.mentions.members.first().user;
+            targetName = targetUser.username;
+        } else {
+            // Busca por nombre en la sesión
+            const subastasFile = path.join(__dirname, 'data', 'subastas_activas.json');
+            const subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8'));
+            const session = Object.values(subastas).find(s => s.threadId === message.channel.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+            if (!session) return message.reply({ content: '❌ No hay subasta activa.' });
+            
+            const miembros = utils.cargarMiembros();
+            const keyBuscar = utils.claveJugador(args, miembros);
+            const match = session.interesados.find(i => utils.claveJugador(i, miembros) === keyBuscar);
+            if (!match) return message.reply({ content: `❌ **${args}** no está en la lista de interesados de esta subasta.` });
+            targetName = match;
+            // Crear un mock user temporal para procesarDado
+            targetUser = { id: match, username: match };
+        }
+    }
+
+    const funciones = {
+        cargarDB: utils.cargarDB,
+        guardarDB: utils.guardarDB,
+        sincronizarConGitHub: logic.sincronizarConGitHub,
+        calcularPrioridad: logic.calcularPrioridad,
+        compararPrioridad: logic.compararPrioridad,
+        formatearNombreConCantidad: utils.formatearNombreConCantidad,
+        aplicarCanonico: utils.aplicarCanonico,
+        contarGanador: utils.contarGanador,
+        obtenerNombresUnicos: logic.obtenerNombresUnicos,
+        obtenerObjetosUnicos: logic.obtenerObjetosUnicos,
+        cargarMiembros: utils.cargarMiembros,
+        normalizar: utils.normalizar,
+        fechaHoyArgentina: utils.fechaHoyArgentina,
+        renderPrioridad: logic.renderPrioridad,
+        guardarPendiente: guardarPendiente,
+        formatearPingGanadores: logic.formatearPingGanadores,
+        ROL_LIDER: utils.ROL_LIDER,
+        ROL_HELPER: utils.ROL_HELPER
+    };
+
+    // Verificar si el autor es lider para la regla de reemplazo
+    const esLider = message.member.permissions.has('Administrator') || message.member.roles.cache.has(utils.ROL_LIDER) || message.member.roles.cache.has(utils.ROL_HELPER);
+
+    // Hack rápido para la validación de esLider en procesarDado usando variables globales
+    global.client = client;
+    const res = await procesarDado(targetUser, message.author, message.guild, message.channel, false, funciones);
+    
+    if (res.error) return message.reply({ content: res.error });
+    
+    const embed = generarEmbedDado(res.targetNombre, res.valor, res.pendiente);
+    return message.reply({ embeds: [embed] });
 });
 
 const funciones = {
