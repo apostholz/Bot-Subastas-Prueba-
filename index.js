@@ -4,6 +4,14 @@ const path = require('path');
 const { Client, GatewayIntentBits, Events, REST, Routes, PermissionFlagsBits } = require('discord.js');
 const { parse } = require('csv-parse/sync');
 
+// ESCUDOS GLOBALES ANTI-CRASH
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('⚠️ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('⚠️ Uncaught Exception:', err);
+});
+
 const utils = require('./utils');
 const logic = require('./logic');
 const { commandsData } = require('./commands');
@@ -167,22 +175,24 @@ setInterval(() => {
     if (filtrados.length !== pendientes.length) guardarDadosPendientes(filtrados);
 }, 60 * 1000);
 
-async function procesarDado(targetUser, authorUser, guild, canalThread, esSlash, funciones) {
+async function procesarDado(targetMember, authorMember, guild, canalThread, funciones) {
     const subastasFile = path.join(__dirname, 'data', 'subastas_activas.json');
-    const subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8'));
-    
+    let subastas = {};
+    try { subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8')); } catch {}
+
     let session = Object.values(subastas).find(s => s.threadId === canalThread.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
     
     const miembros = funciones.cargarMiembros();
-    const nombreCanon = funciones.aplicarCanonico(targetUser.username, miembros);
+    const nombreCanon = funciones.aplicarCanonico(targetMember.displayName, miembros);
     const keyJugador = utils.claveJugador(nombreCanon, miembros);
     
-    const esLider = esSlash ? (authorUser.id === guild.ownerId || authorUser.permissions.has('Administrator') || authorUser.roles.cache.has(funciones.ROL_LIDER) || authorUser.roles.cache.has(funciones.ROL_HELPER)) : false; 
-    // Nota: para mensajes de texto, la verificación de esLider se hace por roles del member, lo simplificaremos aquí
+    const esLider = authorMember.id === guild.ownerId || 
+                    authorMember.permissions.has(PermissionFlagsBits.Administrator) || 
+                    authorMember.roles.cache.has(funciones.ROL_LIDER) || 
+                    authorMember.roles.cache.has(funciones.ROL_HELPER);
     
-    let targetKey = targetUser.id;
+    let targetKey = nombreCanon;
     if (session) {
-        // Buscar si el target está en interesados para usar su nombre exacto
         const match = session.interesados.find(i => utils.claveJugador(i, miembros) === keyJugador);
         if (match) targetKey = match;
     }
@@ -193,10 +203,10 @@ async function procesarDado(targetUser, authorUser, guild, canalThread, esSlash,
         if (!session.dados) session.dados = {};
         const dadoActual = session.dados[targetKey];
         
-        const esMismoTarget = targetUser.id === authorUser.id;
+        const esMismoTarget = targetMember.id === authorMember.id;
         
         if (dadoActual && dadoActual.propio && !esMismoTarget && !esLider) {
-            return { error: `❌ **${nombreCanon}** ya tiró su propio dado (sacó un ${dadoActual.valor}). Solo un líder puede reemplazarlo.` };
+            return { error: `❌ **${nombreCanon}** ya tiró su propio dado (sacó un ${dadoActual.valor}). Solo un líder o helper puede reemplazarlo.` };
         }
         
         session.dados[targetKey] = {
@@ -206,376 +216,396 @@ async function procesarDado(targetUser, authorUser, guild, canalThread, esSlash,
         
         fs.writeFileSync(subastasFile, JSON.stringify(subastas, null, 2));
         
-        // Actualizar el panel visual
         try {
             const { actualizarMensajePanel } = require('./panel');
-            await actualizarMensajePanel(global.client, session, funciones);
+            await actualizarMensajePanel(client, session, funciones);
         } catch (e) { console.error('Error actualizando panel tras dado:', e.message); }
         
-        return { valor, targetNombre: nombreCanon };
+        return { valor, targetNombre: nombreCanon, autorNombre: authorMember.displayName, esMismoTarget };
     } else {
         const pendientes = cargarDadosPendientes();
         pendientes.push({
             threadId: canalThread.id,
-            targetId: targetUser.id,
+            targetId: targetMember.id,
             targetKey: targetKey,
             nombre: nombreCanon,
             valor: valor,
-            propio: targetUser.id === authorUser.id,
+            propio: targetMember.id === authorMember.id,
             expiraEn: Date.now() + 10 * 60 * 1000
         });
         guardarDadosPendientes(pendientes);
-        return { valor, targetNombre: nombreCanon, pendiente: true };
+        return { valor, targetNombre: nombreCanon, autorNombre: authorMember.displayName, esMismoTarget, pendiente: true };
     }
 }
 
-function generarEmbedDado(targetName, valor, esPendiente) {
+function generarEmbedDado(res) {
     const { EmbedBuilder } = require('discord.js');
+    const autorStr = res.esMismoTarget ? `**${res.autorNombre}**` : `**${res.autorNombre}** tiró por **${res.targetNombre}**`;
     const embed = new EmbedBuilder()
         .setColor(0x2B2D31)
-        .setDescription(`✨ **Lanzamiento de dado**\n\n**${targetName}** has rolled a 50-sided dice and got: **${valor}** 🎲`);
-    if (esPendiente) embed.setFooter({ text: '⏳ Se guardará si se abre una subasta en los próximos 10 minutos.' });
+        .setDescription(`✨ **Lanzamiento de dado**\n\n${autorStr} ha tirado un dado de 50 caras y sacó: **${res.valor}** 🎲`);
+    if (res.pendiente) embed.setFooter({ text: '⏳ Se guardará si se abre una subasta en los próximos 10 minutos.' });
     return embed;
 }
 // =============================
 
 client.on(Events.InteractionCreate, async (interaction) => {
-    // 1. Autocompletado
-    if (interaction.isAutocomplete()) {
-        const db = utils.cargarDB();
-        const miembros = utils.cargarMiembros();
-        const focused = interaction.options.getFocused(true);
-        const cmd = interaction.commandName;
-
-        if (['panel', 'control', 'control-boss'].includes(cmd)) return;
-
-        if ((cmd === 'sub' || cmd === 'subf' || cmd === 'catalogo') && focused.name === 'objeto') {
-            const objetos = logic.obtenerObjetosUnicos(db);
-            const q = utils.normalizar(focused.value);
-            return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
-        }
-
-        if (cmd === 'objeto' && focused.name === 'nombre') {
-            const objetos = logic.obtenerObjetosUnicos(db);
-            const q = utils.normalizar(focused.value);
-            return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
-        }
-
-        if (cmd === 'editar' && focused.name === 'objeto') {
-            const objetos = logic.obtenerObjetosUnicos(db);
-            const q = utils.normalizar(focused.value);
-            return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
-        }
-
-        if (['jugadores', 'ganadores', 'perdedores', 'quitar', 'poner', 'por'].includes(focused.name)) {
-            const nombres = logic.obtenerNombresUnicos(db, miembros);
-            return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
-        }
-
-        if (focused.name === 'jugador' || (cmd === 'miembros' && focused.name === 'nombre')) {
-            const nombres = logic.obtenerNombresUnicos(db, miembros);
-            if (cmd === 'editar' || cmd === 'miembros') return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
-            const q = utils.normalizar(focused.value);
-            return interaction.respond(nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
-        }
-        return;
-    }
-
-    // 2. Botones (Paginación y Confirmaciones)
-    if (interaction.isButton()) {
-        const cid = interaction.customId;
-
-        if (cid.startsWith('prio_')) {
-            const esPerdedores = cid.startsWith('prio_perdedores_');
-            const id = cid.replace('prio_perdedores_', '').replace('prio_volver_', '');
-            const p = pendingActions.get(id);
-            if (!p || p.tipo !== 'prioridad-page' || p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Sesión expirada.', ephemeral: true });
+    try {
+        // 1. Autocompletado
+        if (interaction.isAutocomplete()) {
             const db = utils.cargarDB();
             const miembros = utils.cargarMiembros();
-            if (esPerdedores) {
-                const { content, components } = logic.renderPerdedores(p.payload, db, miembros);
-                return interaction.update({ content, components });
-            } else {
-                const { content, components } = logic.renderPrioridad(p.payload, miembros);
-                return interaction.update({ content, components });
+            const focused = interaction.options.getFocused(true);
+            const cmd = interaction.commandName;
+
+            if (['panel', 'control', 'control-boss'].includes(cmd)) return;
+
+            if ((cmd === 'sub' || cmd === 'subf' || cmd === 'catalogo' || cmd === 'dado') && focused.name === 'objeto') {
+                const objetos = logic.obtenerObjetosUnicos(db);
+                const q = utils.normalizar(focused.value);
+                return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
             }
-        }
 
-        if (cid.startsWith('dia_')) {
-            const match = cid.match(/^dia_(first|prev|next|last)_(.+)$/);
-            if (!match) return;
-            const accion = match[1];
-            const id = match[2];
-            const p = pendingActions.get(id);
-            if (!p || p.tipo !== 'dia-page' || p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Sesión expirada.', ephemeral: true });
+            if (cmd === 'objeto' && focused.name === 'nombre') {
+                const objetos = logic.obtenerObjetosUnicos(db);
+                const q = utils.normalizar(focused.value);
+                return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
+            }
 
-            let d = new Date(p.payload.fecha + 'T00:00:00Z');
-            if (accion === 'first') d = new Date(p.payload.minDate + 'T00:00:00Z');
-            else if (accion === 'prev') d.setUTCDate(d.getUTCDate() - 1);
-            else if (accion === 'next') d.setUTCDate(d.getUTCDate() + 1);
-            else if (accion === 'last') d = new Date(p.payload.maxDate + 'T00:00:00Z');
+            if (cmd === 'editar' && focused.name === 'objeto') {
+                const objetos = logic.obtenerObjetosUnicos(db);
+                const q = utils.normalizar(focused.value);
+                return interaction.respond(objetos.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
+            }
 
-            const nuevaFecha = d.toISOString().split('T')[0];
-            p.payload.fecha = nuevaFecha;
-            p.expira = Date.now() + 5 * 60 * 1000;
-
-            const miembros = utils.cargarMiembros();
-            const db = utils.cargarDB();
-            const comprasDia = db.compras.filter(c => c.fecha === nuevaFecha);
-
-            let out = `📅 **Compras del ${utils.formatearFecha(nuevaFecha)}**\n`;
-            if (comprasDia.length === 0) out = `📅 No hay compras registradas.`;
-            else {
-                const grupos = {};
-                for (const c of comprasDia) {
-                    const key = utils.normalizar(c.evento || 'Sin evento');
-                    if (!grupos[key]) grupos[key] = { nombre: utils.nombreBonitoEvento(c.evento), items: [] };
-                    grupos[key].items.push(c);
-                }
-                const eventosOrdenados = Object.keys(grupos).sort((a, b) => utils.ordenEvento(a) - utils.ordenEvento(b));
-                for (const key of eventosOrdenados) {
-                    out += `\n**__${grupos[key].nombre}__**\n`;
-                    const lista = grupos[key].items.sort((a, b) => utils.ordenCategoria(key, a.categoria) - utils.ordenCategoria(key, b.categoria));
-                    let bloqueActual = null;
-                    for (const c of lista) {
-                        const bloque = utils.bloqueDeCategoria(key, c.categoria);
-                        if (bloque && bloque !== bloqueActual) { out += `\n**${bloque}**\n`; bloqueActual = bloque; }
-                        out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n   ${lineaGanadores(c.ganadores, miembros)}\n`;
-                        if (c.perdedores.length > 0) out += `   ${lineaPerdedores(c.perdedores, miembros)}\n`;
-                        if (c.notas) out += `   📝 ${c.notas}\n`;
-                    }
+            if (cmd === 'dado' && focused.name === 'jugador') {
+                const subastasFile = path.join(__dirname, 'data', 'subastas_activas.json');
+                let subastas = {};
+                try { subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8')); } catch {}
+                const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+                
+                if (session) {
+                    const q = utils.normalizar(focused.value);
+                    const filtrados = session.interesados.filter(n => utils.normalizar(n).includes(q)).slice(0, 25);
+                    return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
+                } else {
+                    const nombres = logic.obtenerNombresUnicos(db, miembros);
+                    const q = utils.normalizar(focused.value);
+                    return interaction.respond(nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
                 }
             }
-            out += `\n📅 **Compras del ${utils.formatearFecha(nuevaFecha)}**`;
 
-            const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`dia_first_${id}`).setLabel('⏮').setStyle(ButtonStyle.Secondary).setDisabled(nuevaFecha <= p.payload.minDate),
-                new ButtonBuilder().setCustomId(`dia_prev_${id}`).setLabel('◀').setStyle(ButtonStyle.Primary).setDisabled(nuevaFecha <= p.payload.minDate),
-                new ButtonBuilder().setCustomId(`dia_next_${id}`).setLabel('▶').setStyle(ButtonStyle.Primary).setDisabled(nuevaFecha >= p.payload.maxDate),
-                new ButtonBuilder().setCustomId(`dia_last_${id}`).setLabel('⏭').setStyle(ButtonStyle.Secondary).setDisabled(nuevaFecha >= p.payload.maxDate)
-            );
-            return interaction.update({ content: out, components: [row] });
+            if (['jugadores', 'ganadores', 'perdedores', 'quitar', 'poner', 'por'].includes(focused.name)) {
+                const nombres = logic.obtenerNombresUnicos(db, miembros);
+                return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+            }
+
+            if (focused.name === 'jugador' || (cmd === 'miembros' && focused.name === 'nombre')) {
+                const nombres = logic.obtenerNombresUnicos(db, miembros);
+                if (cmd === 'editar' || cmd === 'miembros') return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+                const q = utils.normalizar(focused.value);
+                return interaction.respond(nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
+            }
+            return;
         }
 
-        const pagMatch = cid.match(/^(rank|obj|cat|catg)_(first|prev|next|last)_(.+)$/);
-        if (pagMatch) {
-            const [_, prefijo, accion, id] = pagMatch;
-            const p = pendingActions.get(id);
-            const tipoEsperado = prefijo === 'rank' ? 'ranking' : (prefijo === 'obj' ? 'objeto-page' : (prefijo === 'cat' ? 'categoria-page' : 'catalogo-page'));
-            if (!p || p.tipo !== tipoEsperado || p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Sesión expirada.', ephemeral: true });
+        // 2. Botones (Paginación y Confirmaciones)
+        if (interaction.isButton()) {
+            const cid = interaction.customId;
 
-            const payload = p.payload;
-            let porPagina = prefijo === 'rank' ? (payload.categoria === 'Todas' ? 10 : 15) : (prefijo === 'obj' ? (payload.formato === 'Clasificación' ? 15 : 10) : (prefijo === 'cat' ? 10 : 15));
-            const totalItems = payload.items ? payload.items.length : (payload.jugadores ? payload.jugadores.length : payload.catalogo.length);
-            const totalPaginas = Math.max(1, Math.ceil(totalItems / porPagina));
+            if (cid.startsWith('prio_')) {
+                const esPerdedores = cid.startsWith('prio_perdedores_');
+                const id = cid.replace('prio_perdedores_', '').replace('prio_volver_', '');
+                const p = pendingActions.get(id);
+                if (!p || p.tipo !== 'prioridad-page' || p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Sesión expirada.', ephemeral: true });
+                const db = utils.cargarDB();
+                const miembros = utils.cargarMiembros();
+                if (esPerdedores) {
+                    const { content, components } = logic.renderPerdedores(p.payload, db, miembros);
+                    return interaction.update({ content, components });
+                } else {
+                    const { content, components } = logic.renderPrioridad(p.payload, miembros);
+                    return interaction.update({ content, components });
+                }
+            }
 
-            if (accion === 'first') payload.pagina = 1;
-            else if (accion === 'prev') payload.pagina = Math.max(1, payload.pagina - 1);
-            else if (accion === 'next') payload.pagina = Math.min(totalPaginas, payload.pagina + 1);
-            else if (accion === 'last') payload.pagina = totalPaginas;
-            p.expira = Date.now() + 5 * 60 * 1000;
+            if (cid.startsWith('dia_')) {
+                const match = cid.match(/^dia_(first|prev|next|last)_(.+)$/);
+                if (!match) return;
+                const accion = match[1];
+                const id = match[2];
+                const p = pendingActions.get(id);
+                if (!p || p.tipo !== 'dia-page' || p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Sesión expirada.', ephemeral: true });
 
-            let render;
-            if (tipoEsperado === 'ranking') render = logic.renderRankingPagina(payload);
-            else if (tipoEsperado === 'objeto-page') render = logic.renderObjetoPagina(payload, utils.cargarMiembros());
-            else if (tipoEsperado === 'categoria-page') render = logic.renderCategoriaPagina(payload, utils.cargarMiembros());
-            else if (tipoEsperado === 'catalogo-page') {
-                const totalPaginasCat = Math.max(1, Math.ceil(payload.catalogo.length / 15));
-                const paginaActualCat = Math.min(Math.max(1, payload.pagina), totalPaginasCat);
-                const inicio = (paginaActualCat - 1) * 15;
-                const slice = payload.catalogo.slice(inicio, inicio + 15);
-                let out = `📖 **Catálogo de Objetos** (Página ${paginaActualCat}/${totalPaginasCat})\n\n`;
-                if (slice.length === 0) out += 'No hay objetos guardados.';
+                let d = new Date(p.payload.fecha + 'T00:00:00Z');
+                if (accion === 'first') d = new Date(p.payload.minDate + 'T00:00:00Z');
+                else if (accion === 'prev') d.setUTCDate(d.getUTCDate() - 1);
+                else if (accion === 'next') d.setUTCDate(d.getUTCDate() + 1);
+                else if (accion === 'last') d = new Date(p.payload.maxDate + 'T00:00:00Z');
+
+                const nuevaFecha = d.toISOString().split('T')[0];
+                p.payload.fecha = nuevaFecha;
+                p.expira = Date.now() + 5 * 60 * 1000;
+
+                const miembros = utils.cargarMiembros();
+                const db = utils.cargarDB();
+                const comprasDia = db.compras.filter(c => c.fecha === nuevaFecha);
+
+                let out = `📅 **Compras del ${utils.formatearFecha(nuevaFecha)}**\n`;
+                if (comprasDia.length === 0) out = `📅 No hay compras registradas.`;
                 else {
-                    for (const item of slice) out += `• **${item.objeto}** → ${item.categoria}\n`;
+                    const grupos = {};
+                    for (const c of comprasDia) {
+                        const key = utils.normalizar(c.evento || 'Sin evento');
+                        if (!grupos[key]) grupos[key] = { nombre: utils.nombreBonitoEvento(c.evento), items: [] };
+                        grupos[key].items.push(c);
+                    }
+                    const eventosOrdenados = Object.keys(grupos).sort((a, b) => utils.ordenEvento(a) - utils.ordenEvento(b));
+                    for (const key of eventosOrdenados) {
+                        out += `\n**__${grupos[key].nombre}__**\n`;
+                        const lista = grupos[key].items.sort((a, b) => utils.ordenCategoria(key, a.categoria) - utils.ordenCategoria(key, b.categoria));
+                        let bloqueActual = null;
+                        for (const c of lista) {
+                            const bloque = utils.bloqueDeCategoria(key, c.categoria);
+                            if (bloque && bloque !== bloqueActual) { out += `\n**${bloque}**\n`; bloqueActual = bloque; }
+                            out += `\n#${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n   ${lineaGanadores(c.ganadores, miembros)}\n`;
+                            if (c.perdedores.length > 0) out += `   ${lineaPerdedores(c.perdedores, miembros)}\n`;
+                            if (c.notas) out += `   📝 ${c.notas}\n`;
+                        }
+                    }
                 }
-                render = { content: out, totalPaginas: totalPaginasCat, paginaActual: paginaActualCat };
+                out += `\n📅 **Compras del ${utils.formatearFecha(nuevaFecha)}**`;
+
+                const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`dia_first_${id}`).setLabel('⏮').setStyle(ButtonStyle.Secondary).setDisabled(nuevaFecha <= p.payload.minDate),
+                    new ButtonBuilder().setCustomId(`dia_prev_${id}`).setLabel('◀').setStyle(ButtonStyle.Primary).setDisabled(nuevaFecha <= p.payload.minDate),
+                    new ButtonBuilder().setCustomId(`dia_next_${id}`).setLabel('▶').setStyle(ButtonStyle.Primary).setDisabled(nuevaFecha >= p.payload.maxDate),
+                    new ButtonBuilder().setCustomId(`dia_last_${id}`).setLabel('⏭').setStyle(ButtonStyle.Secondary).setDisabled(nuevaFecha >= p.payload.maxDate)
+                );
+                return interaction.update({ content: out, components: [row] });
             }
 
-            const row = logic.construirBotonesPaginacion(prefijo, id, render.paginaActual, render.totalPaginas);
-            return interaction.update({ content: render.content, components: [row] });
-        }
+            const pagMatch = cid.match(/^(rank|obj|cat|catg)_(first|prev|next|last)_(.+)$/);
+            if (pagMatch) {
+                const [_, prefijo, accion, id] = pagMatch;
+                const p = pendingActions.get(id);
+                const tipoEsperado = prefijo === 'rank' ? 'ranking' : (prefijo === 'obj' ? 'objeto-page' : (prefijo === 'cat' ? 'categoria-page' : 'catalogo-page'));
+                if (!p || p.tipo !== tipoEsperado || p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Sesión expirada.', ephemeral: true });
 
-        if (cid.startsWith('pend_confirm_') || cid.startsWith('pend_cancel_')) {
-            const esConfirm = cid.startsWith('pend_confirm_');
-            const id = cid.replace('pend_confirm_', '').replace('pend_cancel_', '');
-            const p = pendingActions.get(id);
-            if (!p) return interaction.update({ content: '❌ La sesión expiró.', components: [] });
-            if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien ejecutó el comando puede confirmar.', ephemeral: true });
-            if (!esConfirm) {
-                pendingActions.delete(id);
-                return interaction.update({ content: '❌ Acción cancelada.', components: [] });
+                const payload = p.payload;
+                let porPagina = prefijo === 'rank' ? (payload.categoria === 'Todas' ? 10 : 15) : (prefijo === 'obj' ? (payload.formato === 'Clasificación' ? 15 : 10) : (prefijo === 'cat' ? 10 : 15));
+                const totalItems = payload.items ? payload.items.length : (payload.jugadores ? payload.jugadores.length : payload.catalogo.length);
+                const totalPaginas = Math.max(1, Math.ceil(totalItems / porPagina));
+
+                if (accion === 'first') payload.pagina = 1;
+                else if (accion === 'prev') payload.pagina = Math.max(1, payload.pagina - 1);
+                else if (accion === 'next') payload.pagina = Math.min(totalPaginas, payload.pagina + 1);
+                else if (accion === 'last') payload.pagina = totalPaginas;
+                p.expira = Date.now() + 5 * 60 * 1000;
+
+                let render;
+                if (tipoEsperado === 'ranking') render = logic.renderRankingPagina(payload);
+                else if (tipoEsperado === 'objeto-page') render = logic.renderObjetoPagina(payload, utils.cargarMiembros());
+                else if (tipoEsperado === 'categoria-page') render = logic.renderCategoriaPagina(payload, utils.cargarMiembros());
+                else if (tipoEsperado === 'catalogo-page') {
+                    const totalPaginasCat = Math.max(1, Math.ceil(payload.catalogo.length / 15));
+                    const paginaActualCat = Math.min(Math.max(1, payload.pagina), totalPaginasCat);
+                    const inicio = (paginaActualCat - 1) * 15;
+                    const slice = payload.catalogo.slice(inicio, inicio + 15);
+                    let out = `📖 **Catálogo de Objetos** (Página ${paginaActualCat}/${totalPaginasCat})\n\n`;
+                    if (slice.length === 0) out += 'No hay objetos guardados.';
+                    else {
+                        for (const item of slice) out += `• **${item.objeto}** → ${item.categoria}\n`;
+                    }
+                    render = { content: out, totalPaginas: totalPaginasCat, paginaActual: paginaActualCat };
+                }
+
+                const row = logic.construirBotonesPaginacion(prefijo, id, render.paginaActual, render.totalPaginas);
+                return interaction.update({ content: render.content, components: [row] });
             }
 
-            try { await interaction.deferUpdate(); } catch (e) { /* ignorar */ }
+            if (cid.startsWith('pend_confirm_') || cid.startsWith('pend_cancel_')) {
+                const esConfirm = cid.startsWith('pend_confirm_');
+                const id = cid.replace('pend_confirm_', '').replace('pend_cancel_', '');
+                const p = pendingActions.get(id);
+                if (!p) return interaction.update({ content: '❌ La sesión expiró.', components: [] });
+                if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien ejecutó el comando puede confirmar.', ephemeral: true });
+                if (!esConfirm) {
+                    pendingActions.delete(id);
+                    return interaction.update({ content: '❌ Acción cancelada.', components: [] });
+                }
 
-            const db = utils.cargarDB();
-            const miembros = utils.cargarMiembros();
-            let resultado = '';
-            let requiereSync = false;
+                try { await interaction.deferUpdate(); } catch (e) { /* ignorar */ }
 
-            if (p.tipo === 'sub' || p.tipo === 'subf') {
-                const e = { id: db.nextId++, ...p.payload };
-                db.compras.push(e);
-                utils.guardarDB(db);
-                resultado = `✅ Resultado registrado: #${e.id} · 📅 ${utils.formatearFecha(e.fecha)} ${utils.etiquetaDias(e.fecha)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n${lineaGanadores(e.ganadores, miembros)}${e.perdedores.length ? `\n${lineaPerdedores(e.perdedores, miembros)}` : ''}`;
-                requiereSync = true;
-            }
-            else if (p.tipo === 'sync') {
-                const res = await logic.sincronizarConGitHub(true);
-                let msg = res.ok ? `✅ Sync OK\n📤 CSV actualizado con ${res.total} entradas.` : `❌ Sync falló: ${res.motivo}`;
-                if (res.ok && res.agregadas > 0) msg += `\n📥 ${res.agregadas} nuevas absorvidas.`;
-                await logic.sincronizarArchivosJSON();
-                resultado = msg;
-                requiereSync = false;
-            }
-            else if (p.tipo === 'borrar') {
-                const idsABorrar = p.payload.ids;
-                const borradas = [];
-                db.compras = db.compras.filter(c => {
-                    if (idsABorrar.includes(c.id)) { borradas.push(c); return false; }
-                    return true;
-                });
-                utils.guardarDB(db);
-                resultado = `🗑️ Se borraron **${borradas.length}** entradas:\n` + borradas.map(c => `#${c.id} · ${c.cantidad}x ${c.objeto}`).join('\n');
-                requiereSync = true;
-            }
-            else if (p.tipo === 'editar') {
-                const idx = db.compras.findIndex(c => c.id === p.payload.id);
-                if (idx === -1) resultado = '❌ La entrada ya no existe.';
-                else {
-                    const e = db.compras[idx];
-                    const { sub, valor } = p.payload;
-                    const miembros = utils.cargarMiembros();
-                    
-                    if (sub === 'ganador') {
-                        if (valor.accion === 'agregar') for (const j of valor.nombres) e.ganadores.push(j);
-                        else for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.ganadores, j, miembros); if (pos !== -1) e.ganadores.splice(pos, 1); }
-                    }
-                    else if (sub === 'perdedor') {
-                        if (valor.accion === 'agregar') for (const j of valor.nombres) e.perdedores.push(j);
-                        else for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.perdedores, j, miembros); if (pos !== -1) e.perdedores.splice(pos, 1); }
-                    }
-                    else if (sub === 'reemplazar-ganador') {
-                        const pos = utils.buscarJugadorEnLista(e.ganadores, valor.quitar, miembros);
-                        if (pos !== -1) e.ganadores.splice(pos, 1, valor.poner);
-                        // Fix: Eliminar de perdedores si estaba ahí
-                        const posPerd = utils.buscarJugadorEnLista(e.perdedores, valor.poner, miembros);
-                        if (posPerd !== -1) e.perdedores.splice(posPerd, 1);
-                    }
-                    else if (sub === 'reemplazar-perdedor') {
-                        const pos = utils.buscarJugadorEnLista(e.perdedores, valor.quitar, miembros);
-                        if (pos !== -1) e.perdedores.splice(pos, 1, valor.poner);
-                        // Fix: Eliminar de ganadores si estaba ahí
-                        const posGan = utils.buscarJugadorEnLista(e.ganadores, valor.poner, miembros);
-                        if (posGan !== -1) e.ganadores.splice(posGan, 1);
-                    }
-                    else if (sub === 'set') {
-                        if (valor.objeto) { e.objeto = valor.objeto; if (!valor.categoria) e.categoria = logic.inferirCategoria(valor.objeto, db); }
-                        if (valor.cantidad !== undefined && valor.cantidad !== null) e.cantidad = valor.cantidad;
-                        if (valor.categoria) e.categoria = valor.categoria;
-                        if (valor.evento) e.evento = valor.evento;
-                        if (valor.fecha) e.fecha = valor.fecha;
-                    }
-                    else if (sub === 'set-nota') e.notas = valor;
-                    else if (sub === 'borrar-nota') e.notas = '';
-                    
+                const db = utils.cargarDB();
+                const miembros = utils.cargarMiembros();
+                let resultado = '';
+                let requiereSync = false;
+
+                if (p.tipo === 'sub' || p.tipo === 'subf') {
+                    const e = { id: db.nextId++, ...p.payload };
+                    db.compras.push(e);
                     utils.guardarDB(db);
-                    resultado = `✅ Edición aplicada a #${e.id}.\n\n` + renderEntradaProyectada(e, miembros);
+                    resultado = `✅ Resultado registrado: #${e.id} · 📅 ${utils.formatearFecha(e.fecha)} ${utils.etiquetaDias(e.fecha)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n${lineaGanadores(e.ganadores, miembros)}${e.perdedores.length ? `\n${lineaPerdedores(e.perdedores, miembros)}` : ''}`;
                     requiereSync = true;
                 }
-            }
-            else if (p.tipo === 'registro-rapido') {
-                const existentes = new Set(db.compras.map(logic.huella));
-                let agregadas = 0, duplicados = 0;
-                for (const entrada of p.payload.entradas) {
-                    const nueva = { id: db.nextId, ...entrada };
-                    if (existentes.has(logic.huella(nueva))) { duplicados++; continue; }
-                    db.compras.push(nueva);
-                    existentes.add(logic.huella(nueva));
-                    db.nextId++;
-                    agregadas++;
+                else if (p.tipo === 'sync') {
+                    const res = await logic.sincronizarConGitHub(true);
+                    let msg = res.ok ? `✅ Sync OK\n📤 CSV actualizado con ${res.total} entradas.` : `❌ Sync falló: ${res.motivo}`;
+                    if (res.ok && res.agregadas > 0) msg += `\n📥 ${res.agregadas} nuevas absorvidas.`;
+                    await logic.sincronizarArchivosJSON();
+                    resultado = msg;
+                    requiereSync = false;
                 }
-                utils.guardarDB(db);
-                resultado = `✅ **${agregadas}** entradas registradas.`;
-                if (duplicados > 0) resultado += `\n⚠️ ${duplicados} duplicadas ignoradas.`;
-                resultado += `\nTotal en la base: **${db.compras.length}**.`;
-                requiereSync = true;
+                else if (p.tipo === 'borrar') {
+                    const idsABorrar = p.payload.ids;
+                    const borradas = [];
+                    db.compras = db.compras.filter(c => {
+                        if (idsABorrar.includes(c.id)) { borradas.push(c); return false; }
+                        return true;
+                    });
+                    utils.guardarDB(db);
+                    resultado = `🗑️ Se borraron **${borradas.length}** entradas:\n` + borradas.map(c => `#${c.id} · ${c.cantidad}x ${c.objeto}`).join('\n');
+                    requiereSync = true;
+                }
+                else if (p.tipo === 'editar') {
+                    const idx = db.compras.findIndex(c => c.id === p.payload.id);
+                    if (idx === -1) resultado = '❌ La entrada ya no existe.';
+                    else {
+                        const e = db.compras[idx];
+                        const { sub, valor } = p.payload;
+                        const miembros = utils.cargarMiembros();
+                        
+                        if (sub === 'ganador') {
+                            if (valor.accion === 'agregar') for (const j of valor.nombres) e.ganadores.push(j);
+                            else for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.ganadores, j, miembros); if (pos !== -1) e.ganadores.splice(pos, 1); }
+                        }
+                        else if (sub === 'perdedor') {
+                            if (valor.accion === 'agregar') for (const j of valor.nombres) e.perdedores.push(j);
+                            else for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.perdedores, j, miembros); if (pos !== -1) e.perdedores.splice(pos, 1); }
+                        }
+                        else if (sub === 'reemplazar-ganador') {
+                            const pos = utils.buscarJugadorEnLista(e.ganadores, valor.quitar, miembros);
+                            if (pos !== -1) e.ganadores.splice(pos, 1, valor.poner);
+                            const posPerd = utils.buscarJugadorEnLista(e.perdedores, valor.poner, miembros);
+                            if (posPerd !== -1) e.perdedores.splice(posPerd, 1);
+                        }
+                        else if (sub === 'reemplazar-perdedor') {
+                            const pos = utils.buscarJugadorEnLista(e.perdedores, valor.quitar, miembros);
+                            if (pos !== -1) e.perdedores.splice(pos, 1, valor.poner);
+                            const posGan = utils.buscarJugadorEnLista(e.ganadores, valor.poner, miembros);
+                            if (posGan !== -1) e.ganadores.splice(posGan, 1);
+                        }
+                        else if (sub === 'set') {
+                            if (valor.objeto) { e.objeto = valor.objeto; if (!valor.categoria) e.categoria = logic.inferirCategoria(valor.objeto, db); }
+                            if (valor.cantidad !== undefined && valor.cantidad !== null) e.cantidad = valor.cantidad;
+                            if (valor.categoria) e.categoria = valor.categoria;
+                            if (valor.evento) e.evento = valor.evento;
+                            if (valor.fecha) e.fecha = valor.fecha;
+                        }
+                        else if (sub === 'set-nota') e.notas = valor;
+                        else if (sub === 'borrar-nota') e.notas = '';
+                        
+                        utils.guardarDB(db);
+                        resultado = `✅ Edición aplicada a #${e.id}.\n\n` + renderEntradaProyectada(e, miembros);
+                        requiereSync = true;
+                    }
+                }
+                else if (p.tipo === 'registro-rapido') {
+                    const existentes = new Set(db.compras.map(logic.huella));
+                    let agregadas = 0, duplicados = 0;
+                    for (const entrada of p.payload.entradas) {
+                        const nueva = { id: db.nextId, ...entrada };
+                        if (existentes.has(logic.huella(nueva))) { duplicados++; continue; }
+                        db.compras.push(nueva);
+                        existentes.add(logic.huella(nueva));
+                        db.nextId++;
+                        agregadas++;
+                    }
+                    utils.guardarDB(db);
+                    resultado = `✅ **${agregadas}** entradas registradas.`;
+                    if (duplicados > 0) resultado += `\n⚠️ ${duplicados} duplicadas ignoradas.`;
+                    resultado += `\nTotal en la base: **${db.compras.length}**.`;
+                    requiereSync = true;
+                }
+
+                resultado = resultado.trimEnd();
+
+                pendingActions.delete(id);
+                if (requiereSync) {
+                    const syncRes = await logic.sincronizarConGitHub(false);
+                    resultado += textoEstadoSync(syncRes);
+                }
+
+                await interaction.editReply({ content: '✅ Acción completada.', components: [] });
+                await interaction.followUp({ content: resultado, ephemeral: false });
+                return;
             }
 
-            resultado = resultado.trimEnd();
+            if (cid.startsWith('ping_confirm_') || cid.startsWith('ping_cancel_')) {
+                const esConfirm = cid.startsWith('ping_confirm_');
+                const id = cid.replace('ping_confirm_', '').replace('ping_cancel_', '');
+                const p = pendingActions.get(id);
+                if (!p || p.tipo !== 'ping' || p.userId !== interaction.user.id) return interaction.update({ content: '❌ Sesión expirada.', components: [] });
+                
+                pendingActions.delete(id);
+                if (!esConfirm) return interaction.update({ content: '❌ Aviso cancelado.', components: [] });
 
-            pendingActions.delete(id);
-            if (requiereSync) {
-                const syncRes = await logic.sincronizarConGitHub(false);
-                resultado += textoEstadoSync(syncRes);
+                await interaction.update({ content: '✅ Aviso enviado.', components: [] });
+                await interaction.channel.send(`🔔 Aviso para: ${p.payload.menciones.join(', ')}`);
+                return;
             }
 
-            await interaction.editReply({ content: '✅ Acción completada.', components: [] });
-            await interaction.followUp({ content: resultado, ephemeral: false });
             return;
         }
 
-        if (cid.startsWith('ping_confirm_') || cid.startsWith('ping_cancel_')) {
-            const esConfirm = cid.startsWith('ping_confirm_');
-            const id = cid.replace('ping_confirm_', '').replace('ping_cancel_', '');
-            const p = pendingActions.get(id);
-            if (!p || p.tipo !== 'ping' || p.userId !== interaction.user.id) return interaction.update({ content: '❌ Sesión expirada.', components: [] });
-            
-            pendingActions.delete(id);
-            if (!esConfirm) return interaction.update({ content: '❌ Aviso cancelado.', components: [] });
-
-            await interaction.update({ content: '✅ Aviso enviado.', components: [] });
-            await interaction.channel.send(`🔔 Aviso para: ${p.payload.menciones.join(', ')}`);
-            return;
-        }
-
-        return;
-    }
-
-    // 3. Comandos Slash
-    if (!interaction.isChatInputCommand()) return;
-    
-    const comandosAdmin = ['backup', 'sync', 'registro-rapido'];
-    const comandosLider = ['miembros', 'catalogo', 'control-boss'];
-    const comandosHelper = ['borrar', 'editar', 'sub', 'subf'];
-    
-    if (comandosAdmin.includes(interaction.commandName) || comandosLider.includes(interaction.commandName) || comandosHelper.includes(interaction.commandName)) {
-        const esDueño = interaction.guild && interaction.guild.ownerId === interaction.user.id;
-        const tieneLider = interaction.member && interaction.member.roles.cache.has(utils.ROL_LIDER);
-        const tieneHelper = interaction.member && interaction.member.roles.cache.has(utils.ROL_HELPER);
-        const esAdmin = interaction.member && interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+        // 3. Comandos Slash
+        if (!interaction.isChatInputCommand()) return;
         
-        const puedeAdmin = esDueño || esAdmin;
-        const puedeLider = puedeAdmin || tieneLider;
-        const puedeHelper = puedeLider || tieneHelper;
+        const comandosAdmin = ['backup', 'sync', 'registro-rapido'];
+        const comandosLider = ['miembros', 'catalogo', 'control-boss'];
+        const comandosHelper = ['borrar', 'editar', 'sub', 'subf'];
+        
+        if (comandosAdmin.includes(interaction.commandName) || comandosLider.includes(interaction.commandName) || comandosHelper.includes(interaction.commandName)) {
+            const esDueño = interaction.guild && interaction.guild.ownerId === interaction.user.id;
+            const tieneLider = interaction.member && interaction.member.roles.cache.has(utils.ROL_LIDER);
+            const tieneHelper = interaction.member && interaction.member.roles.cache.has(utils.ROL_HELPER);
+            const esAdmin = interaction.member && interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+            
+            const puedeAdmin = esDueño || esAdmin;
+            const puedeLider = puedeAdmin || tieneLider;
+            const puedeHelper = puedeLider || tieneHelper;
 
-        if (comandosAdmin.includes(interaction.commandName) && !puedeAdmin) {
-            return interaction.reply({ content: '❌ No tienes permiso (solo Administradores).', ephemeral: true });
+            if (comandosAdmin.includes(interaction.commandName) && !puedeAdmin) {
+                return interaction.reply({ content: '❌ No tienes permiso (solo Administradores).', ephemeral: true });
+            }
+            if (comandosLider.includes(interaction.commandName) && !puedeLider) {
+                return interaction.reply({ content: '❌ No tienes permiso (solo Líderes/Admins).', ephemeral: true });
+            }
+            if (comandosHelper.includes(interaction.commandName) && !puedeHelper) {
+                return interaction.reply({ content: '❌ No tienes permiso (solo Líderes/Helpers/Admins).', ephemeral: true });
+            }
         }
-        if (comandosLider.includes(interaction.commandName) && !puedeLider) {
-            return interaction.reply({ content: '❌ No tienes permiso (solo Líderes/Admins).', ephemeral: true });
-        }
-        if (comandosHelper.includes(interaction.commandName) && !puedeHelper) {
-            return interaction.reply({ content: '❌ No tienes permiso (solo Líderes/Helpers/Admins).', ephemeral: true });
-        }
-    }
 
-    const db = utils.cargarDB();
-    const miembros = utils.cargarMiembros();
+        const db = utils.cargarDB();
+        const miembros = utils.cargarMiembros();
 
-    try {
         if (interaction.commandName === 'dado') {
             if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Solo funciona en threads.', ephemeral: true });
             
-            const targetOption = interaction.options.getUser('jugador');
-            const targetUser = targetOption || interaction.user;
+            const targetMemberOpt = interaction.options.getMember('jugador');
+            const targetMember = targetMemberOpt || interaction.member;
             
-            const res = await procesarDado(targetUser, interaction.user, interaction.guild, interaction.channel, true, funciones);
+            const funciones = {
+                cargarMiembros: utils.cargarMiembros, ROL_LIDER: utils.ROL_LIDER, ROL_HELPER: utils.ROL_HELPER,
+                normalizar: utils.normalizar, aplicarCanonico: utils.aplicarCanonico
+            };
+            
+            const res = await procesarDado(targetMember, interaction.member, interaction.guild, interaction.channel, funciones);
             if (res.error) return interaction.reply({ content: res.error, ephemeral: true });
             
-            const embed = generarEmbedDado(res.targetNombre, res.valor, res.pendiente);
+            const embed = generarEmbedDado(res);
             return interaction.reply({ embeds: [embed] });
         }
 
@@ -1099,84 +1129,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/dado\` · tirar dado para un jugador en la subasta actual\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control de Invasión\n\`/control-boss\` · gestionar anuncios automáticos\n\n**Prefijo:**\n\`!dado\` o \`!dado @Amigo\``,
+                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/dado\` · tirar dado para un jugador en la subasta actual\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control de Invasión\n\`/control-boss\` · gestionar anuncios automáticos`,
                 ephemeral: true
             });
         }
-
     } catch (err) {
-        console.error(err);
-        if (!interaction.replied) {
-            try { interaction.reply({ content: '❌ Error. Revisa los logs.', ephemeral: true }); } catch (e) {}
-        }
-    }
-});
-
-client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot) return;
-    if (!message.content.toLowerCase().startsWith('!dado')) return;
-    
-    if (!message.channel.isThread()) return message.reply({ content: '❌ Solo funciona en threads.' });
-
-    // Extraer target
-    let targetUser = message.author;
-    let targetName = message.author.username;
-    
-    const args = message.content.slice(5).trim();
-    if (args.length > 0) {
-        // Si menciona a alguien
-        if (message.mentions.members.size > 0) {
-            targetUser = message.mentions.members.first().user;
-            targetName = targetUser.username;
+        if (err.code === 10062) {
+            console.log('⚠️ Interacción caducada ignorada (10062).');
         } else {
-            // Busca por nombre en la sesión
-            const subastasFile = path.join(__dirname, 'data', 'subastas_activas.json');
-            const subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8'));
-            const session = Object.values(subastas).find(s => s.threadId === message.channel.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
-            if (!session) return message.reply({ content: '❌ No hay subasta activa.' });
-            
-            const miembros = utils.cargarMiembros();
-            const keyBuscar = utils.claveJugador(args, miembros);
-            const match = session.interesados.find(i => utils.claveJugador(i, miembros) === keyBuscar);
-            if (!match) return message.reply({ content: `❌ **${args}** no está en la lista de interesados de esta subasta.` });
-            targetName = match;
-            // Crear un mock user temporal para procesarDado
-            targetUser = { id: match, username: match };
+            console.error('❌ Error en interacción:', err);
+            if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+                try { await interaction.reply({ content: '❌ Error. Revisa los logs.', ephemeral: true }); } catch (e) {}
+            }
         }
     }
-
-    const funciones = {
-        cargarDB: utils.cargarDB,
-        guardarDB: utils.guardarDB,
-        sincronizarConGitHub: logic.sincronizarConGitHub,
-        calcularPrioridad: logic.calcularPrioridad,
-        compararPrioridad: logic.compararPrioridad,
-        formatearNombreConCantidad: utils.formatearNombreConCantidad,
-        aplicarCanonico: utils.aplicarCanonico,
-        contarGanador: utils.contarGanador,
-        obtenerNombresUnicos: logic.obtenerNombresUnicos,
-        obtenerObjetosUnicos: logic.obtenerObjetosUnicos,
-        cargarMiembros: utils.cargarMiembros,
-        normalizar: utils.normalizar,
-        fechaHoyArgentina: utils.fechaHoyArgentina,
-        renderPrioridad: logic.renderPrioridad,
-        guardarPendiente: guardarPendiente,
-        formatearPingGanadores: logic.formatearPingGanadores,
-        ROL_LIDER: utils.ROL_LIDER,
-        ROL_HELPER: utils.ROL_HELPER
-    };
-
-    // Verificar si el autor es lider para la regla de reemplazo
-    const esLider = message.member.permissions.has('Administrator') || message.member.roles.cache.has(utils.ROL_LIDER) || message.member.roles.cache.has(utils.ROL_HELPER);
-
-    // Hack rápido para la validación de esLider en procesarDado usando variables globales
-    global.client = client;
-    const res = await procesarDado(targetUser, message.author, message.guild, message.channel, false, funciones);
-    
-    if (res.error) return message.reply({ content: res.error });
-    
-    const embed = generarEmbedDado(res.targetNombre, res.valor, res.pendiente);
-    return message.reply({ embeds: [embed] });
 });
 
 const funciones = {
