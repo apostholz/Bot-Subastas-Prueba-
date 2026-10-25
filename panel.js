@@ -735,12 +735,12 @@ function setupPanel(client, funciones) {
                     const key = utils.claveJugador(nombre, miembros);
 
                     if (accion === 'anotarme') {
-                        if (session.interesados.some(i => utils.claveJugador(i, miembros) === key)) return interaction.editReply({ content: 'ℹ️ Ya estás anotado.' });
+                        if (session.interesados.some(i => utils.claveJugador(i, miembros) === key)) return interaction.editReply({ content: 'ℹ️ You have already joined.' });
                         session.interesados.push(nombre);
                         pushHistorial(session, interaction, 'Se anotó');
                     } else {
                         const idx = session.interesados.findIndex(i => utils.claveJugador(i, miembros) === key);
-                        if (idx === -1) return interaction.editReply({ content: 'ℹ️ No estabas anotado.' });
+                        if (idx === -1) return interaction.editReply({ content: 'ℹ️ You havent joined this auction.' });
                         session.interesados.splice(idx, 1);
                         pushHistorial(session, interaction, 'Se retiró');
                     }
