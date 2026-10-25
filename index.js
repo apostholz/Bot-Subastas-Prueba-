@@ -36,6 +36,11 @@ const client = new Client({
     ]
 });
 
+// ESCUDO ANTI-CRASH PARA EL CLIENTE
+client.on('error', (err) => {
+    console.error('⚠️ Client Error:', err);
+});
+
 client.once(Events.ClientReady, async (c) => {
     console.log(`Bot listo como ${c.user.tag}`);
     logic.leerCSVInicial();
@@ -198,12 +203,11 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
     }
 
     const valor = Math.floor(Math.random() * 50) + 1;
+    const esMismoTarget = targetMember.id === authorMember.id;
     
     if (session) {
         if (!session.dados) session.dados = {};
         const dadoActual = session.dados[targetKey];
-        
-        const esMismoTarget = targetMember.id === authorMember.id;
         
         if (dadoActual && dadoActual.propio && !esMismoTarget && !esLider) {
             return { error: `❌ **${nombreCanon}** ya tiró su propio dado (sacó un ${dadoActual.valor}). Solo un líder o helper puede reemplazarlo.` };
@@ -217,7 +221,6 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
         fs.writeFileSync(subastasFile, JSON.stringify(subastas, null, 2));
         
         try {
-            const { actualizarMensajePanel } = require('./panel');
             await actualizarMensajePanel(client, session, funciones);
         } catch (e) { console.error('Error actualizando panel tras dado:', e.message); }
         
@@ -230,7 +233,7 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
             targetKey: targetKey,
             nombre: nombreCanon,
             valor: valor,
-            propio: targetMember.id === authorMember.id,
+            propio: esMismoTarget,
             expiraEn: Date.now() + 10 * 60 * 1000
         });
         guardarDadosPendientes(pendientes);
