@@ -51,6 +51,8 @@ function cargarPanel() { return cargarJSON(PANEL_FILE, { channelId: null, messag
 function guardarPanel(p) { guardarJSON(PANEL_FILE, p); }
 function cargarSubastas() { const f = path.join(DATA_DIR, 'subastas_activas.json'); return cargarJSON(f, {}); }
 function guardarSubastas(d) { const f = path.join(DATA_DIR, 'subastas_activas.json'); guardarJSON(f, d); }
+function cargarArchivadas() { const f = path.join(DATA_DIR, 'subastas_archivadas.json'); return cargarJSON(f, {}); }
+function guardarArchivadas(d) { const f = path.join(DATA_DIR, 'subastas_archivadas.json'); guardarJSON(f, d); }
 
 function esLiderBoss(member, funciones) {
     if (!member) return false;
@@ -121,16 +123,16 @@ async function publicarImagen(filename) {
 }
 
 async function renderPanelControlBoss(config) {
-    const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Banquete').setColor(0x2B2D31);
+    const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Boss').setColor(0x2B2D31);
     const configurados = config.slots.filter(slotConfigurado);
     
     if (configurados.length === 0) {
-        embed.setDescription('No hay slots configurados. Usá `/control-boss objeto set`.');
+        embed.setDescription('Referencia: (interesados / unidades)\n\nNo hay slots configurados. Usá `/control-boss objeto set`.');
         return { embeds: [embed], components: [] };
     }
 
     const subastas = cargarSubastas();
-    let desc = '';
+    let desc = 'Referencia: (interesados / unidades)\n\n';
     const rows = [];
     let row = new ActionRowBuilder();
 
@@ -152,6 +154,14 @@ async function renderPanelControlBoss(config) {
     }
     embed.setDescription(desc);
     if (row.components.length > 0) rows.push(row);
+
+    // Botones Globales
+    const rowGlobal = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('boss_abrir_todos').setLabel('Abrir TODAS').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('boss_cerrar_todos').setLabel('Cerrar TODAS').setStyle(ButtonStyle.Secondary)
+    );
+    rows.push(rowGlobal);
+
     return { embeds: [embed], components: rows };
 }
 
@@ -210,6 +220,17 @@ async function procesarPendiente(client, pendiente, funciones) {
         pendientes[idx].estado = 'usado';
         guardarPendientes(pendientes);
         await publicarPendientes();
+
+        // ESPERA DE 4 SEGUNDOS
+        await new Promise(resolve => setTimeout(resolve, 4000));
+
+        // Validar que el thread siga existiendo después de la espera
+        try {
+            await thread.fetch();
+        } catch (e) {
+            console.log(`[Boss] El thread fue eliminado antes de crear el panel.`);
+            return;
+        }
 
         const { crearPanelEnThread } = require('./panel');
         await crearPanelEnThread(client, thread, {
@@ -338,10 +359,26 @@ function setupControlBoss(client, funciones) {
                 await interaction.deferReply({ ephemeral: true });
                 const config = cargarConfig();
                 const payload = await renderPanelControlBoss(config);
-                const msg = await interaction.channel.send(payload);
-                guardarPanel({ channelId: interaction.channelId, messageId: msg.id });
-                await publicarPanel();
-                return interaction.editReply({ content: '✅ Panel de Control de Banquete creado/actualizado.' });
+                const panel = cargarPanel();
+                let canal = interaction.channel;
+                let msg = null;
+                
+                if (panel.channelId && panel.messageId) {
+                    try {
+                        const c = await client.channels.fetch(panel.channelId);
+                        msg = await c.messages.fetch(panel.messageId);
+                        canal = c;
+                    } catch { msg = null; }
+                }
+
+                if (msg) {
+                    await msg.edit(payload);
+                } else {
+                    const nuevo = await canal.send(payload);
+                    guardarPanel({ channelId: canal.id, messageId: nuevo.id });
+                    await publicarPanel();
+                }
+                return interaction.editReply({ content: '✅ Panel de Control de Boss actualizado.' });
             }
 
             if (sub === 'estado') {
@@ -380,10 +417,49 @@ function setupControlBoss(client, funciones) {
             confirmaciones.set(id, { userId: interaction.user.id, accion: 'cerrar', sessionId: session.id, slot, threadId: s.threadId, expira: Date.now() + 5 * 60 * 1000 });
             
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`boss_confirm_cerrar:${id}`).setLabel('Sí, cerrar').setStyle(ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId(`boss_confirm_cerrar:${id}`).setLabel('Sí, cerrar y eliminar thread').setStyle(ButtonStyle.Danger),
                 new ButtonBuilder().setCustomId(`boss_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Secondary)
             );
-            return interaction.reply({ content: `⚠️ **¿Cerrar subasta del Slot ${slot} en <#${s.threadId}>?**`, components: [row], ephemeral: true });
+            return interaction.reply({ content: `⚠️ **¿Cerrar subasta del Slot ${slot} y eliminar el thread en <#${s.threadId}>?**`, components: [row], ephemeral: true });
+        }
+
+        if (interaction.isButton() && interaction.customId === 'boss_abrir_todos') {
+            const config = cargarConfig();
+            const disponibles = config.slots.filter(s => slotConfigurado(s) && !s.threadId);
+            
+            if (disponibles.length === 0) return interaction.reply({ content: '❌ No hay slots disponibles para abrir.', ephemeral: true });
+
+            const id = Math.random().toString(36).slice(2, 10);
+            confirmaciones.set(id, { userId: interaction.user.id, accion: 'abrir_todos', disponibles: disponibles.map(s => s.slot), expira: Date.now() + 5 * 60 * 1000 });
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`boss_confirm_abrir_todos:${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`boss_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
+            );
+            return interaction.reply({ content: `⚠️ **¿Abrir anuncios para ${disponibles.length} slot(s)?**`, components: [row], ephemeral: true });
+        }
+
+        if (interaction.isButton() && interaction.customId === 'boss_cerrar_todos') {
+            const config = cargarConfig();
+            const subastas = cargarSubastas();
+            const activos = [];
+            for (const s of config.slots) {
+                if (s.threadId) {
+                    const session = Object.values(subastas).find(x => x.threadId === s.threadId && (x.estado === 'abierta' || x.estado === 'bloqueada'));
+                    if (session) activos.push(s.slot);
+                }
+            }
+            
+            if (activos.length === 0) return interaction.reply({ content: '❌ No hay subastas activas para cerrar.', ephemeral: true });
+
+            const id = Math.random().toString(36).slice(2, 10);
+            confirmaciones.set(id, { userId: interaction.user.id, accion: 'cerrar_todos', activos, expira: Date.now() + 5 * 60 * 1000 });
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`boss_confirm_cerrar_todos:${id}`).setLabel('Sí, cerrar todas').setStyle(ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId(`boss_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Secondary)
+            );
+            return interaction.reply({ content: `⚠️ **¿Cerrar y eliminar las ${activos.length} subastas activas de Boss?**`, components: [row], ephemeral: true });
         }
 
         if (interaction.isModalSubmit() && interaction.customId.startsWith('boss_modal:')) {
@@ -407,85 +483,107 @@ function setupControlBoss(client, funciones) {
             return interaction.reply({ content: txt, components: [row], ephemeral: true });
         }
 
-        if (interaction.isButton() && (interaction.customId.startsWith('boss_confirm_abrir:') || interaction.customId.startsWith('boss_confirm_cerrar:') || interaction.customId.startsWith('boss_cancel:'))) {
-            const esAbrir = interaction.customId.startsWith('boss_confirm_abrir:');
-            const esCerrar = interaction.customId.startsWith('boss_confirm_cerrar:');
+        if (interaction.isButton() && (interaction.customId.startsWith('boss_confirm_') || interaction.customId.startsWith('boss_cancel:'))) {
+            const esCancel = interaction.customId.startsWith('boss_cancel:');
+            const tipo = interaction.customId.split(':')[0].replace('boss_confirm_', '').replace('boss_cancel:', '');
             const id = interaction.customId.split(':')[1];
             const p = confirmaciones.get(id);
+            
             if (!p || p.userId !== interaction.user.id || p.expira < Date.now()) {
                 confirmaciones.delete(id);
                 return interaction.update({ content: '❌ Sesión expirada.', components: [] });
             }
-            if (!esAbrir && !esCerrar) { confirmaciones.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
+            if (esCancel) { confirmaciones.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
             confirmaciones.delete(id);
 
             const config = cargarConfig();
+            const subastas = cargarSubastas();
 
-            if (esCerrar) {
-                const subastas = cargarSubastas();
-                const session = subastas[p.sessionId];
-                if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.update({ content: '❌ La subasta ya no está activa.', components: [] });
-                
-                session.estado = 'cancelada';
-                session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || 'Líder', accion: 'Cancelada desde Panel Boss' });
-                
-                const archivadasF = path.join(DATA_DIR, 'subastas_archivadas.json');
-                const archivadas = cargarJSON(archivadasF, {});
-                archivadas[session.id] = session;
-                guardarJSON(archivadasF, archivadas);
-                
-                delete subastas[session.id];
-                guardarSubastas(subastas);
+            if (tipo === 'abrir' || tipo === 'abrir_todos') {
+                const slotsAAbrir = tipo === 'abrir' ? [p.slot] : p.disponibles;
+                let enviados = 0;
 
-                try {
-                    const canal = await client.channels.fetch(session.channelId);
-                    const msg = await canal.messages.fetch(session.messageId);
-                    await msg.delete();
-                } catch {}
+                for (const slotNum of slotsAAbrir) {
+                    const s = config.slots.find(x => x.slot === slotNum);
+                    if (!s) continue;
+                    
+                    const canal = await client.channels.fetch(config.canalAnunciosId);
+                    const filePath = path.join(IMG_DIR, s.imagen);
+                    if (!fs.existsSync(filePath)) continue;
 
-                const slotObj = config.slots.find(x => x.slot === p.slot);
-                if (slotObj) { slotObj.threadId = null; guardarConfig(config); await publicarConfig(); }
-                
-                await actualizarPanelControlBoss(client);
-                
-                // Refrescar panel de invasión también
-                try {
-                    const { setupPanel } = require('./panel');
-                    // No podemos llamar a refrescarTodo directamente porque no está exportado, pero actualizarPanelControlBoss y el índice se actualizan solos en su intervalo. 
-                    // O podemos forzar vía comando. Por ahora con actualizarPanelControlBoss basta.
-                } catch(e) {}
+                    const attachment = new AttachmentBuilder(filePath);
+                    const msg = await canal.send({ content: s.texto, files: [attachment] });
 
-                return interaction.update({ content: '✅ Subasta cerrada y panel eliminado.', components: [] });
+                    const pendientes = cargarPendientes();
+                    pendientes.push({
+                        id: Math.random().toString(36).slice(2, 10),
+                        messageId: msg.id,
+                        channelId: canal.id,
+                        slot: s.slot,
+                        objeto: s.objeto,
+                        categoria: s.categoria,
+                        cantidad: tipo === 'abrir' ? p.cantidad : 1,
+                        texto: s.texto,
+                        imagen: s.imagen,
+                        creadoPor: interaction.user.id,
+                        creadoEn: Date.now(),
+                        expiraEn: Date.now() + 3 * 60 * 1000,
+                        estado: 'pendiente'
+                    });
+                    guardarPendientes(pendientes);
+                    await publicarPendientes();
+                    enviados++;
+                }
+                return interaction.update({ content: `✅ ${enviados} anuncio(s) enviado(s). Esperando thread(s)...`, components: [] });
             }
 
-            if (esAbrir) {
-                const s = config.slots.find(x => x.slot === p.slot);
-                const canal = await client.channels.fetch(config.canalAnunciosId);
-                const filePath = path.join(IMG_DIR, s.imagen);
-                if (!fs.existsSync(filePath)) return interaction.update({ content: '❌ Falta la imagen local del slot.', components: [] });
+            if (tipo === 'cerrar' || tipo === 'cerrar_todos') {
+                const slotsACerrar = tipo === 'cerrar' ? [p.slot] : p.activos;
+                let cerrados = 0;
 
-                const attachment = new AttachmentBuilder(filePath);
-                const msg = await canal.send({ content: s.texto, files: [attachment] });
+                for (const slotNum of slotsACerrar) {
+                    const s = config.slots.find(x => x.slot === slotNum);
+                    if (!s || !s.threadId) continue;
 
-                const pendientes = cargarPendientes();
-                pendientes.push({
-                    id: Math.random().toString(36).slice(2, 10),
-                    messageId: msg.id,
-                    channelId: canal.id,
-                    slot: p.slot,
-                    objeto: s.objeto,
-                    categoria: s.categoria,
-                    cantidad: p.cantidad,
-                    texto: s.texto,
-                    imagen: s.imagen,
-                    creadoPor: interaction.user.id,
-                    creadoEn: Date.now(),
-                    expiraEn: Date.now() + 3 * 60 * 1000,
-                    estado: 'pendiente'
-                });
-                guardarPendientes(pendientes);
-                await publicarPendientes();
-                return interaction.update({ content: '✅ Anuncio enviado. Esperando thread...', components: [] });
+                    const session = Object.values(subastas).find(x => x.threadId === s.threadId && (x.estado === 'abierta' || x.estado === 'bloqueada'));
+                    if (!session) {
+                        s.threadId = null;
+                        guardarConfig(config);
+                        continue;
+                    }
+
+                    // Cerrar sesión
+                    session.estado = 'cancelada';
+                    session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || 'Líder', accion: 'Cancelada desde Panel Boss' });
+                    
+                    const archivadas = cargarArchivadas();
+                    archivadas[session.id] = session;
+                    guardarArchivadas(archivadas);
+                    
+                    delete subastas[session.id];
+                    guardarSubastas(subastas);
+
+                    // Borrar thread
+                    try {
+                        const thread = await client.channels.fetch(session.threadId);
+                        if (thread) await thread.delete();
+                    } catch (e) { console.error('Error al borrar thread:', e.message); }
+
+                    // Liberar slot
+                    s.threadId = null;
+                    guardarConfig(config);
+                    cerrados++;
+                }
+                
+                await publicarConfig();
+                await actualizarPanelControlBoss(client);
+                
+                try {
+                    const { actualizarIndice } = require('./panel');
+                    await actualizarIndice(client, funciones);
+                } catch (e) {}
+
+                return interaction.update({ content: `✅ ${cerrados} subasta(s) cerrada(s) y thread(s) eliminado(s).`, components: [] });
             }
         }
     });
