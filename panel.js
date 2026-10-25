@@ -649,7 +649,7 @@ function setupPanel(client, funciones) {
                     const accion = interaction.options.getString('accion') || 'añadir';
 
                     if (accion === 'añadir' && session.estado === 'bloqueada' && !esLiderUsuario) {
-                        return interaction.reply({ content: '❌ La subasta está bloqueada. No puedes anotarte.', ephemeral: true });
+                        return interaction.reply({ content: '❌ The auction is locked. You cant join.', ephemeral: true });
                     }
 
                     if (accion === 'quitar') {
@@ -746,7 +746,7 @@ function setupPanel(client, funciones) {
                     }
                     guardarSubastas(subastas);
                     await refrescarTodo(client, funciones);
-                    return interaction.editReply({ content: accion === 'anotarme' ? '✅ Te anotaste.' : '✅ Te retiraste.' });
+                    return interaction.editReply({ content: accion === 'anotarme' ? '✅ You joined.' : '⬅️ You left.' });
                 }
 
                 if (accion === 'prioridad') {
