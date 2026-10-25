@@ -189,7 +189,7 @@ function renderPanel(session, funciones) {
     }
 
     const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`panel_btn:anotarme:${session.id}`).setLabel('Join auction').setStyle(ButtonStyle.Success).setDisabled(bloqueada),
+        new ButtonBuilder().setCustomId(`panel_btn:anotarme:${session.id}`).setLabel('Join Auction').setStyle(ButtonStyle.Success).setDisabled(bloqueada),
         new ButtonBuilder().setCustomId(`panel_btn:retirarme:${session.id}`).setLabel('Leave').setStyle(ButtonStyle.Danger).setDisabled(bloqueada),
         new ButtonBuilder().setCustomId(`panel_btn:bloquear:${session.id}`).setEmoji(bloqueada ? '🔒' : '🔓').setStyle(ButtonStyle.Secondary)
     );
