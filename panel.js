@@ -22,6 +22,7 @@ const ARCHIVADAS_FILE = path.join(DATA_DIR, 'subastas_archivadas.json');
 const INDICE_FILE = path.join(DATA_DIR, 'indice.json');
 const CONTROL_FILE = path.join(DATA_DIR, 'control.json');
 const THREADS_FILE = path.join(DATA_DIR, 'threads_fijos.json');
+const BOSS_CONFIG_FILE = path.join(DATA_DIR, 'control_boss_config.json');
 
 const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos', 'Equipo', 'Accesorios', 'Sin Categoría'];
 const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
@@ -55,6 +56,14 @@ function cargarThreadsFijos() {
 }
 function guardarThreadsFijos(d) { guardarJSON(THREADS_FILE, d); }
 function generarId() { return Math.random().toString(36).slice(2, 10); }
+
+function esThreadBoss(threadId) {
+    if (!fs.existsSync(BOSS_CONFIG_FILE)) return false;
+    try {
+        const config = JSON.parse(fs.readFileSync(BOSS_CONFIG_FILE, 'utf8'));
+        return config.slots.some(s => s.threadId === threadId);
+    } catch { return false; }
+}
 
 function esLider(member, funciones) {
     if (!member) return false;
@@ -97,21 +106,21 @@ function renderPanel(session, funciones) {
 
     let title = `${icon} ${item.cantidad}x ${item.objeto}`;
     const embed = new EmbedBuilder()
-        .setDescription(`**Evento:** ${item.evento}\n**Categoría:** ${item.categoria}\n**Cantidad:** ${item.cantidad}\n**Fecha:** ${item.fecha}`)
-        .addFields({ name: `Interesados / Interested (${interesados.length})`, value: interesados.length ? interesados.map(i => `• ${i}`).join('\n') : 'Nadie aún' });
+        .setDescription(`**Event:** ${item.evento}\n**Category:** ${item.categoria}\n**Amount:** ${item.cantidad}\n**Date:** ${item.fecha}`)
+        .addFields({ name: `Interested (${interesados.length})`, value: interesados.length ? interesados.map(i => `• ${i}`).join('\n') : 'No one yet' });
 
     const cerrada = session.estado === 'cerrada';
     const bloqueada = session.estado === 'bloqueada';
 
     if (cerrada) {
-        embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} ( ✅ Registrado )`);
+        embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} ( ✅ Registered )`);
         embed.setColor(0x95A5A6);
-        const regPor = session.registradoPor || 'Líder';
-        const regFecha = session.fechaRegistro ? new Date(session.fechaRegistro).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : 'Reciente';
-        embed.setFooter({ text: `Subasta registrada por ${regPor} el ${regFecha}` });
+        const regPor = session.registradoPor || 'Leader';
+        const regFecha = session.fechaRegistro ? new Date(session.fechaRegistro).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' }) : 'Recent';
+        embed.setFooter({ text: `Auction registered by ${regPor} on ${regFecha}` });
     } else {
         if (bloqueada) {
-            embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} (🔒Bloqueado )`);
+            embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} (🔒 Locked )`);
             embed.setColor(0xFF0000);
         } else {
             embed.setTitle(title);
@@ -123,7 +132,7 @@ function renderPanel(session, funciones) {
         }
 
         const ultimo = session.historial[session.historial.length - 1];
-        if (ultimo) embed.setFooter({ text: `Últ. mod: ${ultimo.userName} - ${new Date(ultimo.timestamp).toLocaleTimeString('es-AR')}` });
+        if (ultimo) embed.setFooter({ text: `Last mod: ${ultimo.userName} - ${new Date(ultimo.timestamp).toLocaleTimeString('en-US')}` });
     }
 
     if (cerrada) {
@@ -131,24 +140,24 @@ function renderPanel(session, funciones) {
     }
 
     const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`panel_btn:anotarme:${session.id}`).setLabel('Anotarme / Join').setStyle(ButtonStyle.Success).setDisabled(bloqueada),
-        new ButtonBuilder().setCustomId(`panel_btn:retirarme:${session.id}`).setLabel('Retirarme / Leave').setStyle(ButtonStyle.Danger).setDisabled(bloqueada),
+        new ButtonBuilder().setCustomId(`panel_btn:anotarme:${session.id}`).setLabel('Join').setStyle(ButtonStyle.Success).setDisabled(bloqueada),
+        new ButtonBuilder().setCustomId(`panel_btn:retirarme:${session.id}`).setLabel('Leave').setStyle(ButtonStyle.Danger).setDisabled(bloqueada),
         new ButtonBuilder().setCustomId(`panel_btn:bloquear:${session.id}`).setEmoji(bloqueada ? '🔒' : '🔓').setStyle(ButtonStyle.Secondary)
     );
 
     const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`panel_btn:prioridad:${session.id}`).setLabel('Calcular prioridad').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`panel_btn:historial:${session.id}`).setLabel('Ver historial').setStyle(ButtonStyle.Primary)
+        new ButtonBuilder().setCustomId(`panel_btn:prioridad:${session.id}`).setLabel('Calculate priority').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`panel_btn:historial:${session.id}`).setLabel('View history').setStyle(ButtonStyle.Primary)
     );
 
     const row3 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`panel_btn:editar:${session.id}`).setLabel('Editar').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`panel_btn:editar:${session.id}`).setLabel('Edit').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`panel_btn:logs:${session.id}`).setLabel('Logs').setStyle(ButtonStyle.Secondary)
     );
 
     const row4 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`panel_btn:registrar:${session.id}`).setLabel('Registrar resultado').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`panel_btn:cancelar:${session.id}`).setLabel('Cancelar subasta').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`panel_btn:registrar:${session.id}`).setLabel('Register result').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`panel_btn:cancelar:${session.id}`).setLabel('Cancel auction').setStyle(ButtonStyle.Secondary)
     );
 
     return { embeds: [embed], components: [row1, row2, row3, row4] };
@@ -1067,14 +1076,14 @@ function setupPanel(client, funciones) {
                     .map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`)
                     .join('\n');
 
-                const tituloGanadores = ganadoresExpandidos.length === 1 ? '🏆 **Ganador / Winner:**' : '🏆 **Ganadores / Winners:**';
+                const tituloGanadores = ganadoresExpandidos.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
                 let msg = `✅ Resultado registrado: #${entrada.id} · 📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})`;
                 msg += `\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
 
                 if (entrada.perdedores.length > 0) {
                     const perdedoresBase = entrada.perdedores.map(p => funciones.aplicarCanonico(utils.parsearGanador(p).nombre, miembros));
-                    const tituloPerdedores = entrada.perdedores.length === 1 ? '💔 **No ganador / Non-winner:**' : '💔 **No ganadores / Non-winners:**';
+                    const tituloPerdedores = entrada.perdedores.length === 1 ? '💔 **Non-winner:**' : '💔 **Non-winners:**';
                     msg += `\n\n${tituloPerdedores}\n${perdedoresBase.join(', ')}`;
                 }
 
@@ -1136,11 +1145,18 @@ function setupPanel(client, funciones) {
                 const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
                 delete subastas[session.id]; guardarSubastas(subastas);
 
-                try {
-                    const canal = await client.channels.fetch(session.channelId);
-                    const msg = await canal.messages.fetch(session.messageId);
-                    await msg.delete();
-                } catch {}
+                if (esThreadBoss(session.threadId)) {
+                    try {
+                        const thread = await client.channels.fetch(session.threadId);
+                        if (thread) await thread.delete();
+                    } catch {}
+                } else {
+                    try {
+                        const canal = await client.channels.fetch(session.channelId);
+                        const msg = await canal.messages.fetch(session.messageId);
+                        await msg.delete();
+                    } catch {}
+                }
 
                 await refrescarTodo(client, funciones);
                 pendingPanel.delete(id);
@@ -1283,11 +1299,18 @@ function setupPanel(client, funciones) {
                 const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
                 delete subastas[session.id]; guardarSubastas(subastas);
 
-                try {
-                    const canal = await client.channels.fetch(session.channelId);
-                    const msg = await canal.messages.fetch(session.messageId);
-                    await msg.delete();
-                } catch {}
+                if (esThreadBoss(session.threadId)) {
+                    try {
+                        const thread = await client.channels.fetch(session.threadId);
+                        if (thread) await thread.delete();
+                    } catch {}
+                } else {
+                    try {
+                        const canal = await client.channels.fetch(session.channelId);
+                        const msg = await canal.messages.fetch(session.messageId);
+                        await msg.delete();
+                    } catch {}
+                }
 
                 await refrescarTodo(client, funciones);
                 pendingPanel.delete(id);
@@ -1350,11 +1373,18 @@ function setupPanel(client, funciones) {
                         pushHistorial(subastas[id], interaction, 'Cancelada por Control Global');
                         archivadas[id] = subastas[id];
 
-                        try {
-                            const canal = await client.channels.fetch(subastas[id].channelId);
-                            const msg = await canal.messages.fetch(subastas[id].messageId);
-                            await msg.delete();
-                        } catch { /* ignorar */ }
+                        if (esThreadBoss(subastas[id].threadId)) {
+                            try {
+                                const thread = await client.channels.fetch(subastas[id].threadId);
+                                if (thread) await thread.delete();
+                            } catch {}
+                        } else {
+                            try {
+                                const canal = await client.channels.fetch(subastas[id].channelId);
+                                const msg = await canal.messages.fetch(subastas[id].messageId);
+                                await msg.delete();
+                            } catch {}
+                        }
 
                         delete subastas[id];
                         cerradas++;
@@ -1368,4 +1398,4 @@ function setupPanel(client, funciones) {
     });
 }
 
-module.exports = { setupPanel, crearPanelEnThread };
+module.exports = { setupPanel, crearPanelEnThread, actualizarIndice };
