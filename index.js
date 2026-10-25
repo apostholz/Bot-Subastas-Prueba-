@@ -430,7 +430,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (!esConfirm) return interaction.update({ content: '❌ Aviso cancelado.', components: [] });
 
             await interaction.update({ content: '✅ Aviso enviado.', components: [] });
-            await interaction.channel.send(`🔔 Aviso para: ${p.payload.menciones.join(', ')}`);
+            await interaction.channel.send(`🔔 Notice for: ${p.payload.menciones.join(', ')}`);
             return;
         }
 
