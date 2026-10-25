@@ -161,7 +161,10 @@ const commandsData = [
                 .addIntegerOption(o => o.setName('slot').setDescription('Slot 1 a 4').setRequired(true).setMinValue(1).setMaxValue(4)))
             .addSubcommand(sub => sub.setName('lista').setDescription('Listar slots configurados')))
         .addSubcommand(sub => sub.setName('panel').setDescription('Crear/actualizar Panel de Control de Anuncios en este canal'))
-        .addSubcommand(sub => sub.setName('estado').setDescription('Ver estado de anuncios pendientes'))
+        .addSubcommand(sub => sub.setName('estado').setDescription('Ver estado de anuncios pendientes')),
+
+    new SlashCommandBuilder().setName('dado').setDescription('Tirar un dado de 50 caras para un jugador')
+        .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador (opcional)').setRequired(false).setAutocomplete(true))
 ];
 
 module.exports = { commandsData };
