@@ -245,7 +245,7 @@ function generarEmbedDado(res) {
     const { EmbedBuilder } = require('discord.js');
     const autorStr = res.esMismoTarget ? `**${res.autorNombre}**` : `**${res.autorNombre}** tiró por **${res.targetNombre}**`;
     const embed = new EmbedBuilder()
-        .setColor(0x00BFFF)
+        .setColor(0x0000FF)
         .setDescription(`✨ **Lanzamiento de dado**\n\n${autorStr} ha tirado un dado de 50 caras y sacó: **${res.valor}** 🎲`);
     if (res.pendiente) embed.setFooter({ text: '⏳ Se guardará si se abre una subasta en los próximos 10 minutos.' });
     return embed;
