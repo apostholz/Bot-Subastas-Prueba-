@@ -362,11 +362,14 @@ async function actualizarControlPanel(client, funciones) {
         const fijos = cargarThreadsFijos();
         const subastas = cargarSubastas();
 
+        const MAX_FIJOS = 16;
+        const fijosMostrar = fijos.slice(0, MAX_FIJOS);
+
         let desc = 'Referencia: (interesados / unidades)\n\n';
         if (fijos.length === 0) {
             desc += 'No hay threads fijos configurados.';
         } else {
-            fijos.slice(0, 16).forEach((fijo, i) => {
+            fijosMostrar.forEach((fijo, i) => {
                 const session = Object.values(subastas).find(s => s.threadId === fijo.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
                 let estado = '';
                 if (session) {
@@ -376,17 +379,20 @@ async function actualizarControlPanel(client, funciones) {
                 }
                 desc += `• **[${i + 1}]** <#${fijo.id}> — ${estado}\n`;
             });
+
+            if (fijos.length > MAX_FIJOS) {
+                desc += `\n⚠️ Mostrando **${MAX_FIJOS}** de **${fijos.length}** threads fijos.`;
+            }
         }
 
         const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Invasión').setDescription(desc).setColor(0x2B2D31);
 
         const rows = [];
-        const chunks = fijos.slice(0, 16);
-        for (let i = 0; i < chunks.length; i += 4) {
+        for (let i = 0; i < fijosMostrar.length; i += 4) {
             const row = new ActionRowBuilder();
-            for (let j = 0; j < 4 && i + j < chunks.length; j++) {
+            for (let j = 0; j < 4 && i + j < fijosMostrar.length; j++) {
                 const idx = i + j;
-                const fijo = chunks[idx];
+                const fijo = fijosMostrar[idx];
                 const session = Object.values(subastas).find(s => s.threadId === fijo.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
                 const label = `${session ? 'Cerrar' : 'Abrir'} ${idx + 1}`;
                 const style = session ? ButtonStyle.Danger : ButtonStyle.Success;
@@ -396,7 +402,7 @@ async function actualizarControlPanel(client, funciones) {
             rows.push(row);
         }
 
-        if (fijos.length > 0) {
+        if (rows.length < 5) {
             const rowGlobal = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId('control_btn:abrir_todos').setLabel('Abrir TODAS').setStyle(ButtonStyle.Primary),
                 new ButtonBuilder().setCustomId('control_btn:cerrar_todos').setLabel('Cerrar TODAS').setStyle(ButtonStyle.Secondary)
