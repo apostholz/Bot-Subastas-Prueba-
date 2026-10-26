@@ -163,8 +163,11 @@ const commandsData = [
         .addSubcommand(sub => sub.setName('panel').setDescription('Crear/actualizar Panel de Control de Anuncios en este canal'))
         .addSubcommand(sub => sub.setName('estado').setDescription('Ver estado de anuncios pendientes')),
 
-    new SlashCommandBuilder().setName('dado').setDescription('Tirar un dado de 50 caras para la subasta actual')
-        .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador (opcional)').setRequired(false).setAutocomplete(true))
+    new SlashCommandBuilder().setName('dado').setDescription('Tirar un dado de 50 caras en la subasta actual')
+        .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador (opcional)').setRequired(false).setAutocomplete(true)),
+
+    new SlashCommandBuilder().setName('dados').setDescription('Ver la lista de dados tirados en este thread')
+        .addSubcommand(sub => sub.setName('lista').setDescription('Mostrar la lista de dados actualizada'))
 ];
 
 module.exports = { commandsData };
