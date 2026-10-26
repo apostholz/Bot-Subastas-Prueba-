@@ -105,6 +105,7 @@ function aplicarDadosPendientes(session) {
     try { pendientes = JSON.parse(fs.readFileSync(DADOS_PENDIENTES_FILE, 'utf8')); } catch { return; }
     
     const ahora = Date.now();
+    const diezMinutos = 10 * 60 * 1000;
     let huboCambios = false;
     const restantes = [];
     
@@ -112,16 +113,22 @@ function aplicarDadosPendientes(session) {
     
     for (const p of pendientes) {
         if (p.threadId === session.threadId && p.expiraEn > ahora) {
+            // Si el dado tiene más de 10 minutos de antigüedad, no entra al panel y se destruye
+            if (p.creadoEn && (ahora - p.creadoEn > diezMinutos)) {
+                huboCambios = true;
+                continue;
+            }
+            
             if (!session.dados[p.nombre]) {
                 session.dados[p.nombre] = { historial: [], propio: p.propio };
             }
             session.dados[p.nombre].historial.push(p.valor);
             session.dados[p.nombre].propio = p.propio;
-            huboCambios = true;
+            huboCambios = true; // Se transfirió al panel, se borra de pendientes
         } else if (p.expiraEn > ahora) {
             restantes.push(p);
         } else {
-            huboCambios = true;
+            huboCambios = true; // Expirado
         }
     }
     
@@ -145,7 +152,6 @@ function renderPanel(session, funciones) {
             const valorMasReciente = infoDado.historial[infoDado.historial.length - 1];
             conDado.push({ nombre, valor: valorMasReciente, historial: infoDado.historial, index });
         } else if (infoDado && infoDado.valor) {
-            // Compatibilidad con datos viejos
             conDado.push({ nombre, valor: infoDado.valor, historial: [infoDado.valor], index });
         } else {
             sinDado.push({ nombre, index });
