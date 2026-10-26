@@ -1,7 +1,18 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Events, REST, Routes, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const {
+    Client,
+    GatewayIntentBits,
+    Events,
+    REST,
+    Routes,
+    PermissionFlagsBits,
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
+} = require('discord.js');
 const { parse } = require('csv-parse/sync');
 const { randomInt } = require('crypto');
 
@@ -68,7 +79,6 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 function construirBotonesConfirmacion(id) {
-    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
     return new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`pend_confirm_${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`pend_cancel_${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
@@ -279,18 +289,32 @@ function obtenerDatosListaDados(threadId, miembros) {
 function generarEmbedListaDados(threadId, miembros) {
     const lista = obtenerDatosListaDados(threadId, miembros);
 
-    const embed = new EmbedBuilder()
-        .setColor(0xFF1493)
-        .setTitle('🎲 Dice Rolls in this Thread');
+    const embed = new EmbedBuilder().setColor(0xFF1493);
 
+    let desc = '## 🎲 **DICE ROLLS IN THIS THREAD**\n\n';
     if (lista.length === 0) {
-        embed.setDescription('No hay dados registrados.');
-        return embed;
+        desc += 'No hay dados registrados.';
+    } else {
+        const lineas = lista.map((d, i) => {
+            const ultimos = d.historial.slice(-3);
+            const histStr = ultimos.map((v, idx) => idx === ultimos.length - 1 ? `🎲 ${v}` : v).join(' → ');
+            return `${i + 1}. **${d.nombre}**: ${histStr}`;
+        });
+        desc += lineas.join('\n');
     }
 
-    const lineas = lista.map((d, i) => `${i + 1}. **${d.nombre}**: ${d.ultimo}`);
-    embed.setDescription(lineas.join('\n'));
+    if (desc.length > 4000) desc = desc.slice(0, 3990) + '...';
+    embed.setDescription(desc);
     return embed;
+}
+
+function construirBotonCancelarLista() {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('dados_lista_cancelar')
+            .setLabel('⏸️ Pausar refresh')
+            .setStyle(ButtonStyle.Danger)
+    );
 }
 
 async function actualizarMensajeListaDados(client, threadId) {
@@ -302,6 +326,7 @@ async function actualizarMensajeListaDados(client, threadId) {
 
     const miembros = utils.cargarMiembros();
     const embed = generarEmbedListaDados(threadId, miembros);
+    const row = construirBotonCancelarLista();
 
     try {
         const canal = await client.channels.fetch(threadId);
@@ -310,7 +335,7 @@ async function actualizarMensajeListaDados(client, threadId) {
             await msg.delete();
         } catch {}
 
-        const nuevo = await canal.send({ embeds: [embed] });
+        const nuevo = await canal.send({ embeds: [embed], components: [row] });
         entry.messageId = nuevo.id;
         guardarMensajesDados(mensajes);
     } catch (e) {
@@ -423,7 +448,8 @@ setInterval(async () => {
                 } catch {}
 
                 const embed = generarEmbedListaDados(threadId, miembros);
-                const nuevo = await canal.send({ embeds: [embed] });
+                const row = construirBotonCancelarLista();
+                const nuevo = await canal.send({ embeds: [embed], components: [row] });
                 entry.messageId = nuevo.id;
                 cambios = true;
             } catch (e) {
@@ -486,6 +512,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
             }
 
+            if (cmd === 'dados' && focused.name === 'jugador') {
+                const subastasFile = path.join(__dirname, 'data', 'subastas_activas.json');
+                let subastas = {};
+                try { subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8')); } catch {}
+                const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+
+                if (session) {
+                    const q = utils.normalizar(focused.value);
+                    const filtrados = session.interesados.filter(n => utils.normalizar(n).includes(q)).slice(0, 25);
+                    return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
+                } else {
+                    const nombres = logic.obtenerNombresUnicos(db, miembros);
+                    const q = utils.normalizar(focused.value);
+                    return interaction.respond(nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
+                }
+            }
+
             if (['jugadores', 'ganadores', 'perdedores', 'quitar', 'poner', 'por'].includes(focused.name)) {
                 const nombres = logic.obtenerNombresUnicos(db, miembros);
                 return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
@@ -500,9 +543,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
         }
 
-        // 2. Botones (Paginación y Confirmaciones)
+        // 2. Botones
         if (interaction.isButton()) {
             const cid = interaction.customId;
+
+            if (cid === 'dados_lista_cancelar') {
+                const esLider = interaction.member.id === interaction.guild.ownerId ||
+                    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+                    interaction.member.roles.cache.has(utils.ROL_LIDER) ||
+                    interaction.member.roles.cache.has(utils.ROL_HELPER);
+
+                if (!esLider) {
+                    return interaction.reply({ content: '❌ Solo líderes/helpers pueden pausar el refresh.', ephemeral: true });
+                }
+
+                const mensajes = cargarMensajesDados();
+                if (mensajes[interaction.channelId]) {
+                    delete mensajes[interaction.channelId];
+                    guardarMensajesDados(mensajes);
+                }
+
+                await interaction.update({ components: [] });
+                return interaction.followUp({ content: '⏸️ Refresh pausado.', ephemeral: true });
+            }
 
             if (cid.startsWith('prio_')) {
                 const esPerdedores = cid.startsWith('prio_perdedores_');
@@ -567,7 +630,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 out += `\n📅 **Compras del ${utils.formatearFecha(nuevaFecha)}**`;
 
-                const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`dia_first_${id}`).setLabel('⏮').setStyle(ButtonStyle.Secondary).setDisabled(nuevaFecha <= p.payload.minDate),
                     new ButtonBuilder().setCustomId(`dia_prev_${id}`).setLabel('◀').setStyle(ButtonStyle.Primary).setDisabled(nuevaFecha <= p.payload.minDate),
@@ -783,30 +845,98 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const miembros = utils.cargarMiembros();
 
         if (interaction.commandName === 'dados') {
-            if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only works in threads.', ephemeral: true });
+            const sub = interaction.options.getSubcommand();
 
-            const threadId = interaction.channelId;
-            const ahora = Date.now();
-            const mensajes = cargarMensajesDados();
-            const existente = mensajes[threadId];
+            if (sub === 'lista') {
+                if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only works in threads.', ephemeral: true });
 
-            const expiraEn = (existente && existente.expiraEn > ahora)
-                ? existente.expiraEn
-                : ahora + DADOS_LISTA_DURACION;
+                const threadId = interaction.channelId;
+                const ahora = Date.now();
+                const mensajes = cargarMensajesDados();
+                const existente = mensajes[threadId];
 
-            if (existente && existente.messageId) {
-                try {
-                    const msg = await interaction.channel.messages.fetch(existente.messageId);
-                    await msg.delete();
-                } catch {}
+                const expiraEn = (existente && existente.expiraEn > ahora)
+                    ? existente.expiraEn
+                    : ahora + DADOS_LISTA_DURACION;
+
+                if (existente && existente.messageId) {
+                    try {
+                        const msg = await interaction.channel.messages.fetch(existente.messageId);
+                        await msg.delete();
+                    } catch {}
+                }
+
+                const embed = generarEmbedListaDados(threadId, miembros);
+                const row = construirBotonCancelarLista();
+                const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
+
+                mensajes[threadId] = { messageId: msg.id, expiraEn };
+                guardarMensajesDados(mensajes);
+                return;
             }
 
-            const embed = generarEmbedListaDados(threadId, miembros);
-            const msg = await interaction.reply({ embeds: [embed], fetchReply: true });
+            if (sub === 'limpiar-lista') {
+                const esLider = interaction.member.id === interaction.guild.ownerId ||
+                    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+                    interaction.member.roles.cache.has(utils.ROL_LIDER) ||
+                    interaction.member.roles.cache.has(utils.ROL_HELPER);
 
-            mensajes[threadId] = { messageId: msg.id, expiraEn };
-            guardarMensajesDados(mensajes);
-            return;
+                if (!esLider) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
+                if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Solo funciona en threads.', ephemeral: true });
+
+                const tipo = interaction.options.getString('tipo');
+                const jugadorOpt = interaction.options.getString('jugador');
+                if (tipo === 'jugador' && !jugadorOpt) return interaction.reply({ content: '❌ Debés indicar un jugador.', ephemeral: true });
+
+                await interaction.deferReply({ ephemeral: true });
+
+                const threadId = interaction.channelId;
+                const miembros = utils.cargarMiembros();
+
+                let pendientes = cargarDadosPendientes();
+                if (tipo === 'todos') {
+                    pendientes = pendientes.filter(p => p.threadId !== threadId);
+                } else {
+                    const keyJugador = utils.claveJugador(jugadorOpt, miembros);
+                    pendientes = pendientes.filter(p => !(p.threadId === threadId && utils.claveJugador(p.nombre, miembros) === keyJugador));
+                }
+                guardarDadosPendientes(pendientes);
+
+                const subastas = cargarSubastasActivas();
+                const session = Object.values(subastas).find(s => s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+                if (session) {
+                    if (tipo === 'todos') {
+                        session.dados = {};
+                    } else {
+                        const keyJugador = utils.claveJugador(jugadorOpt, miembros);
+                        for (const nombre in session.dados) {
+                            if (utils.claveJugador(nombre, miembros) === keyJugador) {
+                                delete session.dados[nombre];
+                            }
+                        }
+                    }
+                    fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+                    await actualizarMensajePanel(client, session, funciones);
+                }
+
+                const mensajes = cargarMensajesDados();
+                if (mensajes[threadId]) {
+                    try {
+                        const canal = await client.channels.fetch(threadId);
+                        try {
+                            const viejo = await canal.messages.fetch(mensajes[threadId].messageId);
+                            await viejo.delete();
+                        } catch {}
+                        const embed = generarEmbedListaDados(threadId, miembros);
+                        const row = construirBotonCancelarLista();
+                        const nuevo = await canal.send({ embeds: [embed], components: [row] });
+                        mensajes[threadId].messageId = nuevo.id;
+                        guardarMensajesDados(mensajes);
+                    } catch (e) { /* ignorar */ }
+                }
+
+                return interaction.editReply({ content: `✅ Lista limpiada (${tipo === 'todos' ? 'todos' : jugadorOpt}).` });
+            }
         }
 
         if (interaction.commandName === 'dado') {
@@ -1239,7 +1369,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
             const payload = { fecha, visibilidad, minDate, maxDate };
             const id = guardarPendiente('dia-page', payload, interaction.user.id);
-            const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId(`dia_first_${id}`).setLabel('⏮').setStyle(ButtonStyle.Secondary).setDisabled(fecha <= minDate),
                 new ButtonBuilder().setCustomId(`dia_prev_${id}`).setLabel('◀').setStyle(ButtonStyle.Primary).setDisabled(fecha <= minDate),
@@ -1388,7 +1517,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/dado\` · tirar dado para un jugador en la subasta actual\n\`/dados lista\` · ver la lista de dados tirados en el thread\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control de Invasión\n\`/control-boss\` · gestionar anuncios automáticos`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/dado\` · tirar dado para un jugador en la subasta actual\n\`/dados lista\` · ver la lista de dados tirados en el thread\n\`/dados limpiar-lista\` · limpiar dados del thread\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control de Invasión\n\`/control-boss\` · gestionar anuncios automáticos`,
                 ephemeral: true
             });
         }
