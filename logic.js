@@ -7,6 +7,36 @@ const {
 
 const utils = require('./utils');
 
+const ORDEN_VISUAL_CATEGORIAS = [
+    'Emblemas Únicos',
+    'Cajas 20k',
+    'Emblemas Generales',
+    'Equipo',
+    'Accesorios',
+    'Azules',
+    'Box 10k',
+    'Sin Categoría'
+];
+
+const ETIQUETAS_ULTIMO = {
+    'Emblemas Únicos': 'Único',
+    'Cajas 20k': 'Caja 20k',
+    'Emblemas Generales': 'General',
+    'Equipo': 'Equipo',
+    'Accesorios': 'Accesorio',
+    'Azules': 'Azules',
+    'Box 10k': 'Box 10k',
+    'Sin Categoría': 'Sin Categoría'
+};
+
+function ordenarCategoriasVisual(cats) {
+    return [...cats].sort((a, b) => {
+        const ia = ORDEN_VISUAL_CATEGORIAS.indexOf(a);
+        const ib = ORDEN_VISUAL_CATEGORIAS.indexOf(b);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+}
+
 // ====== CSV Y GITHUB ======
 function huella(c) {
     return [c.fecha || '', c.evento || '', c.categoria || '', c.objeto || '', c.cantidad || 0, (c.ganadores || []).join(','), (c.perdedores || []).join(',')].join('|');
@@ -173,6 +203,19 @@ function leerCSVInicial() {
 }
 
 // ====== PRIORIDAD Y RANKING ======
+function obtenerUltimosPorCategoria(jugador, compras, miembros) {
+    const ultimos = {};
+    for (const c of compras) {
+        const n = utils.contarGanador(c.ganadores, jugador, miembros);
+        if (n === 0) continue;
+        if (!c.categoria) continue;
+        if (!ultimos[c.categoria] || c.fecha > ultimos[c.categoria]) {
+            ultimos[c.categoria] = c.fecha;
+        }
+    }
+    return ultimos;
+}
+
 function calcularPrioridad(jugador, categoria, compras, miembros) {
     const pesosCategoria = utils.PESOS[categoria] || {};
     let impacto = 0, unidades7d = 0, historico = 0;
@@ -221,7 +264,14 @@ function calcularPrioridad(jugador, categoria, compras, miembros) {
         if (n > 0 && historicoTotal[c.categoria] !== undefined) historicoTotal[c.categoria] += n;
     }
 
-    return { impacto, unidades7d, historico, desglose, historicoTotal };
+    const afectantes = ordenarCategoriasVisual(obtenerCategoriasAfectantes(categoria));
+    const todosUltimos = obtenerUltimosPorCategoria(jugador, compras, miembros);
+    const ultimos = {};
+    for (const cat of afectantes) {
+        if (todosUltimos[cat]) ultimos[cat] = todosUltimos[cat];
+    }
+
+    return { impacto, unidades7d, historico, desglose, historicoTotal, ultimos };
 }
 
 function compararPrioridad(a, b) {
@@ -333,15 +383,28 @@ function renderPrioridad(payload, miembros) {
     resultados.forEach((r, i) => {
         let desgloseStr = '';
         if (r.unidades7d > 0) {
-            const partes = Object.entries(r.desglose).filter(([_, n]) => n > 0).map(([cat, n]) => `${utils.ABREVIATURAS[cat] || cat}: ${n}`);
+            const cats = ordenarCategoriasVisual(Object.keys(r.desglose).filter(cat => (r.desglose[cat] || 0) > 0));
+            const partes = cats.map(cat => `${utils.ABREVIATURAS[cat] || cat}: ${r.desglose[cat]}`);
             if (partes.length > 0) desgloseStr = ` (${partes.join(', ')})`;
         }
+
         const histPartes = Object.entries(r.historicoTotal).filter(([_, n]) => n > 0).map(([cat, n]) => `${utils.ABREVIATURAS[cat] || cat}: ${n}`);
         const sumaHist = Object.values(r.historicoTotal).reduce((a, b) => a + b, 0);
         const histTotalStr = histPartes.length > 0 ? `Total histórico (${sumaHist}): ${histPartes.join(', ')}` : 'Total histórico: —';
+
         out += `**${i + 1}. ${utils.aplicarCanonico(r.jugador, miembros)}**\n`;
         out += `   Impacto reciente: ${r.impacto.toFixed(2)}\n`;
         out += `   Unidades 7d: ${r.unidades7d}${desgloseStr}\n`;
+
+        if (r.ultimos) {
+            for (const cat of Object.keys(r.ultimos)) {
+                const fecha = r.ultimos[cat];
+                if (!fecha) continue;
+                const label = ETIQUETAS_ULTIMO[cat] || cat;
+                out += `   ${label}: ${utils.etiquetaDias(fecha)}\n`;
+            }
+        }
+
         out += `   Total en categoría: ${r.historico}\n`;
         out += `   ${histTotalStr}\n`;
     });
@@ -541,5 +604,5 @@ module.exports = {
     construirBotonesPaginacion, renderPrioridad, renderPerdedores,
     renderRankingPagina, renderObjetoPagina, renderCategoriaPagina,
     responderLargo, obtenerNombresUnicos, obtenerObjetosUnicos, sugerirNombresMultiples,
-    formatearPingGanadores, huella
+    formatearPingGanadores, huella, obtenerUltimosPorCategoria
 };
