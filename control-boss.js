@@ -23,6 +23,7 @@ const IMG_DIR = path.join(DATA_DIR, 'imagenes', 'anuncios');
 
 const confirmaciones = new Map();
 const enProceso = new Set();
+const slotsEnProceso = new Set();
 
 function asegurarDirs() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -62,6 +63,37 @@ function esLiderBoss(member, funciones) {
 }
 
 function slotConfigurado(s) { return !!(s && s.objeto && s.texto && s.imagen); }
+
+function slotTieneSubastaActiva(slot) {
+    const config = cargarConfig();
+    const s = config.slots.find(x => x.slot === slot);
+    if (!s || !s.threadId) return false;
+    const subastas = cargarSubastas();
+    return Object.values(subastas).some(x =>
+        x.threadId === s.threadId && (x.estado === 'abierta' || x.estado === 'bloqueada')
+    );
+}
+
+function slotTienePendienteActivo(slot) {
+    const ahora = Date.now();
+    return cargarPendientes().some(p =>
+        p.slot === slot && p.estado === 'pendiente' && p.expiraEn > ahora
+    );
+}
+
+function limpiarPendientesViejos() {
+    const ahora = Date.now();
+    const pendientes = cargarPendientes();
+    const filtrados = pendientes.filter(p => {
+        if (p.estado === 'pendiente') return p.expiraEn > ahora;
+        const creado = p.creadoEn || 0;
+        return creado > ahora - 24 * 60 * 60 * 1000;
+    });
+    if (filtrados.length !== pendientes.length) {
+        guardarPendientes(filtrados);
+        publicarPendientes().catch(e => console.error('Error publicando pendientes limpios:', e.message));
+    }
+}
 
 function obtenerEventoPorHora() {
     const ahora = new Date();
@@ -269,7 +301,11 @@ function setupControlBoss(client, funciones) {
     asegurarDirs();
 
     setInterval(() => { reconciliarPendientes(client, funciones).catch(e => console.error('Error reconciliando:', e.message)); }, 30 * 1000);
-    client.once(Events.ClientReady, () => { reconciliarPendientes(client, funciones).catch(e => console.error('Error reconciliando al iniciar:', e.message)); });
+    setInterval(() => { limpiarPendientesViejos(); }, 10 * 60 * 1000);
+    client.once(Events.ClientReady, () => {
+        limpiarPendientesViejos();
+        reconciliarPendientes(client, funciones).catch(e => console.error('Error reconciliando al iniciar:', e.message));
+    });
 
     client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
         if (!newlyCreated) return;
@@ -393,6 +429,9 @@ function setupControlBoss(client, funciones) {
                 const config = cargarConfig();
                 const s = config.slots.find(x => x.slot === slot);
                 if (!slotConfigurado(s)) return interaction.reply({ content: '❌ Slot no configurado.', ephemeral: true });
+                if (slotsEnProceso.has(slot)) return interaction.reply({ content: '⏳ Ese slot ya se está abriendo.', ephemeral: true });
+                if (slotTieneSubastaActiva(slot)) return interaction.reply({ content: '❌ Ese slot ya tiene una subasta activa.', ephemeral: true });
+                if (slotTienePendienteActivo(slot)) return interaction.reply({ content: '⏳ Ese slot ya tiene un anuncio pendiente.', ephemeral: true });
 
                 const modal = new ModalBuilder().setCustomId(`boss_modal:${slot}`).setTitle(`Abrir Slot ${slot}`);
                 modal.addComponents(new ActionRowBuilder().addComponents(
@@ -409,7 +448,13 @@ function setupControlBoss(client, funciones) {
 
                 const subastas = cargarSubastas();
                 const session = Object.values(subastas).find(x => x.threadId === s.threadId && (x.estado === 'abierta' || x.estado === 'bloqueada'));
-                if (!session) return interaction.reply({ content: '❌ No hay subasta activa en este thread.', ephemeral: true });
+                if (!session) {
+                    s.threadId = null;
+                    guardarConfig(config);
+                    await publicarConfig();
+                    await actualizarPanelControlBoss(client);
+                    return interaction.reply({ content: 'ℹ️ No hay subasta activa. Se limpió el thread viejo del slot.', ephemeral: true });
+                }
 
                 const id = Math.random().toString(36).slice(2, 10);
                 confirmaciones.set(id, { userId: interaction.user.id, accion: 'cerrar', sessionId: session.id, slot, threadId: s.threadId, expira: Date.now() + 5 * 60 * 1000 });
@@ -423,7 +468,20 @@ function setupControlBoss(client, funciones) {
 
             if (interaction.isButton() && interaction.customId === 'boss_abrir_todos') {
                 const config = cargarConfig();
-                const disponibles = config.slots.filter(s => slotConfigurado(s) && !s.threadId);
+                const subastas = cargarSubastas();
+                const disponibles = [];
+                let omitidos = 0;
+
+                for (const s of config.slots) {
+                    if (!slotConfigurado(s)) continue;
+                    if (slotsEnProceso.has(s.slot)) { omitidos++; continue; }
+                    if (slotTienePendienteActivo(s.slot)) { omitidos++; continue; }
+                    if (s.threadId) {
+                        const activa = Object.values(subastas).find(x => x.threadId === s.threadId && (x.estado === 'abierta' || x.estado === 'bloqueada'));
+                        if (activa) { omitidos++; continue; }
+                    }
+                    disponibles.push(s);
+                }
                 
                 if (disponibles.length === 0) return interaction.reply({ content: '❌ No hay slots disponibles para abrir.', ephemeral: true });
 
@@ -434,7 +492,8 @@ function setupControlBoss(client, funciones) {
                     new ButtonBuilder().setCustomId(`boss_confirm_abrir_todos:${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
                     new ButtonBuilder().setCustomId(`boss_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
                 );
-                return interaction.reply({ content: `⚠️ **¿Abrir anuncios para ${disponibles.length} slot(s)?**`, components: [row], ephemeral: true });
+                const extra = omitidos > 0 ? `\nℹ️ Se omitirán ${omitidos} slot(s) ocupados o en proceso.` : '';
+                return interaction.reply({ content: `⚠️ **¿Abrir anuncios para ${disponibles.length} slot(s)?**${extra}`, components: [row], ephemeral: true });
             }
 
             if (interaction.isButton() && interaction.customId === 'boss_cerrar_todos') {
@@ -466,6 +525,9 @@ function setupControlBoss(client, funciones) {
                 const s = config.slots.find(x => x.slot === slot);
                 if (!slotConfigurado(s)) return interaction.reply({ content: '❌ Slot no configurado.', ephemeral: true });
                 if (!config.canalAnunciosId) return interaction.reply({ content: '❌ No hay canal de anuncios configurado.', ephemeral: true });
+                if (slotsEnProceso.has(slot)) return interaction.reply({ content: '⏳ Ese slot ya se está abriendo.', ephemeral: true });
+                if (slotTieneSubastaActiva(slot)) return interaction.reply({ content: '❌ Ese slot ya tiene una subasta activa.', ephemeral: true });
+                if (slotTienePendienteActivo(slot)) return interaction.reply({ content: '⏳ Ese slot ya tiene un anuncio pendiente.', ephemeral: true });
 
                 const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10);
                 if (isNaN(cant) || cant < 1) return interaction.reply({ content: '❌ Cantidad inválida.', ephemeral: true });
@@ -499,7 +561,6 @@ function setupControlBoss(client, funciones) {
                 }
                 confirmaciones.delete(id);
 
-                // Defer update para evitar el error 10062
                 try { await interaction.deferUpdate(); } catch (e) {}
 
                 const config = cargarConfig();
@@ -508,40 +569,50 @@ function setupControlBoss(client, funciones) {
                 if (tipo === 'abrir' || tipo === 'abrir_todos') {
                     const slotsAAbrir = tipo === 'abrir' ? [p.slot] : p.disponibles;
                     let enviados = 0;
+                    let omitidos = 0;
 
                     for (const slotNum of slotsAAbrir) {
                         const s = config.slots.find(x => x.slot === slotNum);
-                        if (!s) continue;
-                        
-                        const canal = await client.channels.fetch(config.canalAnunciosId);
-                        const filePath = path.join(IMG_DIR, s.imagen);
-                        if (!fs.existsSync(filePath)) continue;
+                        if (!s) { omitidos++; continue; }
+                        if (slotsEnProceso.has(slotNum)) { omitidos++; continue; }
+                        if (slotTieneSubastaActiva(slotNum) || slotTienePendienteActivo(slotNum)) { omitidos++; continue; }
 
-                        const attachment = new AttachmentBuilder(filePath);
-                        const msg = await canal.send({ content: s.texto, files: [attachment] });
+                        slotsEnProceso.add(slotNum);
+                        try {
+                            const canal = await client.channels.fetch(config.canalAnunciosId);
+                            const filePath = path.join(IMG_DIR, s.imagen);
+                            if (!fs.existsSync(filePath)) { omitidos++; continue; }
 
-                        const pendientes = cargarPendientes();
-                        pendientes.push({
-                            id: Math.random().toString(36).slice(2, 10),
-                            messageId: msg.id,
-                            channelId: canal.id,
-                            slot: s.slot,
-                            objeto: s.objeto,
-                            categoria: s.categoria,
-                            cantidad: tipo === 'abrir' ? p.cantidad : 1,
-                            texto: s.texto,
-                            imagen: s.imagen,
-                            creadoPor: interaction.user.id,
-                            creadoEn: Date.now(),
-                            expiraEn: Date.now() + 3 * 60 * 1000,
-                            estado: 'pendiente'
-                        });
-                        guardarPendientes(pendientes);
-                        await publicarPendientes();
-                        enviados++;
+                            const attachment = new AttachmentBuilder(filePath);
+                            const msg = await canal.send({ content: s.texto, files: [attachment] });
+
+                            const pendientes = cargarPendientes();
+                            pendientes.push({
+                                id: Math.random().toString(36).slice(2, 10),
+                                messageId: msg.id,
+                                channelId: canal.id,
+                                slot: s.slot,
+                                objeto: s.objeto,
+                                categoria: s.categoria,
+                                cantidad: tipo === 'abrir' ? p.cantidad : 1,
+                                texto: s.texto,
+                                imagen: s.imagen,
+                                creadoPor: interaction.user.id,
+                                creadoEn: Date.now(),
+                                expiraEn: Date.now() + 3 * 60 * 1000,
+                                estado: 'pendiente'
+                            });
+                            guardarPendientes(pendientes);
+                            await publicarPendientes();
+                            enviados++;
+                        } finally {
+                            slotsEnProceso.delete(slotNum);
+                        }
                     }
                     try {
-                        await interaction.editReply({ content: `✅ ${enviados} anuncio(s) enviado(s). Esperando thread(s)...`, components: [] });
+                        let content = `✅ ${enviados} anuncio(s) enviado(s). Esperando thread(s)...`;
+                        if (omitidos > 0) content += `\nℹ️ ${omitidos} slot(s) omitidos por estar ocupados o en proceso.`;
+                        await interaction.editReply({ content, components: [] });
                     } catch(e) {}
                     return;
                 }
