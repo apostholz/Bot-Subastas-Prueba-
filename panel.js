@@ -112,7 +112,11 @@ function aplicarDadosPendientes(session) {
     
     for (const p of pendientes) {
         if (p.threadId === session.threadId && p.expiraEn > ahora) {
-            session.dados[p.nombre] = { valor: p.valor, propio: p.propio };
+            if (!session.dados[p.nombre]) {
+                session.dados[p.nombre] = { historial: [], propio: p.propio };
+            }
+            session.dados[p.nombre].historial.push(p.valor);
+            session.dados[p.nombre].propio = p.propio;
             huboCambios = true;
         } else if (p.expiraEn > ahora) {
             restantes.push(p);
@@ -136,8 +140,13 @@ function renderPanel(session, funciones) {
     const sinDado = [];
 
     session.interesados.forEach((nombre, index) => {
-        if (dados[nombre] && dados[nombre].valor) {
-            conDado.push({ nombre, valor: dados[nombre].valor, index });
+        const infoDado = dados[nombre];
+        if (infoDado && infoDado.historial && infoDado.historial.length > 0) {
+            const valorMasReciente = infoDado.historial[infoDado.historial.length - 1];
+            conDado.push({ nombre, valor: valorMasReciente, historial: infoDado.historial, index });
+        } else if (infoDado && infoDado.valor) {
+            // Compatibilidad con datos viejos
+            conDado.push({ nombre, valor: infoDado.valor, historial: [infoDado.valor], index });
         } else {
             sinDado.push({ nombre, index });
         }
@@ -146,7 +155,11 @@ function renderPanel(session, funciones) {
     conDado.sort((a, b) => b.valor - a.valor || a.index - b.index);
     const interesadosOrdenados = [...conDado, ...sinDado].map(obj => {
         const nombreCanon = funciones.aplicarCanonico(obj.nombre, miembros);
-        if (obj.valor) return `• ${nombreCanon} (🎲 ${obj.valor})`;
+        if (obj.historial && obj.historial.length > 0) {
+            const ultimos = obj.historial.slice(-3);
+            const histStr = ultimos.map((v, i) => i === ultimos.length - 1 ? `🎲 ${v}` : v).join(' → ');
+            return `• ${nombreCanon} ( ${histStr} )`;
+        }
         return `• ${nombreCanon}`;
     });
 
@@ -740,7 +753,7 @@ function setupPanel(client, funciones) {
                         pushHistorial(session, interaction, 'Se anotó');
                     } else {
                         const idx = session.interesados.findIndex(i => utils.claveJugador(i, miembros) === key);
-                        if (idx === -1) return interaction.editReply({ content: 'ℹ️ You havent joined this auction.' });
+                        if (idx === -1) return interaction.editReply({ content: "ℹ️ You haven't joined this auction." });
                         session.interesados.splice(idx, 1);
                         pushHistorial(session, interaction, 'Se retiró');
                     }
