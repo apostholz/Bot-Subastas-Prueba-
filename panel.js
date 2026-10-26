@@ -601,8 +601,8 @@ function setupPanel(client, funciones) {
                 }
 
                 if (sub === 'cancelar') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
-                    if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Solo en threads.', ephemeral: true });
+                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Only leaders/staff.', ephemeral: true });
+                    if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only in threads.', ephemeral: true });
                     const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
                     if (!session) return interaction.reply({ content: '❌ No hay panel activo.', ephemeral: true });
 
@@ -614,7 +614,7 @@ function setupPanel(client, funciones) {
                     return interaction.reply({ content: '⚠️ **¿Cancelar esta subasta y eliminar el panel?**', components: [row], ephemeral: true });
                 }
 
-                if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Solo en threads.', ephemeral: true });
+                if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only in threads.', ephemeral: true });
                 const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
                 if (!session) return interaction.reply({ content: '❌ No hay panel activo.', ephemeral: true });
 
@@ -653,7 +653,7 @@ function setupPanel(client, funciones) {
                     }
 
                     if (accion === 'quitar') {
-                        if (!esLiderUsuario) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
+                        if (!esLiderUsuario) return interaction.reply({ content: '❌ Only leaders/staff.', ephemeral: true });
                         const miembros = funciones.cargarMiembros();
                         const canon = funciones.aplicarCanonico(jugadorRaw, miembros);
                         const idx = session.interesados.findIndex(i => utils.claveJugador(i, miembros) === utils.claveJugador(canon, miembros));
@@ -670,7 +670,7 @@ function setupPanel(client, funciones) {
 
             if (interaction.isChatInputCommand() && interaction.commandName === 'control') {
                 const sub = interaction.options.getSubcommand();
-                if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
+                if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Only leaders/staff.', ephemeral: true });
 
                 if (sub === 'agregar') {
                     const tId = interaction.options.getChannel('canal')?.id || interaction.channelId;
@@ -719,7 +719,7 @@ function setupPanel(client, funciones) {
                 const esLiderUsuario = esLider(interaction.member, funciones);
 
                 if (accion === 'bloquear') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Solo líderes/helpers pueden bloquear la subasta.', ephemeral: true });
+                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Only leaders/staff can lock the auction.', ephemeral: true });
                     session.estado = session.estado === 'abierta' ? 'bloqueada' : 'abierta';
                     pushHistorial(session, interaction, session.estado === 'abierta' ? 'Subasta desbloqueada' : 'Subasta bloqueada');
                     guardarSubastas(subastas);
@@ -792,7 +792,7 @@ function setupPanel(client, funciones) {
                 }
 
                 if (accion === 'registrar') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
+                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Only staff/leaders.', ephemeral: true });
                     if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
 
                     const resultados = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
@@ -810,7 +810,7 @@ function setupPanel(client, funciones) {
                 }
 
                 if (accion === 'cancelar') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
+                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Only leaders/staff.', ephemeral: true });
                     const id = guardarPendientePanel('cancelar_subasta', { sessionId: session.id }, interaction.user.id);
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, cancelar y eliminar').setStyle(ButtonStyle.Danger),
@@ -952,7 +952,7 @@ function setupPanel(client, funciones) {
                     return interaction.showModal(modal);
                 }
                 if (campo === 'quitar_interesado') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
+                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Only leaders/staff.', ephemeral: true });
                     if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados para quitar.', ephemeral: true });
                     const opciones = session.interesados.slice(0, 25).map(j => ({ label: funciones.aplicarCanonico(j, funciones.cargarMiembros()), value: j }));
                     const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`panel_sel_quitar:${sessionId}`).setPlaceholder('Elegí a quién quitar').addOptions(opciones));
