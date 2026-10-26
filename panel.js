@@ -25,7 +25,7 @@ const THREADS_FILE = path.join(DATA_DIR, 'threads_fijos.json');
 const BOSS_CONFIG_FILE = path.join(DATA_DIR, 'control_boss_config.json');
 const DADOS_PENDIENTES_FILE = path.join(DATA_DIR, 'dados_pendientes.json');
 
-const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos', 'Equipo', 'Accesorios', 'Sin Categoría'];
+const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos', 'Equipo', 'Accesorios', 'Sin Categoría', 'Azules', 'Box 10k'];
 const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
 
 const pendingPanel = new Map();
