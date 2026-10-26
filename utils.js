@@ -166,10 +166,40 @@ function filtrarPorPeriodo(compras, periodo) {
 }
 
 // ====== CATEGORÍAS Y EVENTOS ======
-const CATEGORIAS = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos', 'Equipo', 'Accesorios', 'Sin Categoría'];
+const CATEGORIAS = [
+    'Cajas 20k',
+    'Emblemas Generales',
+    'Emblemas Únicos',
+    'Equipo',
+    'Accesorios',
+    'Sin Categoría',
+    'Azules',
+    'Box 10k'
+];
 const CATEGORIAS_TOTAL = CATEGORIAS;
-const ABREVIATURAS = { 'Cajas 20k': '20k', 'Emblemas Generales': 'Gen', 'Emblemas Únicos': 'Únicos', 'Equipo': 'Eq', 'Accesorios': 'Acc', 'Sin Categoría': '?' };
-const ICONOS = { 'Cajas 20k': '📦', 'Emblemas Generales': '💠', 'Emblemas Únicos': '💎', 'Equipo': '⚔️', 'Accesorios': '💍', 'Sin Categoría': '❓' };
+
+const ABREVIATURAS = {
+    'Cajas 20k': '20k',
+    'Emblemas Generales': 'Gen',
+    'Emblemas Únicos': 'Únicos',
+    'Equipo': 'Eq',
+    'Accesorios': 'Acc',
+    'Sin Categoría': '?',
+    'Azules': 'Az',
+    'Box 10k': 'B10'
+};
+
+const ICONOS = {
+    'Cajas 20k': '📦',
+    'Emblemas Generales': '💠',
+    'Emblemas Únicos': '💎',
+    'Equipo': '⚔️',
+    'Accesorios': '💍',
+    'Sin Categoría': '❓',
+    'Azules': '🔵',
+    'Box 10k': '📦'
+};
+
 const OBJETOS_PROHIBIDOS = ['Combatiente', 'Arquero gnoll'];
 
 const PESOS = {
@@ -177,7 +207,9 @@ const PESOS = {
     'Cajas 20k': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 0.4 },
     'Emblemas Generales': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 1 },
     'Equipo': { 'Equipo': 1.0, 'Accesorios': 1.5, 'Emblemas Únicos': 1.5 },
-    'Accesorios': { 'Accesorios': 1.5, 'Equipo': 0.5, 'Emblemas Únicos': 1.5 }
+    'Accesorios': { 'Accesorios': 1.5, 'Equipo': 0.5, 'Emblemas Únicos': 1.5 },
+    'Azules': { 'Azules': 1, 'Box 10k': 1 },
+    'Box 10k': { 'Box 10k': 1, 'Azules': 1 }
 };
 
 function getFactorTemporal(dias) {
@@ -204,7 +236,9 @@ function ordenEvento(evento) {
 }
 function ordenCategoria(evento, categoria) {
     const esBanquete = normalizar(evento).includes('banquete');
-    const orden = esBanquete ? ['Equipo', 'Accesorios', 'Emblemas Únicos', 'Emblemas Generales'] : ['Cajas 20k', 'Emblemas Únicos', 'Emblemas Generales', 'Equipo', 'Accesorios'];
+    const orden = esBanquete
+        ? ['Equipo', 'Accesorios', 'Emblemas Únicos', 'Emblemas Generales']
+        : ['Cajas 20k', 'Emblemas Únicos', 'Emblemas Generales', 'Equipo', 'Accesorios'];
     const idx = orden.indexOf(categoria);
     return idx === -1 ? 999 : idx;
 }
