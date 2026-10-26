@@ -30,7 +30,7 @@ const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
 
 const pendingPanel = new Map();
 let refrescandoPaneles = false;
-let moviendoPaneles = false;
+let procesandoPaneles = false;
 
 function cargarJSON(file, def) {
     if (!fs.existsSync(file)) return def;
@@ -305,15 +305,22 @@ async function actualizarMensajePanel(client, session, funciones) {
         await msg.edit({ embeds, components });
     } catch (e) {
         if (e.code === 10008) {
+            const subastas = cargarSubastas();
+            const actual = subastas[session.id];
+            if (actual && actual.messageId && actual.messageId !== session.messageId) {
+                session.messageId = actual.messageId;
+                return;
+            }
+
             console.log(`[Panel] Mensaje no encontrado en <#${session.threadId}>. Recreando...`);
             try {
                 const canal = await client.channels.fetch(session.channelId);
                 const { embeds, components } = renderPanel(session, funciones);
                 const nuevo = await canal.send({ embeds, components });
                 session.messageId = nuevo.id;
-                const subastas = cargarSubastas();
-                subastas[session.id] = session;
-                guardarSubastas(subastas);
+                const subastas2 = cargarSubastas();
+                subastas2[session.id] = session;
+                guardarSubastas(subastas2);
             } catch (err) { console.error('[Panel] Error al recrear:', err.message); }
         } else {
             console.error(`[Panel] Error editando en <#${session.threadId}>:`, e.message);
@@ -403,6 +410,8 @@ async function actualizarControlPanel(client, funciones) {
 }
 
 async function refrescarTodo(client, funciones) {
+    if (procesandoPaneles) return 0;
+    procesandoPaneles = true;
     try {
         const subastas = cargarSubastas();
         let actualizadas = 0;
@@ -418,12 +427,14 @@ async function refrescarTodo(client, funciones) {
     } catch (e) {
         console.error('Error en refrescarTodo:', e.message);
         return 0;
+    } finally {
+        procesandoPaneles = false;
     }
 }
 
 async function moverPanelesAlFinal(client, funciones) {
-    if (moviendoPaneles) return 0;
-    moviendoPaneles = true;
+    if (procesandoPaneles) return 0;
+    procesandoPaneles = true;
 
     const subastas = cargarSubastas();
     let movidos = 0;
@@ -443,13 +454,6 @@ async function moverPanelesAlFinal(client, funciones) {
                 if (ultimo && ultimo.id === session.messageId) continue;
 
                 const viejoId = session.messageId;
-                if (viejoId) {
-                    try {
-                        const viejo = await canal.messages.fetch(viejoId);
-                        if (viejo) await viejo.delete();
-                    } catch (e) { /* ignorar si ya no existe */ }
-                }
-
                 const { embeds, components } = renderPanel(session, funciones);
                 const nuevo = await canal.send({ embeds, components });
 
@@ -457,13 +461,20 @@ async function moverPanelesAlFinal(client, funciones) {
                 subastas[id] = session;
                 guardarSubastas(subastas);
 
+                if (viejoId) {
+                    try {
+                        const viejo = await canal.messages.fetch(viejoId);
+                        if (viejo) await viejo.delete();
+                    } catch (e) { /* ignorar si ya no existe */ }
+                }
+
                 movidos++;
             } catch (e) {
                 console.error(`[Panel] Error moviendo panel de <#${session.threadId}>:`, e.message);
             }
         }
     } finally {
-        moviendoPaneles = false;
+        procesandoPaneles = false;
     }
 
     return movidos;
@@ -1149,7 +1160,6 @@ function setupPanel(client, funciones) {
                 if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien inició la acción puede confirmar.', ephemeral: true });
                 if (!esConfirm) { pendingPanel.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
 
-                // Defer update para evitar el 10062
                 try { await interaction.deferUpdate(); } catch {}
 
                 const subastas = cargarSubastas();
@@ -1404,7 +1414,6 @@ function setupPanel(client, funciones) {
                 if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien inició la acción puede confirmar.', ephemeral: true });
                 if (!esConfirm) { pendingPanel.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
 
-                // Defer update para evitar el 10062
                 try { await interaction.deferUpdate(); } catch {}
                 const subastas = cargarSubastas();
 
