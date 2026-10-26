@@ -123,6 +123,14 @@ function lineaPerdedores(lista, miembros) {
     return `${etiqueta} ${lista.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ')}`;
 }
 
+function formatearUltimoDias(fecha) {
+    if (!fecha) return '';
+    const d = utils.diasDesde(fecha);
+    if (d <= 0) return 'hoy';
+    if (d === 1) return 'ayer';
+    return `hace ${d} días`;
+}
+
 function renderEntradaProyectada(e, miembros) {
     let out = `#${e.id} · ${utils.formatearFecha(e.fecha)} ${utils.etiquetaDias(e.fecha)} · ${utils.nombreBonitoEvento(e.evento)} · ${e.cantidad}x ${e.objeto} (${e.categoria})\n`;
     out += lineaGanadores(e.ganadores, miembros) + '\n';
@@ -1455,7 +1463,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const totales = {}; for (const cat of utils.CATEGORIAS) totales[cat] = 0;
                 for (const c of comprasFiltradas) { const n = utils.contarGanador(c.ganadores, j, miembros); if (n > 0 && totales[c.categoria] !== undefined) totales[c.categoria] += n; }
                 const total = Object.values(totales).reduce((a, b) => a + b, 0);
-                const lineas = utils.CATEGORIAS_TOTAL.map(cat => `${cat}: ${totales[cat] || 0}`).join('\n');
+                const ultimos = logic.obtenerUltimosPorCategoria(j, db.compras, miembros);
+                const lineas = utils.CATEGORIAS_TOTAL.map(cat => {
+                    const totalCat = totales[cat] || 0;
+                    let extra = '';
+                    if (totalCat > 0 && ultimos[cat]) {
+                        extra = ` *(${formatearUltimoDias(ultimos[cat])})*`;
+                    }
+                    return `${cat}: **${totalCat}**${extra}`;
+                }).join('\n');
                 out += `📊 **Total de ${utils.aplicarCanonico(j, miembros)}** (${periodo})\n${lineas}\n────────────\n**TOTAL:** ${total}\n\n`;
             }
             return logic.responderLargo(interaction, out.trimEnd(), visibilidad === 'Privado');
