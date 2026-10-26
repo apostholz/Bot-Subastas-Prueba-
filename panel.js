@@ -66,6 +66,72 @@ function esThreadBoss(threadId) {
     } catch { return false; }
 }
 
+async function publicarBossConfig(config) {
+    const token = process.env.GITHUB_TOKEN;
+    const repo = process.env.GITHUB_REPO;
+    if (!token || !repo) return;
+    const branch = process.env.GITHUB_BRANCH || 'main';
+    const url = `https://api.github.com/repos/${repo}/contents/data/control_boss_config.json`;
+
+    try {
+        let sha = null;
+        const rGet = await fetch(`${url}?ref=${branch}`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'bot-subastas' }
+        });
+        if (rGet.ok) {
+            const data = await rGet.json();
+            sha = data.sha;
+        }
+
+        const body = {
+            message: 'Limpiar threadId de slot boss',
+            content: Buffer.from(JSON.stringify(config, null, 2)).toString('base64'),
+            branch
+        };
+        if (sha) body.sha = sha;
+
+        await fetch(url, {
+            method: 'PUT',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/vnd.github+json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'bot-subastas'
+            },
+            body: JSON.stringify(body)
+        });
+    } catch (e) {
+        console.error('Error publicando control_boss_config.json:', e.message);
+    }
+}
+
+async function limpiarSlotBossPorThread(threadId, client) {
+    if (!threadId) return false;
+
+    const config = cargarJSON(BOSS_CONFIG_FILE, { canalAnunciosId: null, slots: [] });
+    if (!Array.isArray(config.slots)) return false;
+
+    let cambiado = false;
+    for (const s of config.slots) {
+        if (s.threadId === threadId) {
+            s.threadId = null;
+            cambiado = true;
+        }
+    }
+
+    if (!cambiado) return false;
+
+    guardarJSON(BOSS_CONFIG_FILE, config);
+    await publicarBossConfig(config);
+
+    try {
+        const { actualizarPanelControlBoss } = require('./control-boss');
+        if (typeof actualizarPanelControlBoss === 'function') await actualizarPanelControlBoss(client);
+    } catch (e) { /* ignorar si control-boss no está cargado */ }
+
+    return true;
+}
+
 function esLider(member, funciones) {
     if (!member) return false;
     if (member.id === member.guild.ownerId) return true;
@@ -103,35 +169,34 @@ function aplicarDadosPendientes(session) {
     if (!fs.existsSync(DADOS_PENDIENTES_FILE)) return;
     let pendientes = [];
     try { pendientes = JSON.parse(fs.readFileSync(DADOS_PENDIENTES_FILE, 'utf8')); } catch { return; }
-    
+
     const ahora = Date.now();
     const diezMinutos = 10 * 60 * 1000;
     let huboCambios = false;
     const restantes = [];
-    
+
     if (!session.dados) session.dados = {};
-    
+
     for (const p of pendientes) {
         if (p.threadId === session.threadId && p.expiraEn > ahora) {
-            // Si el dado tiene más de 10 minutos de antigüedad, no entra al panel y se destruye
             if (p.creadoEn && (ahora - p.creadoEn > diezMinutos)) {
                 huboCambios = true;
                 continue;
             }
-            
+
             if (!session.dados[p.nombre]) {
                 session.dados[p.nombre] = { historial: [], propio: p.propio };
             }
             session.dados[p.nombre].historial.push(p.valor);
             session.dados[p.nombre].propio = p.propio;
-            huboCambios = true; // Se transfirió al panel, se borra de pendientes
+            huboCambios = true;
         } else if (p.expiraEn > ahora) {
             restantes.push(p);
         } else {
-            huboCambios = true; // Expirado
+            huboCambios = true;
         }
     }
-    
+
     if (huboCambios) {
         fs.writeFileSync(DADOS_PENDIENTES_FILE, JSON.stringify(restantes, null, 2));
     }
@@ -172,9 +237,9 @@ function renderPanel(session, funciones) {
     let title = `${icon} ${item.cantidad}x ${item.objeto}`;
     const embed = new EmbedBuilder()
         .setDescription(`**Event:** ${item.evento}\n**Category:** ${item.categoria}\n**Amount:** ${item.cantidad}\n**Date:** ${item.fecha}`)
-        .addFields({ 
-            name: `Interested (${session.interesados.length})`, 
-            value: interesadosOrdenados.length ? interesadosOrdenados.join('\n') : 'No one yet' 
+        .addFields({
+            name: `Interested (${session.interesados.length})`,
+            value: interesadosOrdenados.length ? interesadosOrdenados.join('\n') : 'No one yet'
         });
 
     const cerrada = session.estado === 'cerrada';
@@ -493,6 +558,8 @@ function setupPanel(client, funciones) {
 
     client.on(Events.ThreadDelete, async (thread) => {
         try {
+            await limpiarSlotBossPorThread(thread.id, client);
+
             const subastas = cargarSubastas();
             let cambios = false;
             for (const id in subastas) {
@@ -590,9 +657,9 @@ function setupPanel(client, funciones) {
                         item: { fecha, evento, categoria, objeto, cantidad },
                         interesados: [], dados: {}, estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
                     };
-                    
+
                     aplicarDadosPendientes(session);
-                    
+
                     pushHistorial(session, interaction, 'Panel creado');
                     subastas[session.id] = session;
                     guardarSubastas(subastas);
@@ -1245,6 +1312,8 @@ function setupPanel(client, funciones) {
                         } catch {}
                     }
 
+                    await limpiarSlotBossPorThread(session.threadId, client);
+
                     await refrescarTodo(client, funciones);
                     pendingPanel.delete(id);
                     return interaction.editReply({ content: '🗑️ Subasta cancelada, panel eliminado y archivada sin registrar.', components: [] });
@@ -1358,9 +1427,9 @@ function setupPanel(client, funciones) {
                             item: { fecha: f, evento: ev, categoria: cat, objeto: fijo.objeto, cantidad: 1 },
                             interesados: [], dados: {}, estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
                         };
-                        
+
                         aplicarDadosPendientes(session);
-                        
+
                         pushHistorial(session, interaction, 'Panel creado por Abrir TODAS');
                         subastas[session.id] = session;
                         try {
@@ -1407,6 +1476,8 @@ function setupPanel(client, funciones) {
                         } catch {}
                     }
 
+                    await limpiarSlotBossPorThread(session.threadId, client);
+
                     await refrescarTodo(client, funciones);
                     pendingPanel.delete(id);
                     return interaction.editReply({ content: '🗑️ Subasta cancelada y panel eliminado.', components: [] });
@@ -1443,9 +1514,9 @@ function setupPanel(client, funciones) {
                         item: { fecha: f, evento: ev, categoria: cat, objeto: obj, cantidad: cant },
                         interesados: [], dados: {}, estado: 'abierta', historial: [], creadoPor: interaction.user.id, createdAt: Date.now()
                     };
-                    
+
                     aplicarDadosPendientes(session);
-                    
+
                     pushHistorial(session, interaction, 'Panel creado por Control');
                     subastas[session.id] = session;
                     guardarSubastas(subastas);
@@ -1467,13 +1538,15 @@ function setupPanel(client, funciones) {
                     let cerradas = 0;
                     for (const id in subastas) {
                         if (subastas[id].estado === 'abierta' || subastas[id].estado === 'bloqueada') {
+                            const bossThreadId = subastas[id].threadId;
+
                             subastas[id].estado = 'cancelada';
                             pushHistorial(subastas[id], interaction, 'Cancelada por Control Global');
                             archivadas[id] = subastas[id];
 
-                            if (esThreadBoss(subastas[id].threadId)) {
+                            if (esThreadBoss(bossThreadId)) {
                                 try {
-                                    const thread = await client.channels.fetch(subastas[id].threadId);
+                                    const thread = await client.channels.fetch(bossThreadId);
                                     if (thread) {
                                         const starterMsg = await thread.fetchStarterMessage().catch(() => null);
                                         await thread.delete().catch(() => null);
@@ -1487,6 +1560,8 @@ function setupPanel(client, funciones) {
                                     await msg.delete();
                                 } catch {}
                             }
+
+                            await limpiarSlotBossPorThread(bossThreadId, client);
 
                             delete subastas[id];
                             cerradas++;
