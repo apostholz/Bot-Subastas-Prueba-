@@ -18,6 +18,8 @@ const { commandsData } = require('./commands');
 const { setupPanel, actualizarMensajePanel } = require('./panel');
 
 const pendingActions = new Map();
+const dadosCooldowns = new Map();
+
 function guardarPendiente(tipo, payload, userId) {
     const id = Math.random().toString(36).slice(2, 10);
     pendingActions.set(id, { tipo, payload, userId, expira: Date.now() + 5 * 60 * 1000 });
@@ -210,13 +212,17 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
         const dadoActual = session.dados[targetKey];
         
         if (dadoActual && dadoActual.propio && !esMismoTarget && !esLider) {
-            return { error: `❌ **${nombreCanon}** ya tiró su propio dado (sacó un ${dadoActual.valor}). Solo un líder o helper puede reemplazarlo.` };
+            const ultimoValor = dadoActual.historial && dadoActual.historial.length > 0 
+                ? dadoActual.historial[dadoActual.historial.length - 1] 
+                : (dadoActual.valor || '?');
+            return { error: `❌ **${nombreCanon}** already rolled their own dice (got ${ultimoValor}). Only a leader or helper can replace it.` };
         }
         
-        session.dados[targetKey] = {
-            valor: valor,
-            propio: esMismoTarget
-        };
+        if (!session.dados[targetKey]) {
+            session.dados[targetKey] = { historial: [], propio: esMismoTarget };
+        }
+        session.dados[targetKey].historial.push(valor);
+        session.dados[targetKey].propio = esMismoTarget;
         
         fs.writeFileSync(subastasFile, JSON.stringify(subastas, null, 2));
         
@@ -243,11 +249,19 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
 
 function generarEmbedDado(res) {
     const { EmbedBuilder } = require('discord.js');
-    const autorStr = res.esMismoTarget ? `**${res.autorNombre}**` : `**${res.autorNombre}** tiró por **${res.targetNombre}**`;
+    
+    const accionStr = res.esMismoTarget 
+        ? `**${res.autorNombre}** rolled a 50-sided dice and got: **${res.valor}** 🎲`
+        : `**${res.autorNombre}** rolled for **${res.targetNombre}** and got: **${res.valor}** 🎲`;
+
     const embed = new EmbedBuilder()
         .setColor(0x0000FF)
-        .setDescription(`✨ **Lanzamiento de dado**\n\n${autorStr} ha tirado un dado de 50 caras y sacó: **${res.valor}** 🎲`);
-    if (res.pendiente) embed.setFooter({ text: '⏳ Se guardará si se abre una subasta en los próximos 10 minutos.' });
+        .setDescription(`✨ **Dice Roll**\n\n${accionStr}`);
+        
+    if (res.pendiente) {
+        embed.setFooter({ text: '⏳ It will be saved if an auction starts in the next 10 minutes.' });
+    }
+    
     return embed;
 }
 // =============================
@@ -597,6 +611,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.commandName === 'dado') {
             if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only works in threads.', ephemeral: true });
             
+            const esLider = interaction.member.id === interaction.guild.ownerId || 
+                            interaction.member.permissions.has(PermissionFlagsBits.Administrator) || 
+                            interaction.member.roles.cache.has(utils.ROL_LIDER) || 
+                            interaction.member.roles.cache.has(utils.ROL_HELPER);
+            
+            if (!esLider) {
+                const ahora = Date.now();
+                const expira = dadosCooldowns.get(interaction.user.id);
+                if (expira && ahora < expira) {
+                    const segundosRestantes = Math.ceil((expira - ahora) / 1000);
+                    return interaction.reply({ content: `⏳ You must wait **${segundosRestantes}** seconds before rolling again.`, ephemeral: true });
+                }
+                dadosCooldowns.set(interaction.user.id, ahora + 120000); // 120,000 ms = 2 minutos
+            }
+            
             const jugadorOpt = interaction.options.getString('jugador');
             let targetMember = interaction.member;
 
@@ -609,13 +638,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 let nombreBuscado = jugadorOpt.trim();
                 const miembros = utils.cargarMiembros();
                 
-                // Si está en la subasta, usamos su nombre exacto (canónico)
                 if (session) {
                     const match = session.interesados.find(i => utils.claveJugador(i, miembros) === utils.claveJugador(nombreBuscado, miembros));
                     if (match) nombreBuscado = match;
                 }
                 
-                // Buscamos al miembro real en el servidor por apodo o usuario
                 const memberReal = interaction.guild.members.cache.find(m => 
                     utils.normalizar(m.displayName) === utils.normalizar(nombreBuscado) || 
                     utils.normalizar(m.user.username) === utils.normalizar(nombreBuscado)
@@ -624,7 +651,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (memberReal) {
                     targetMember = memberReal;
                 } else {
-                    // Si no tiene Discord, creamos un "falso" miembro para que el dado se guarde con ese nombre
                     targetMember = { id: nombreBuscado, displayName: nombreBuscado, username: nombreBuscado };
                 }
             }
