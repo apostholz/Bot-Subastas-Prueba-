@@ -127,7 +127,7 @@ const commandsData = [
         .addStringOption(o => o.setName('ids').setDescription('IDs separados por coma (ej: 301,302)').setRequired(true)),
 
     new SlashCommandBuilder().setName('ayuda').setDescription('Lista los comandos'),
-    
+
     new SlashCommandBuilder().setName('panel').setDescription('Gestionar panel de subasta')
         .addSubcommand(sub => sub.setName('crear').setDescription('Crear panel en el thread actual (categoría automática)')
             .addStringOption(o => o.setName('objeto').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true))
@@ -168,6 +168,9 @@ const commandsData = [
 
     new SlashCommandBuilder().setName('dados').setDescription('Ver la lista de dados tirados en este thread')
         .addSubcommand(sub => sub.setName('lista').setDescription('Mostrar la lista de dados actualizada'))
+        .addSubcommand(sub => sub.setName('limpiar-lista').setDescription('Limpiar dados de este thread')
+            .addStringOption(o => o.setName('tipo').setDescription('Limpiar todos o un jugador').setRequired(true).addChoices({ name: 'Todos', value: 'todos' }, { name: 'Jugador', value: 'jugador' }))
+            .addStringOption(o => o.setName('jugador').setDescription('Jugador a limpiar (requerido si tipo=jugador)').setRequired(false).setAutocomplete(true)))
 ];
 
 module.exports = { commandsData };
