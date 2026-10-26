@@ -17,6 +17,10 @@ const logic = require('./logic');
 const { commandsData } = require('./commands');
 const { setupPanel, actualizarMensajePanel } = require('./panel');
 
+const DATA_DIR = path.join(__dirname, 'data');
+const DADOS_PENDIENTES_FILE = path.join(DATA_DIR, 'dados_pendientes.json');
+const DADOS_MENSAJES_FILE = path.join(DATA_DIR, 'dados_mensajes.json');
+
 const pendingActions = new Map();
 const dadosCooldowns = new Map();
 
@@ -128,6 +132,7 @@ async function asegurarArchivosDesdeGitHub() {
         { local: 'data/control_boss_pendientes.json', repo: 'data/control_boss_pendientes.json' },
         { local: 'data/control_boss_panel.json', repo: 'data/control_boss_panel.json' },
         { local: 'data/dados_pendientes.json', repo: 'data/dados_pendientes.json' },
+        { local: 'data/dados_mensajes.json', repo: 'data/dados_mensajes.json' },
         { local: 'data/threads_fijos.json', repo: 'data/threads_fijos.json' }
     ];
 
@@ -167,14 +172,20 @@ async function asegurarArchivosDesdeGitHub() {
 
 // ====== LÓGICA DE DADOS ======
 function cargarDadosPendientes() {
-    const f = path.join(__dirname, 'data', 'dados_pendientes.json');
-    if (!fs.existsSync(f)) return [];
-    try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return []; }
+    if (!fs.existsSync(DADOS_PENDIENTES_FILE)) return [];
+    try { return JSON.parse(fs.readFileSync(DADOS_PENDIENTES_FILE, 'utf8')); } catch { return []; }
 }
 function guardarDadosPendientes(d) {
-    const f = path.join(__dirname, 'data', 'dados_pendientes.json');
-    fs.writeFileSync(f, JSON.stringify(d, null, 2));
+    fs.writeFileSync(DADOS_PENDIENTES_FILE, JSON.stringify(d, null, 2));
 }
+function cargarMensajesDados() {
+    if (!fs.existsSync(DADOS_MENSAJES_FILE)) return {};
+    try { return JSON.parse(fs.readFileSync(DADOS_MENSAJES_FILE, 'utf8')); } catch { return {}; }
+}
+function guardarMensajesDados(d) {
+    fs.writeFileSync(DADOS_MENSAJES_FILE, JSON.stringify(d, null, 2));
+}
+
 setInterval(() => {
     const pendientes = cargarDadosPendientes();
     const ahora = Date.now();
@@ -182,10 +193,64 @@ setInterval(() => {
     if (filtrados.length !== pendientes.length) guardarDadosPendientes(filtrados);
 }, 60 * 1000);
 
+function generarTextoListaDados(threadId, miembros) {
+    const pendientes = cargarDadosPendientes();
+    const ahora = Date.now();
+    const delThread = pendientes.filter(p => p.threadId === threadId && p.expiraEn > ahora);
+    
+    if (delThread.length === 0) return null;
+
+    const agrupados = {};
+    for (const p of delThread) {
+        const key = utils.claveJugador(p.nombre, miembros);
+        if (!agrupados[key]) agrupados[key] = { nombre: p.nombre, historial: [] };
+        agrupados[key].historial.push(p.valor);
+    }
+    
+    let lista = [];
+    for (const obj of Object.values(agrupados)) {
+        lista.push({ 
+            nombre: utils.aplicarCanonico(obj.nombre, miembros), 
+            historial: obj.historial, 
+            ultimo: obj.historial[obj.historial.length - 1] 
+        });
+    }
+
+    lista.sort((a, b) => b.ultimo - a.ultimo);
+
+    let out = `🎲 **Dice Rolls in this Thread**\n\n`;
+    for (const d of lista) {
+        const ultimos = d.historial.slice(-3);
+        const histStr = ultimos.map((v, i) => i === ultimos.length - 1 ? `🎲 ${v}` : v).join(' → ');
+        out += `• **${d.nombre}**: ${histStr}\n`;
+    }
+    return out;
+}
+
+async function actualizarMensajeListaDados(client, threadId) {
+    const mensajes = cargarMensajesDados();
+    const msgId = mensajes[threadId];
+    if (!msgId) return;
+
+    const miembros = utils.cargarMiembros();
+    const texto = generarTextoListaDados(threadId, miembros);
+    
+    if (!texto) return;
+
+    try {
+        const canal = await client.channels.fetch(threadId);
+        const msg = await canal.messages.fetch(msgId);
+        await msg.edit({ content: texto });
+    } catch (e) {
+        // Si el mensaje fue borrado o falló, lo eliminamos del registro
+        delete mensajes[threadId];
+        guardarMensajesDados(mensajes);
+    }
+}
+
 async function procesarDado(targetMember, authorMember, guild, canalThread, funciones) {
-    const subastasFile = path.join(__dirname, 'data', 'subastas_activas.json');
     let subastas = {};
-    try { subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8')); } catch {}
+    try { subastas = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'subastas_activas.json'), 'utf8')); } catch {}
 
     let session = Object.values(subastas).find(s => s.threadId === canalThread.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
     
@@ -212,10 +277,7 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
         const dadoActual = session.dados[targetKey];
         
         if (dadoActual && dadoActual.propio && !esMismoTarget && !esLider) {
-            const ultimoValor = dadoActual.historial && dadoActual.historial.length > 0 
-                ? dadoActual.historial[dadoActual.historial.length - 1] 
-                : (dadoActual.valor || '?');
-            return { error: `❌ **${nombreCanon}** already rolled their own dice (got ${ultimoValor}). Only a leader or helper can replace it.` };
+            return { error: `❌ **${nombreCanon}** already rolled their own dice. Only a leader or helper can replace it.` };
         }
         
         if (!session.dados[targetKey]) {
@@ -224,13 +286,8 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
         session.dados[targetKey].historial.push(valor);
         session.dados[targetKey].propio = esMismoTarget;
         
-        fs.writeFileSync(subastasFile, JSON.stringify(subastas, null, 2));
-        
-        try {
-            await actualizarMensajePanel(client, session, funciones);
-        } catch (e) { console.error('Error actualizando panel tras dado:', e.message); }
-        
-        return { valor, targetNombre: nombreCanon, autorNombre: authorMember.displayName, esMismoTarget };
+        fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+        await actualizarMensajePanel(client, session, funciones);
     } else {
         const pendientes = cargarDadosPendientes();
         pendientes.push({
@@ -240,11 +297,16 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
             nombre: nombreCanon,
             valor: valor,
             propio: esMismoTarget,
-            expiraEn: Date.now() + 10 * 60 * 1000
+            creadoEn: Date.now(),
+            expiraEn: Date.now() + 60 * 60 * 1000 // 1 hora para la lista
         });
         guardarDadosPendientes(pendientes);
-        return { valor, targetNombre: nombreCanon, autorNombre: authorMember.displayName, esMismoTarget, pendiente: true };
     }
+    
+    // Auto-actualizar la lista si existe
+    await actualizarMensajeListaDados(client, canalThread.id);
+
+    return { valor, targetNombre: nombreCanon, autorNombre: authorMember.displayName, esMismoTarget };
 }
 
 function generarEmbedDado(res) {
@@ -258,10 +320,6 @@ function generarEmbedDado(res) {
         .setColor(0x0000FF)
         .setDescription(`✨ **Dice Roll**\n\n${accionStr}`);
         
-    if (res.pendiente) {
-        embed.setFooter({ text: '⏳ It will be saved if an auction starts in the next 10 minutes.' });
-    }
-    
     return embed;
 }
 // =============================
@@ -608,6 +666,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const db = utils.cargarDB();
         const miembros = utils.cargarMiembros();
 
+        if (interaction.commandName === 'dados') {
+            if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only works in threads.', ephemeral: true });
+            
+            const texto = generarTextoListaDados(interaction.channelId, miembros);
+            if (!texto) return interaction.reply({ content: 'ℹ️ No one has rolled the dice in this thread yet.', ephemeral: true });
+
+            const mensajes = cargarMensajesDados();
+            const msgId = mensajes[interaction.channelId];
+            
+            if (msgId) {
+                try {
+                    const msg = await interaction.channel.messages.fetch(msgId);
+                    await msg.delete();
+                } catch (e) {}
+            }
+
+            const msg = await interaction.reply({ content: texto, fetchReply: true });
+            mensajes[interaction.channelId] = msg.id;
+            guardarMensajesDados(mensajes);
+            return;
+        }
+
         if (interaction.commandName === 'dado') {
             if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only works in threads.', ephemeral: true });
             
@@ -623,7 +703,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     const segundosRestantes = Math.ceil((expira - ahora) / 1000);
                     return interaction.reply({ content: `⏳ You must wait **${segundosRestantes}** seconds before rolling again.`, ephemeral: true });
                 }
-                dadosCooldowns.set(interaction.user.id, ahora + 120000); // 120,000 ms = 2 minutos
+                dadosCooldowns.set(interaction.user.id, ahora + 120000);
             }
             
             const jugadorOpt = interaction.options.getString('jugador');
@@ -1187,7 +1267,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.commandName === 'ayuda') {
             return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/dado\` · tirar dado para un jugador en la subasta actual\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control de Invasión\n\`/control-boss\` · gestionar anuncios automáticos`,
+                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/dado\` · tirar dado para un jugador en la subasta actual\n\`/dados lista\` · ver la lista de dados tirados en el thread\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control de Invasión\n\`/control-boss\` · gestionar anuncios automáticos`,
                 ephemeral: true
             });
         }
