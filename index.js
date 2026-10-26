@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Events, REST, Routes, PermissionFlagsBits } = require('discord.js');
 const { parse } = require('csv-parse/sync');
+const { randomInt } = require('crypto'); // Dado
 
 // ESCUDOS GLOBALES ANTI-CRASH
 process.on('unhandledRejection', (reason, promise) => {
@@ -269,7 +270,7 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
         if (match) targetKey = match;
     }
 
-    const valor = Math.floor(Math.random() * 50) + 1;
+    const valor = randomInt(1, 51);
     const esMismoTarget = targetMember.id === authorMember.id;
     
     if (session) {
