@@ -382,9 +382,9 @@ async function actualizarControlPanel(client, funciones) {
 
         const rows = [];
         const chunks = fijos.slice(0, 16);
-        for (let i = 0; i < chunks.length; i += 3) {
+        for (let i = 0; i < chunks.length; i += 4) {
             const row = new ActionRowBuilder();
-            for (let j = 0; j < 3 && i + j < chunks.length; j++) {
+            for (let j = 0; j < 4 && i + j < chunks.length; j++) {
                 const idx = i + j;
                 const fijo = chunks[idx];
                 const session = Object.values(subastas).find(s => s.threadId === fijo.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
