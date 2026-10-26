@@ -556,7 +556,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (!esConfirm) return interaction.update({ content: '❌ Aviso cancelado.', components: [] });
 
                 await interaction.update({ content: '✅ Aviso enviado.', components: [] });
-                await interaction.channel.send(`🔔 Aviso para: ${p.payload.menciones.join(', ')}`);
+                await interaction.channel.send(`🔔 Notice for: ${p.payload.menciones.join(', ')}`);
                 return;
             }
 
@@ -595,7 +595,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const miembros = utils.cargarMiembros();
 
         if (interaction.commandName === 'dado') {
-            if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Solo funciona en threads.', ephemeral: true });
+            if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only works in threads.', ephemeral: true });
             
             const jugadorOpt = interaction.options.getString('jugador');
             let targetMember = interaction.member;
