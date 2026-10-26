@@ -315,7 +315,7 @@ function generarEmbedDado(res) {
     
     const accionStr = res.esMismoTarget 
         ? `**${res.autorNombre}** rolled a 50-sided dice and got: **${res.valor}** 🎲`
-        : `**${res.autorNombre}** rolled for **${res.targetNombre}** and got: **${res.valor}** 🎲`;
+        : `**${res.autorNombre}** has rolled for **${res.targetNombre}** and got: **${res.valor}** 🎲`;
 
     const embed = new EmbedBuilder()
         .setColor(0x0000FF)
