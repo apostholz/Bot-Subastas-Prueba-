@@ -123,7 +123,7 @@ async function publicarImagen(filename) {
 }
 
 async function renderPanelControlBoss(config) {
-    const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Boss').setColor(0x2B2D31);
+    const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Banquete').setColor(0x2B2D31);
     const configurados = config.slots.filter(slotConfigurado);
     
     if (configurados.length === 0) {
@@ -376,7 +376,7 @@ function setupControlBoss(client, funciones) {
                         guardarPanel({ channelId: canal.id, messageId: nuevo.id });
                         await publicarPanel();
                     }
-                    return interaction.editReply({ content: '✅ Panel de Control de Boss actualizado.' });
+                    return interaction.editReply({ content: '✅ Panel de Control de Banquete actualizado.' });
                 }
 
                 if (sub === 'estado') {
@@ -457,7 +457,7 @@ function setupControlBoss(client, funciones) {
                     new ButtonBuilder().setCustomId(`boss_confirm_cerrar_todos:${id}`).setLabel('Sí, cerrar todas').setStyle(ButtonStyle.Danger),
                     new ButtonBuilder().setCustomId(`boss_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Secondary)
                 );
-                return interaction.reply({ content: `⚠️ **¿Cerrar y eliminar las ${activos.length} subastas activas de Boss?**`, components: [row], ephemeral: true });
+                return interaction.reply({ content: `⚠️ **¿Cerrar y eliminar las ${activos.length} subastas activas de Banquete?**`, components: [row], ephemeral: true });
             }
 
             if (interaction.isModalSubmit() && interaction.customId.startsWith('boss_modal:')) {
