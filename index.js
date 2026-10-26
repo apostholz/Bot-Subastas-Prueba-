@@ -1,9 +1,9 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Events, REST, Routes, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, Events, REST, Routes, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { parse } = require('csv-parse/sync');
-const { randomInt } = require('crypto'); // Dado
+const { randomInt } = require('crypto');
 
 // ESCUDOS GLOBALES ANTI-CRASH
 process.on('unhandledRejection', (reason, promise) => {
@@ -22,8 +22,12 @@ const DATA_DIR = path.join(__dirname, 'data');
 const DADOS_PENDIENTES_FILE = path.join(DATA_DIR, 'dados_pendientes.json');
 const DADOS_MENSAJES_FILE = path.join(DATA_DIR, 'dados_mensajes.json');
 
+const DADOS_LISTA_DURACION = 30 * 60 * 1000;
+const DADOS_LISTA_REFRESCO = 2 * 60 * 1000;
+
 const pendingActions = new Map();
 const dadosCooldowns = new Map();
+let actualizandoListasDados = false;
 
 function guardarPendiente(tipo, payload, userId) {
     const id = Math.random().toString(36).slice(2, 10);
@@ -43,7 +47,6 @@ const client = new Client({
     ]
 });
 
-// ESCUDO ANTI-CRASH PARA EL CLIENTE
 client.on('error', (err) => {
     console.error('⚠️ Client Error:', err);
 });
@@ -179,9 +182,29 @@ function cargarDadosPendientes() {
 function guardarDadosPendientes(d) {
     fs.writeFileSync(DADOS_PENDIENTES_FILE, JSON.stringify(d, null, 2));
 }
+
 function cargarMensajesDados() {
     if (!fs.existsSync(DADOS_MENSAJES_FILE)) return {};
-    try { return JSON.parse(fs.readFileSync(DADOS_MENSAJES_FILE, 'utf8')); } catch { return {}; }
+    try {
+        const raw = JSON.parse(fs.readFileSync(DADOS_MENSAJES_FILE, 'utf8'));
+        const out = {};
+        let migrado = false;
+
+        for (const [threadId, valor] of Object.entries(raw)) {
+            if (typeof valor === 'string') {
+                out[threadId] = { messageId: valor, expiraEn: Date.now() + DADOS_LISTA_DURACION };
+                migrado = true;
+            } else if (valor && valor.messageId) {
+                out[threadId] = {
+                    messageId: valor.messageId,
+                    expiraEn: valor.expiraEn || (Date.now() + DADOS_LISTA_DURACION)
+                };
+            }
+        }
+
+        if (migrado) guardarMensajesDados(out);
+        return out;
+    } catch { return {}; }
 }
 function guardarMensajesDados(d) {
     fs.writeFileSync(DADOS_MENSAJES_FILE, JSON.stringify(d, null, 2));
@@ -193,6 +216,13 @@ function cargarSubastasActivas() {
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
 }
 
+function haySubastaActivaEnThread(threadId) {
+    const subastas = cargarSubastasActivas();
+    return Object.values(subastas).some(s =>
+        s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada')
+    );
+}
+
 setInterval(() => {
     const pendientes = cargarDadosPendientes();
     const ahora = Date.now();
@@ -200,7 +230,7 @@ setInterval(() => {
     if (filtrados.length !== pendientes.length) guardarDadosPendientes(filtrados);
 }, 60 * 1000);
 
-function generarTextoListaDados(threadId, miembros) {
+function obtenerDatosListaDados(threadId, miembros) {
     let lista = [];
 
     const subastas = cargarSubastasActivas();
@@ -224,7 +254,7 @@ function generarTextoListaDados(threadId, miembros) {
         const pendientes = cargarDadosPendientes();
         const ahora = Date.now();
         const delThread = pendientes.filter(p => p.threadId === threadId && p.expiraEn > ahora);
-        if (delThread.length === 0) return null;
+        if (delThread.length === 0) return [];
 
         const agrupados = {};
         for (const p of delThread) {
@@ -242,32 +272,47 @@ function generarTextoListaDados(threadId, miembros) {
         }
     }
 
-    if (lista.length === 0) return null;
     lista.sort((a, b) => b.ultimo - a.ultimo);
+    return lista;
+}
 
-    let out = `🎲 **Dice Rolls in this Thread**\n\n`;
-    for (const d of lista) {
-        const ultimos = d.historial.slice(-3);
-        const histStr = ultimos.map((v, i) => i === ultimos.length - 1 ? `🎲 ${v}` : v).join(' → ');
-        out += `• **${d.nombre}**: ${histStr}\n`;
+function generarEmbedListaDados(threadId, miembros) {
+    const lista = obtenerDatosListaDados(threadId, miembros);
+
+    const embed = new EmbedBuilder()
+        .setColor(0xFF1493)
+        .setTitle('🎲 Dice Rolls in this Thread');
+
+    if (lista.length === 0) {
+        embed.setDescription('No hay dados registrados.');
+        return embed;
     }
-    return out;
+
+    const lineas = lista.map((d, i) => `${i + 1}. **${d.nombre}**: ${d.ultimo}`);
+    embed.setDescription(lineas.join('\n'));
+    return embed;
 }
 
 async function actualizarMensajeListaDados(client, threadId) {
     const mensajes = cargarMensajesDados();
-    const msgId = mensajes[threadId];
-    if (!msgId) return;
+    const entry = mensajes[threadId];
+    if (!entry || !entry.messageId) return;
+    if (entry.expiraEn <= Date.now()) return;
+    if (haySubastaActivaEnThread(threadId)) return;
 
     const miembros = utils.cargarMiembros();
-    const texto = generarTextoListaDados(threadId, miembros);
-
-    if (!texto) return;
+    const embed = generarEmbedListaDados(threadId, miembros);
 
     try {
         const canal = await client.channels.fetch(threadId);
-        const msg = await canal.messages.fetch(msgId);
-        await msg.edit({ content: texto });
+        try {
+            const msg = await canal.messages.fetch(entry.messageId);
+            await msg.delete();
+        } catch {}
+
+        const nuevo = await canal.send({ embeds: [embed] });
+        entry.messageId = nuevo.id;
+        guardarMensajesDados(mensajes);
     } catch (e) {
         delete mensajes[threadId];
         guardarMensajesDados(mensajes);
@@ -324,7 +369,7 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
             valor: valor,
             propio: esMismoTarget,
             creadoEn: Date.now(),
-            expiraEn: Date.now() + 60 * 60 * 1000 // 1 hora para la lista
+            expiraEn: Date.now() + 60 * 60 * 1000
         });
         guardarDadosPendientes(pendientes);
     }
@@ -335,8 +380,6 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
 }
 
 function generarEmbedDado(res) {
-    const { EmbedBuilder } = require('discord.js');
-
     const accionStr = res.esMismoTarget
         ? `**${res.autorNombre}** rolled a 50-sided dice and got: **${res.valor}** 🎲`
         : `**${res.autorNombre}** has rolled for **${res.targetNombre}** and got: **${res.valor}** 🎲`;
@@ -347,7 +390,55 @@ function generarEmbedDado(res) {
 
     return embed;
 }
-// =============================
+
+setInterval(async () => {
+    if (actualizandoListasDados) return;
+    actualizandoListasDados = true;
+    try {
+        const mensajes = cargarMensajesDados();
+        let cambios = false;
+        const ahora = Date.now();
+        const miembros = utils.cargarMiembros();
+
+        for (const [threadId, entry] of Object.entries(mensajes)) {
+            if (!entry || !entry.messageId) {
+                delete mensajes[threadId];
+                cambios = true;
+                continue;
+            }
+
+            if (entry.expiraEn <= ahora) {
+                delete mensajes[threadId];
+                cambios = true;
+                continue;
+            }
+
+            if (haySubastaActivaEnThread(threadId)) continue;
+
+            try {
+                const canal = await client.channels.fetch(threadId);
+                try {
+                    const viejo = await canal.messages.fetch(entry.messageId);
+                    await viejo.delete();
+                } catch {}
+
+                const embed = generarEmbedListaDados(threadId, miembros);
+                const nuevo = await canal.send({ embeds: [embed] });
+                entry.messageId = nuevo.id;
+                cambios = true;
+            } catch (e) {
+                delete mensajes[threadId];
+                cambios = true;
+            }
+        }
+
+        if (cambios) guardarMensajesDados(mensajes);
+    } catch (e) {
+        console.error('Error actualizando listas de dados:', e.message);
+    } finally {
+        actualizandoListasDados = false;
+    }
+}, DADOS_LISTA_REFRESCO);
 
 client.on(Events.InteractionCreate, async (interaction) => {
     try {
@@ -694,21 +785,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.commandName === 'dados') {
             if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only works in threads.', ephemeral: true });
 
-            const texto = generarTextoListaDados(interaction.channelId, miembros);
-            if (!texto) return interaction.reply({ content: 'ℹ️ No one has rolled the dice in this thread yet.', ephemeral: true });
-
+            const threadId = interaction.channelId;
+            const ahora = Date.now();
             const mensajes = cargarMensajesDados();
-            const msgId = mensajes[interaction.channelId];
+            const existente = mensajes[threadId];
 
-            if (msgId) {
+            const expiraEn = (existente && existente.expiraEn > ahora)
+                ? existente.expiraEn
+                : ahora + DADOS_LISTA_DURACION;
+
+            if (existente && existente.messageId) {
                 try {
-                    const msg = await interaction.channel.messages.fetch(msgId);
+                    const msg = await interaction.channel.messages.fetch(existente.messageId);
                     await msg.delete();
-                } catch (e) {}
+                } catch {}
             }
 
-            const msg = await interaction.reply({ content: texto, fetchReply: true });
-            mensajes[interaction.channelId] = msg.id;
+            const embed = generarEmbedListaDados(threadId, miembros);
+            const msg = await interaction.reply({ embeds: [embed], fetchReply: true });
+
+            mensajes[threadId] = { messageId: msg.id, expiraEn };
             guardarMensajesDados(mensajes);
             return;
         }
