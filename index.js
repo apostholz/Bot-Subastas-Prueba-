@@ -187,6 +187,12 @@ function guardarMensajesDados(d) {
     fs.writeFileSync(DADOS_MENSAJES_FILE, JSON.stringify(d, null, 2));
 }
 
+function cargarSubastasActivas() {
+    const file = path.join(DATA_DIR, 'subastas_activas.json');
+    if (!fs.existsSync(file)) return {};
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+}
+
 setInterval(() => {
     const pendientes = cargarDadosPendientes();
     const ahora = Date.now();
@@ -195,28 +201,48 @@ setInterval(() => {
 }, 60 * 1000);
 
 function generarTextoListaDados(threadId, miembros) {
-    const pendientes = cargarDadosPendientes();
-    const ahora = Date.now();
-    const delThread = pendientes.filter(p => p.threadId === threadId && p.expiraEn > ahora);
-    
-    if (delThread.length === 0) return null;
-
-    const agrupados = {};
-    for (const p of delThread) {
-        const key = utils.claveJugador(p.nombre, miembros);
-        if (!agrupados[key]) agrupados[key] = { nombre: p.nombre, historial: [] };
-        agrupados[key].historial.push(p.valor);
-    }
-    
     let lista = [];
-    for (const obj of Object.values(agrupados)) {
-        lista.push({ 
-            nombre: utils.aplicarCanonico(obj.nombre, miembros), 
-            historial: obj.historial, 
-            ultimo: obj.historial[obj.historial.length - 1] 
-        });
+
+    const subastas = cargarSubastasActivas();
+    const session = Object.values(subastas).find(s =>
+        s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada')
+    );
+
+    if (session && session.dados && Object.keys(session.dados).length > 0) {
+        for (const [nombre, info] of Object.entries(session.dados)) {
+            const historial = Array.isArray(info.historial)
+                ? info.historial
+                : (info.valor ? [info.valor] : []);
+            if (historial.length === 0) continue;
+            lista.push({
+                nombre: utils.aplicarCanonico(nombre, miembros),
+                historial,
+                ultimo: historial[historial.length - 1]
+            });
+        }
+    } else {
+        const pendientes = cargarDadosPendientes();
+        const ahora = Date.now();
+        const delThread = pendientes.filter(p => p.threadId === threadId && p.expiraEn > ahora);
+        if (delThread.length === 0) return null;
+
+        const agrupados = {};
+        for (const p of delThread) {
+            const key = utils.claveJugador(p.nombre, miembros);
+            if (!agrupados[key]) agrupados[key] = { nombre: p.nombre, historial: [] };
+            agrupados[key].historial.push(p.valor);
+        }
+
+        for (const obj of Object.values(agrupados)) {
+            lista.push({
+                nombre: utils.aplicarCanonico(obj.nombre, miembros),
+                historial: obj.historial,
+                ultimo: obj.historial[obj.historial.length - 1]
+            });
+        }
     }
 
+    if (lista.length === 0) return null;
     lista.sort((a, b) => b.ultimo - a.ultimo);
 
     let out = `🎲 **Dice Rolls in this Thread**\n\n`;
@@ -235,7 +261,7 @@ async function actualizarMensajeListaDados(client, threadId) {
 
     const miembros = utils.cargarMiembros();
     const texto = generarTextoListaDados(threadId, miembros);
-    
+
     if (!texto) return;
 
     try {
@@ -243,7 +269,6 @@ async function actualizarMensajeListaDados(client, threadId) {
         const msg = await canal.messages.fetch(msgId);
         await msg.edit({ content: texto });
     } catch (e) {
-        // Si el mensaje fue borrado o falló, lo eliminamos del registro
         delete mensajes[threadId];
         guardarMensajesDados(mensajes);
     }
@@ -254,16 +279,16 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
     try { subastas = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'subastas_activas.json'), 'utf8')); } catch {}
 
     let session = Object.values(subastas).find(s => s.threadId === canalThread.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
-    
+
     const miembros = funciones.cargarMiembros();
     const nombreCanon = funciones.aplicarCanonico(targetMember.displayName, miembros);
     const keyJugador = utils.claveJugador(nombreCanon, miembros);
-    
-    const esLider = authorMember.id === guild.ownerId || 
-                    authorMember.permissions.has(PermissionFlagsBits.Administrator) || 
-                    authorMember.roles.cache.has(funciones.ROL_LIDER) || 
-                    authorMember.roles.cache.has(funciones.ROL_HELPER);
-    
+
+    const esLider = authorMember.id === guild.ownerId ||
+        authorMember.permissions.has(PermissionFlagsBits.Administrator) ||
+        authorMember.roles.cache.has(funciones.ROL_LIDER) ||
+        authorMember.roles.cache.has(funciones.ROL_HELPER);
+
     let targetKey = nombreCanon;
     if (session) {
         const match = session.interesados.find(i => utils.claveJugador(i, miembros) === keyJugador);
@@ -272,21 +297,21 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
 
     const valor = randomInt(1, 51);
     const esMismoTarget = targetMember.id === authorMember.id;
-    
+
     if (session) {
         if (!session.dados) session.dados = {};
         const dadoActual = session.dados[targetKey];
-        
+
         if (dadoActual && dadoActual.propio && !esMismoTarget && !esLider) {
             return { error: `❌ **${nombreCanon}** already rolled their own dice. Only a leader or helper can replace it.` };
         }
-        
+
         if (!session.dados[targetKey]) {
             session.dados[targetKey] = { historial: [], propio: esMismoTarget };
         }
         session.dados[targetKey].historial.push(valor);
         session.dados[targetKey].propio = esMismoTarget;
-        
+
         fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
         await actualizarMensajePanel(client, session, funciones);
     } else {
@@ -303,8 +328,7 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
         });
         guardarDadosPendientes(pendientes);
     }
-    
-    // Auto-actualizar la lista si existe
+
     await actualizarMensajeListaDados(client, canalThread.id);
 
     return { valor, targetNombre: nombreCanon, autorNombre: authorMember.displayName, esMismoTarget };
@@ -312,15 +336,15 @@ async function procesarDado(targetMember, authorMember, guild, canalThread, func
 
 function generarEmbedDado(res) {
     const { EmbedBuilder } = require('discord.js');
-    
-    const accionStr = res.esMismoTarget 
+
+    const accionStr = res.esMismoTarget
         ? `**${res.autorNombre}** rolled a 50-sided dice and got: **${res.valor}** 🎲`
         : `**${res.autorNombre}** has rolled for **${res.targetNombre}** and got: **${res.valor}** 🎲`;
 
     const embed = new EmbedBuilder()
         .setColor(0x0000FF)
         .setDescription(`✨ **Dice Roll**\n\n${accionStr}`);
-        
+
     return embed;
 }
 // =============================
@@ -359,7 +383,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 let subastas = {};
                 try { subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8')); } catch {}
                 const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
-                
+
                 if (session) {
                     const q = utils.normalizar(focused.value);
                     const filtrados = session.interesados.filter(n => utils.normalizar(n).includes(q)).slice(0, 25);
@@ -552,7 +576,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         const e = db.compras[idx];
                         const { sub, valor } = p.payload;
                         const miembros = utils.cargarMiembros();
-                        
+
                         if (sub === 'ganador') {
                             if (valor.accion === 'agregar') for (const j of valor.nombres) e.ganadores.push(j);
                             else for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.ganadores, j, miembros); if (pos !== -1) e.ganadores.splice(pos, 1); }
@@ -582,7 +606,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         }
                         else if (sub === 'set-nota') e.notas = valor;
                         else if (sub === 'borrar-nota') e.notas = '';
-                        
+
                         utils.guardarDB(db);
                         resultado = `✅ Edición aplicada a #${e.id}.\n\n` + renderEntradaProyectada(e, miembros);
                         requiereSync = true;
@@ -624,7 +648,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const id = cid.replace('ping_confirm_', '').replace('ping_cancel_', '');
                 const p = pendingActions.get(id);
                 if (!p || p.tipo !== 'ping' || p.userId !== interaction.user.id) return interaction.update({ content: '❌ Sesión expirada.', components: [] });
-                
+
                 pendingActions.delete(id);
                 if (!esConfirm) return interaction.update({ content: '❌ Aviso cancelado.', components: [] });
 
@@ -638,17 +662,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // 3. Comandos Slash
         if (!interaction.isChatInputCommand()) return;
-        
+
         const comandosAdmin = ['backup', 'sync', 'registro-rapido'];
         const comandosLider = ['miembros', 'catalogo', 'control-boss'];
         const comandosHelper = ['borrar', 'editar', 'sub', 'subf'];
-        
+
         if (comandosAdmin.includes(interaction.commandName) || comandosLider.includes(interaction.commandName) || comandosHelper.includes(interaction.commandName)) {
             const esDueño = interaction.guild && interaction.guild.ownerId === interaction.user.id;
             const tieneLider = interaction.member && interaction.member.roles.cache.has(utils.ROL_LIDER);
             const tieneHelper = interaction.member && interaction.member.roles.cache.has(utils.ROL_HELPER);
             const esAdmin = interaction.member && interaction.member.permissions.has(PermissionFlagsBits.Administrator);
-            
+
             const puedeAdmin = esDueño || esAdmin;
             const puedeLider = puedeAdmin || tieneLider;
             const puedeHelper = puedeLider || tieneHelper;
@@ -669,13 +693,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.commandName === 'dados') {
             if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only works in threads.', ephemeral: true });
-            
+
             const texto = generarTextoListaDados(interaction.channelId, miembros);
             if (!texto) return interaction.reply({ content: 'ℹ️ No one has rolled the dice in this thread yet.', ephemeral: true });
 
             const mensajes = cargarMensajesDados();
             const msgId = mensajes[interaction.channelId];
-            
+
             if (msgId) {
                 try {
                     const msg = await interaction.channel.messages.fetch(msgId);
@@ -691,12 +715,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.commandName === 'dado') {
             if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only works in threads.', ephemeral: true });
-            
-            const esLider = interaction.member.id === interaction.guild.ownerId || 
-                            interaction.member.permissions.has(PermissionFlagsBits.Administrator) || 
-                            interaction.member.roles.cache.has(utils.ROL_LIDER) || 
-                            interaction.member.roles.cache.has(utils.ROL_HELPER);
-            
+
+            const esLider = interaction.member.id === interaction.guild.ownerId ||
+                interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+                interaction.member.roles.cache.has(utils.ROL_LIDER) ||
+                interaction.member.roles.cache.has(utils.ROL_HELPER);
+
             if (!esLider) {
                 const ahora = Date.now();
                 const expira = dadosCooldowns.get(interaction.user.id);
@@ -706,7 +730,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 dadosCooldowns.set(interaction.user.id, ahora + 120000);
             }
-            
+
             const jugadorOpt = interaction.options.getString('jugador');
             let targetMember = interaction.member;
 
@@ -715,35 +739,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 let subastas = {};
                 try { subastas = JSON.parse(fs.readFileSync(subastasFile, 'utf8')); } catch {}
                 const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
-                
+
                 let nombreBuscado = jugadorOpt.trim();
                 const miembros = utils.cargarMiembros();
-                
+
                 if (session) {
                     const match = session.interesados.find(i => utils.claveJugador(i, miembros) === utils.claveJugador(nombreBuscado, miembros));
                     if (match) nombreBuscado = match;
                 }
-                
-                const memberReal = interaction.guild.members.cache.find(m => 
-                    utils.normalizar(m.displayName) === utils.normalizar(nombreBuscado) || 
+
+                const memberReal = interaction.guild.members.cache.find(m =>
+                    utils.normalizar(m.displayName) === utils.normalizar(nombreBuscado) ||
                     utils.normalizar(m.user.username) === utils.normalizar(nombreBuscado)
                 );
-                
+
                 if (memberReal) {
                     targetMember = memberReal;
                 } else {
                     targetMember = { id: nombreBuscado, displayName: nombreBuscado, username: nombreBuscado };
                 }
             }
-            
+
             const funciones = {
                 cargarMiembros: utils.cargarMiembros, ROL_LIDER: utils.ROL_LIDER, ROL_HELPER: utils.ROL_HELPER,
                 normalizar: utils.normalizar, aplicarCanonico: utils.aplicarCanonico
             };
-            
+
             const res = await procesarDado(targetMember, interaction.member, interaction.guild, interaction.channel, funciones);
             if (res.error) return interaction.reply({ content: res.error, ephemeral: true });
-            
+
             const embed = generarEmbedDado(res);
             return interaction.reply({ embeds: [embed] });
         }
@@ -758,7 +782,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (!texto.trim()) return interaction.reply({ content: '❌ No hay texto.', ephemeral: true });
             let textoConHeader = texto.trim();
             if (!textoConHeader.toLowerCase().startsWith('fecha')) textoConHeader = 'fecha,evento,categoria,objeto,cantidad,ganadores,perdedores,notas\n' + textoConHeader;
-            
+
             let filas;
             try { filas = parse(textoConHeader, { columns: true, skip_empty_lines: true, trim: true }); }
             catch (e) { return interaction.reply({ content: `❌ Error CSV: ${e.message}`, ephemeral: true }); }
@@ -771,7 +795,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (!fechaConv) { errores.push(`Fila ${i+2}: fecha inválida`); continue; }
                 if (fila.categoria && !utils.CATEGORIAS.includes(fila.categoria)) { errores.push(`Fila ${i+2}: categoría inválida`); continue; }
                 if (fila.objeto && utils.OBJETOS_PROHIBIDOS.some(o => utils.normalizar(o) === utils.normalizar(fila.objeto))) { errores.push(`Fila ${i+2}: objeto prohibido`); continue; }
-                
+
                 validas.push({
                     fecha: fechaConv, evento: fila.evento || '', categoria: fila.categoria || '', objeto: fila.objeto || '',
                     cantidad: parseInt(fila.cantidad) || 1,
@@ -826,15 +850,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (sub === 'lista') {
                 const items = Object.entries(catalogo).map(([objeto, categoria]) => ({ objeto, categoria })).sort((a, b) => a.objeto.localeCompare(b.objeto));
                 if (items.length === 0) return interaction.reply({ content: 'ℹ️ El catálogo está vacío.', ephemeral: true });
-                
+
                 const payload = { catalogo: items, pagina: 1 };
                 const id = guardarPendiente('catalogo-page', payload, interaction.user.id);
-                
+
                 const totalPaginas = Math.max(1, Math.ceil(items.length / 15));
                 const slice = items.slice(0, 15);
                 let out = `📖 **Catálogo de Objetos** (Página 1/${totalPaginas})\n\n`;
                 for (const item of slice) out += `• **${item.objeto}** → ${item.categoria}\n`;
-                
+
                 const row = logic.construirBotonesPaginacion('catg', id, 1, totalPaginas);
                 return interaction.reply({ content: out, components: [row], ephemeral: true });
             }
@@ -998,7 +1022,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const nombres = str.split(',').map(s => s.trim()).filter(Boolean).map(n => utils.aplicarCanonico(n, miembros));
                 const lista = sub === 'ganador' ? e.ganadores : e.perdedores;
                 const listaNombre = sub === 'ganador' ? 'ganadores' : 'perdedores';
-                
+
                 const ag = [], ya = [], vistos = new Set();
                 for (const j of nombres) {
                     const k = utils.claveJugador(j, miembros);
@@ -1015,7 +1039,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const listaProj = sub === 'ganador' ? proj.ganadores : proj.perdedores;
                 if (accion === 'agregar') for (const j of ag) listaProj.push(j);
                 else for (const j of ag) { const pos = utils.buscarJugadorEnLista(listaProj, j, miembros); if (pos !== -1) listaProj.splice(pos, 1); }
-                
+
                 cuerpo = `${accion === 'agregar' ? 'Agregar' : 'Quitar'} **${ag.join(', ')}** a ${listaNombre} de #${id}.\n\n` + renderEntradaProyectada(proj, miembros);
                 payload = { id, sub, valor: { accion, nombres: ag } };
             }
@@ -1024,10 +1048,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const p = interaction.options.getString('por').trim();
                 const lista = sub === 'reemplazar-ganador' ? e.ganadores : e.perdedores;
                 const listaNombre = sub === 'reemplazar-ganador' ? 'ganadores' : 'perdedores';
-                
+
                 if (utils.buscarJugadorEnLista(lista, q, miembros) === -1) return interaction.reply({ content: `❌ **${q}** no está en ${listaNombre}.`, ephemeral: true });
                 if (utils.buscarJugadorEnLista(lista, p, miembros) !== -1) return interaction.reply({ content: `❌ **${p}** ya está en ${listaNombre}.`, ephemeral: true });
-                
+
                 const proj = { ...e, ganadores: [...e.ganadores], perdedores: [...e.perdedores] };
                 const listaProj = sub === 'reemplazar-ganador' ? proj.ganadores : proj.perdedores;
                 const pos = utils.buscarJugadorEnLista(listaProj, q, miembros);
@@ -1042,9 +1066,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const cat = interaction.options.getString('categoria');
                 const ev = interaction.options.getString('evento');
                 const fechaStr = interaction.options.getString('fecha');
-                
+
                 if (!obj && cant === null && !cat && !ev && !fechaStr) return interaction.reply({ content: '❌ Tenés que indicar al menos un campo para cambiar.', ephemeral: true });
-                
+
                 let cambios = [];
                 let fConv = null;
                 const proj = { ...e, ganadores: [...e.ganadores], perdedores: [...e.perdedores] };
@@ -1059,13 +1083,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     proj.fecha = fConv;
                     cambios.push(`Fecha: **${utils.formatearFecha(fConv)}**`);
                 }
-                
+
                 if (obj && !cat) {
                     const catInferida = logic.inferirCategoria(obj, db);
                     proj.categoria = catInferida;
                     cambios.push(`(Categoría inferida: **${catInferida}**)`);
                 }
-                
+
                 cuerpo = `Cambiar en #${id}:\n` + cambios.join('\n') + '\n\n' + renderEntradaProyectada(proj, miembros);
                 payload = { id, sub, valor: { objeto: obj, cantidad: cant, categoria: cat, evento: ev, fecha: fConv } };
             }
@@ -1245,12 +1269,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const idsStr = interaction.options.getString('ids');
             const ids = idsStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
             if (ids.length === 0) return interaction.reply({ content: '❌ No se encontraron IDs válidos.', ephemeral: true });
-            
+
             const validos = db.compras.filter(c => ids.includes(c.id));
             const noExisten = ids.filter(id => !db.compras.some(c => c.id === id));
-            
+
             if (validos.length === 0) return interaction.reply({ content: '❌ No existe ninguna entrada con esos IDs.', ephemeral: true });
-            
+
             let cuerpo = `Se borrarán **${validos.length}** entradas:\n\n`;
             validos.forEach(c => {
                 cuerpo += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
@@ -1262,7 +1286,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (noExisten.length > 0) {
                 cuerpo += `\n⚠️ **No existen:** ${noExisten.join(', ')}`;
             }
-            
+
             return mostrarPreview(interaction, '⚠️ Confirmar BORRADO MÚLTIPLE', cuerpo, 'borrar', { ids: validos.map(c => c.id) });
         }
 
