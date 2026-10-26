@@ -362,7 +362,7 @@ async function actualizarControlPanel(client, funciones) {
         const fijos = cargarThreadsFijos();
         const subastas = cargarSubastas();
 
-        const MAX_FIJOS = 16;
+        const MAX_FIJOS = 20;
         const fijosMostrar = fijos.slice(0, MAX_FIJOS);
 
         let desc = 'Referencia: (interesados / unidades)\n\n';
@@ -388,9 +388,9 @@ async function actualizarControlPanel(client, funciones) {
         const embed = new EmbedBuilder().setTitle('🎛️ Panel de Control de Invasión').setDescription(desc).setColor(0x2B2D31);
 
         const rows = [];
-        for (let i = 0; i < fijosMostrar.length; i += 4) {
+        for (let i = 0; i < fijosMostrar.length; i += 5) {
             const row = new ActionRowBuilder();
-            for (let j = 0; j < 4 && i + j < fijosMostrar.length; j++) {
+            for (let j = 0; j < 5 && i + j < fijosMostrar.length; j++) {
                 const idx = i + j;
                 const fijo = fijosMostrar[idx];
                 const session = Object.values(subastas).find(s => s.threadId === fijo.id && (s.estado === 'abierta' || s.estado === 'bloqueada'));
