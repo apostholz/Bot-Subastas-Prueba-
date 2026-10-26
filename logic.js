@@ -210,8 +210,12 @@ function calcularPrioridad(jugador, categoria, compras, miembros) {
         historico += utils.contarGanador(c.ganadores, jugador, miembros);
     }
 
+    const esCategoriaNueva = categoria === 'Azules' || categoria === 'Box 10k';
     const historicoTotal = {};
-    for (const cat of utils.CATEGORIAS) historicoTotal[cat] = 0;
+    for (const cat of utils.CATEGORIAS) {
+        if (!esCategoriaNueva && (cat === 'Azules' || cat === 'Box 10k')) continue;
+        historicoTotal[cat] = 0;
+    }
     for (const c of compras) {
         const n = utils.contarGanador(c.ganadores, jugador, miembros);
         if (n > 0 && historicoTotal[c.categoria] !== undefined) historicoTotal[c.categoria] += n;
@@ -254,7 +258,9 @@ function obtenerCategoriasAfectantes(categoria) {
         'Cajas 20k': ['Cajas 20k', 'Emblemas Únicos', 'Emblemas Generales'],
         'Emblemas Generales': ['Emblemas Generales', 'Emblemas Únicos', 'Cajas 20k'],
         'Equipo': ['Equipo', 'Accesorios', 'Emblemas Únicos'],
-        'Accesorios': ['Accesorios', 'Equipo', 'Emblemas Únicos']
+        'Accesorios': ['Accesorios', 'Equipo', 'Emblemas Únicos'],
+        'Azules': ['Azules', 'Box 10k'],
+        'Box 10k': ['Box 10k', 'Azules']
     };
     return orden[categoria] || [categoria];
 }
@@ -294,6 +300,7 @@ function inferirCategoria(objeto, db) {
     };
     if (map[key]) return map[key];
     if (key.includes('caja 20k')) return 'Cajas 20k';
+    if (key.includes('caja 10k')) return 'Box 10k';
     if (key.includes('collar') || key.includes('anillo') || key.includes('marca') || key.includes('brazal')) return 'Accesorios';
 
     if (db && Array.isArray(db.compras)) {
@@ -338,11 +345,16 @@ function renderPrioridad(payload, miembros) {
         out += `   Total en categoría: ${r.historico}\n`;
         out += `   ${histTotalStr}\n`;
     });
-    
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`prio_perdedores_${payload.id}`).setLabel('💔 Ver perdedores 7d').setStyle(ButtonStyle.Danger)
-    );
-    return { content: out, components: [row] };
+
+    const esCategoriaNueva = categoria === 'Azules' || categoria === 'Box 10k';
+    const components = [];
+    if (esCategoriaNueva) {
+        components.push(new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`prio_perdedores_${payload.id}`).setLabel('💔 Ver perdedores 7d').setStyle(ButtonStyle.Danger)
+        ));
+    }
+
+    return { content: out, components };
 }
 
 function renderPerdedores(payload, db, miembros) {
@@ -376,7 +388,7 @@ function renderRankingPagina(payload) {
     else {
         slice.forEach((d, i) => {
             const num = inicio + i + 1;
-            if (categoria === 'Todas') out += `${num}. **${d.nombre}** · ${d.total} | 20k: ${d['Cajas 20k']} | Ún: ${d['Emblemas Únicos']} | Gen: ${d['Emblemas Generales']} | Eq: ${d['Equipo']} | Acc: ${d['Accesorios']}\n`;
+            if (categoria === 'Todas') out += `${num}. **${d.nombre}** · ${d.total} | 20k: ${d['Cajas 20k']} | Ún: ${d['Emblemas Únicos']} | Gen: ${d['Emblemas Generales']} | Eq: ${d['Equipo']} | Acc: ${d['Accesorios']} | Az: ${d['Azules']} | B10: ${d['Box 10k']}\n`;
             else out += `${num}. **${d.nombre}** · ${d[categoria]}\n`;
         });
     }
@@ -488,7 +500,7 @@ function sugerirNombresMultiples(valorActual, nombres) {
     return nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: [...prefijo, n].join(', ') }));
 }
 
-function formatearPingGanadores(ganadores, resultados, miembros, guild, membersOverride = null) {
+function formatearPingGanadores(ganadores, resultados, miembros, guild) {
     let expanded = [];
     for (const g of ganadores) {
         const parsed = utils.parsearGanador(g);
@@ -502,7 +514,7 @@ function formatearPingGanadores(ganadores, resultados, miembros, guild, membersO
     });
     let list = expanded.map((name, i) => `${i + 1}. ${utils.aplicarCanonico(name, miembros)}`).join('\n');
     
-    const members = membersOverride || (guild && guild.members ? guild.members.cache : new Map());
+    let members = guild.members.cache;
     let mentions = [...new Set(expanded)].map(name => {
         const norm = utils.normalizar(name);
         const canon = utils.normalizar(utils.aplicarCanonico(name, miembros));
