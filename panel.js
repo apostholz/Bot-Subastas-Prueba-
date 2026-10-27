@@ -634,7 +634,7 @@ function renderHistorialCategoria(session, categoria, page, db, miembros, funcio
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`panel_hist_cat_pick:${session.id}:${paginaActual}:${catIndex}`)
-            .setLabel('📂 Categoría')
+            .setLabel(`📂 ${categoria}`) // Muestra el nombre dinámico
             .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId(`panel_hist:cat:${session.id}:${paginaActual - 1}:${catIndex}`)
@@ -1103,26 +1103,39 @@ function setupPanel(client, funciones) {
                 if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
                 const page = parseInt(pageStr) || 1;
                 const catIndex = parseInt(catIndexStr) || 0;
+                const historyMsgId = interaction.message.id; // Guardamos el ID del mensaje de historial original
 
                 const row = new ActionRowBuilder().addComponents(
                     new StringSelectMenuBuilder()
-                        .setCustomId(`panel_hist_cat_sel:${sessionId}:${page}:${catIndex}`)
+                        .setCustomId(`panel_hist_cat_sel:${sessionId}:${page}:${catIndex}:${historyMsgId}`) // Pasamos el ID al customId
                         .setPlaceholder('Elegir categoría')
                         .addOptions(CATEGORIAS_PANEL.map((c, i) => ({ label: c, value: c, default: i === catIndex })))
                 );
+                // Enviamos el selector en un nuevo mensaje ephemeral
                 return interaction.reply({ content: 'Elegí categoría:', components: [row], ephemeral: true });
             }
 
             if (interaction.isStringSelectMenu() && interaction.customId.startsWith('panel_hist_cat_sel:')) {
-                const [, sessionId, pageStr, catIndexStr] = interaction.customId.split(':');
+                const [, sessionId, pageStr, catIndexStr, historyMsgId] = interaction.customId.split(':');
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
                 if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
                 const db = funciones.cargarDB();
                 const miembros = funciones.cargarMiembros();
                 const categoria = interaction.values[0];
+                
                 const render = renderHistorialCategoria(session, categoria, 1, db, miembros, funciones);
-                return interaction.update({ content: render.content, components: render.components });
+                
+                // Editamos el mensaje original del historial
+                try {
+                    const historyMsg = await interaction.channel.messages.fetch(historyMsgId);
+                    await historyMsg.edit({ content: render.content, components: render.components });
+                } catch (e) {
+                    console.error('Error editando el historial original:', e);
+                }
+
+                // Limpiamos el mensaje del selector
+                return interaction.update({ content: '✅ Categoría actualizada en el historial.', components: [] });
             }
 
             if (interaction.isButton() && interaction.customId.startsWith('panel_hist_p:')) {
