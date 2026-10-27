@@ -264,7 +264,7 @@ async function procesarPendiente(client, pendiente, funciones) {
         const { crearPanelEnThread } = require('./panel');
         await crearPanelEnThread(client, thread, {
             fecha: funciones.fechaHoyArgentina(),
-            evento: obtenerEventoPorHora(),
+            evento: 'Banquete',
             categoria: pendiente.categoria,
             objeto: pendiente.objeto,
             cantidad: pendiente.cantidad
