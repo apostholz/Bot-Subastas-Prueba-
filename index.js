@@ -139,6 +139,38 @@ function renderEntradaProyectada(e, miembros) {
     return out.trimEnd();
 }
 
+function dividirTexto(texto, max = 1900) {
+    const chunks = [];
+    let current = '';
+    for (const linea of texto.split('\n')) {
+        if (current.length + linea.length + 1 > max) {
+            if (current) chunks.push(current);
+            current = linea;
+        } else {
+            current += (current ? '\n' : '') + linea;
+        }
+    }
+    if (current) chunks.push(current);
+    return chunks;
+}
+
+async function enviarPrioridadLarga(interaction, content, components, ephemeral = true) {
+    const chunks = dividirTexto(content, 1900);
+    if (chunks.length === 0) chunks.push(' ');
+    await interaction.reply({
+        content: chunks[0],
+        components: chunks.length === 1 ? components : [],
+        ephemeral
+    });
+    for (let i = 1; i < chunks.length; i++) {
+        await interaction.followUp({
+            content: chunks[i],
+            components: i === chunks.length - 1 ? components : [],
+            ephemeral
+        });
+    }
+}
+
 async function asegurarArchivosDesdeGitHub() {
     const repo = process.env.GITHUB_REPO;
     const branch = process.env.GITHUB_BRANCH || 'main';
@@ -1065,21 +1097,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const catalogo = utils.cargarCatalogo();
 
             if (sub === 'agregar') {
+                await interaction.deferReply({ ephemeral: true });
                 const obj = interaction.options.getString('objeto').trim();
                 const cat = interaction.options.getString('categoria');
                 catalogo[obj] = cat;
                 utils.guardarCatalogo(catalogo);
                 await logic.sincronizarArchivosJSON();
-                return interaction.reply({ content: `✅ Objeto **${obj}** guardado en el catálogo como **${cat}**.`, ephemeral: true });
+                return interaction.editReply({ content: `✅ Objeto **${obj}** guardado en el catálogo como **${cat}**.` });
             }
             if (sub === 'quitar') {
+                await interaction.deferReply({ ephemeral: true });
                 const obj = interaction.options.getString('objeto').trim();
                 const keyEncontrada = Object.keys(catalogo).find(k => utils.normalizar(k) === utils.normalizar(obj));
-                if (!keyEncontrada) return interaction.reply({ content: `ℹ️ El objeto **${obj}** no está en el catálogo.`, ephemeral: true });
+                if (!keyEncontrada) return interaction.editReply({ content: `ℹ️ El objeto **${obj}** no está en el catálogo.` });
                 delete catalogo[keyEncontrada];
                 utils.guardarCatalogo(catalogo);
                 await logic.sincronizarArchivosJSON();
-                return interaction.reply({ content: `✅ Objeto **${keyEncontrada}** eliminado del catálogo.`, ephemeral: true });
+                return interaction.editReply({ content: `✅ Objeto **${keyEncontrada}** eliminado del catálogo.` });
             }
             if (sub === 'lista') {
                 const items = Object.entries(catalogo).map(([objeto, categoria]) => ({ objeto, categoria })).sort((a, b) => a.objeto.localeCompare(b.objeto));
@@ -1192,6 +1226,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const nombres = nombreRaw.split(',').map(s => s.trim()).filter(Boolean);
 
             if (sub === 'excluir') {
+                await interaction.deferReply({ ephemeral: true });
                 const ag = [], ya = [], vistos = new Set();
                 for (const n of nombres) {
                     const c = utils.aplicarCanonico(n, miembros);
@@ -1200,14 +1235,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     if (utils.esExcluido(c, miembros)) ya.push(c);
                     else { miembros.excluidos.push(c); ag.push(c); }
                 }
-                if (ag.length === 0) return interaction.reply({ content: `ℹ️ Ya estaban excluidos: ${ya.join(', ')}`, ephemeral: true });
+                if (ag.length === 0) return interaction.editReply({ content: `ℹ️ Ya estaban excluidos: ${ya.join(', ')}` });
                 utils.guardarMiembros(miembros);
                 await logic.sincronizarArchivosJSON();
                 let msg = `✅ **Excluidos:** ${ag.join(', ')}`;
                 if (ya.length > 0) msg += `\nℹ️ Ya estaban: ${ya.join(', ')}`;
-                return interaction.reply({ content: msg });
+                return interaction.editReply({ content: msg });
             }
             if (sub === 'incluir') {
+                await interaction.deferReply({ ephemeral: true });
                 const quit = [], no = [], vistos = new Set();
                 for (const n of nombres) {
                     const c = utils.aplicarCanonico(n, miembros);
@@ -1217,28 +1253,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     if (idx === -1) no.push(c);
                     else { miembros.excluidos.splice(idx, 1); quit.push(c); }
                 }
-                if (quit.length === 0) return interaction.reply({ content: `ℹ️ No estaban excluidos: ${no.join(', ')}`, ephemeral: true });
+                if (quit.length === 0) return interaction.editReply({ content: `ℹ️ No estaban excluidos: ${no.join(', ')}` });
                 utils.guardarMiembros(miembros);
                 await logic.sincronizarArchivosJSON();
                 let msg = `✅ **Reincluidos:** ${quit.join(', ')}`;
                 if (no.length > 0) msg += `\nℹ️ No estaban: ${no.join(', ')}`;
-                return interaction.reply({ content: msg });
+                return interaction.editReply({ content: msg });
             }
             if (sub === 'canonico') {
+                await interaction.deferReply({ ephemeral: true });
                 const como = interaction.options.getString('como');
                 for (const n of nombres) miembros.canonicos[utils.normalizarNombre(n)] = como;
                 utils.guardarMiembros(miembros);
                 await logic.sincronizarArchivosJSON();
-                return interaction.reply({ content: `✅ ${nombres.join(', ')} se mostrarán como **${como}**.` });
+                return interaction.editReply({ content: `✅ ${nombres.join(', ')} se mostrarán como **${como}**.` });
             }
             if (sub === 'quitar-canonico') {
+                await interaction.deferReply({ ephemeral: true });
                 const key = utils.normalizarNombre(nombres[0]);
-                if (!miembros.canonicos[key]) return interaction.reply({ content: `ℹ️ No hay canónico para **${nombres[0]}**.`, ephemeral: true });
+                if (!miembros.canonicos[key]) return interaction.editReply({ content: `ℹ️ No hay canónico para **${nombres[0]}**.` });
                 const prev = miembros.canonicos[key];
                 delete miembros.canonicos[key];
                 utils.guardarMiembros(miembros);
                 await logic.sincronizarArchivosJSON();
-                return interaction.reply({ content: `✅ Canónico eliminado para **${prev}**.` });
+                return interaction.editReply({ content: `✅ Canónico eliminado para **${prev}**.` });
             }
         }
 
@@ -1503,7 +1541,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             payload.id = id;
 
             const { content, components } = logic.renderPrioridad(payload, miembros);
-            return interaction.reply({ content, components, ephemeral });
+            return enviarPrioridadLarga(interaction, content, components, ephemeral);
         }
 
         if (interaction.commandName === 'borrar') {
