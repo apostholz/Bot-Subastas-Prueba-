@@ -12,6 +12,21 @@
     "creadoPor": "295365478216368128",
     "creadoEn": 1793062334259,
     "expiraEn": 1793062514259,
+    "estado": "usado"
+  },
+  {
+    "id": "d2cwt8q9",
+    "messageId": "1564441635733897266",
+    "channelId": "1547595718343000135",
+    "slot": 3,
+    "objeto": "Señor de la Caverna Sombría",
+    "categoria": "Emblemas Generales",
+    "cantidad": 1,
+    "texto": "Shadow Cryptlord",
+    "imagen": "slot3_1792882967410.png",
+    "creadoPor": "295365478216368128",
+    "creadoEn": 1793062352269,
+    "expiraEn": 1793062532269,
     "estado": "pendiente"
   }
 ]
