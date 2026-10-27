@@ -409,13 +409,10 @@ function renderPrioridad(payload, miembros) {
         out += `   ${histTotalStr}\n`;
     });
 
-    const esCategoriaNueva = categoria === 'Azules' || categoria === 'Box 10k';
     const components = [];
-    if (esCategoriaNueva) {
-        components.push(new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`prio_perdedores_${payload.id}`).setLabel('💔 Ver perdedores 7d').setStyle(ButtonStyle.Danger)
-        ));
-    }
+    components.push(new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`prio_perdedores_${payload.id}`).setLabel('💔 Ver perdedores 7d').setStyle(ButtonStyle.Danger)
+    ));
 
     return { content: out, components };
 }
@@ -563,7 +560,7 @@ function sugerirNombresMultiples(valorActual, nombres) {
     return nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: [...prefijo, n].join(', ') }));
 }
 
-function formatearPingGanadores(ganadores, resultados, miembros, guild) {
+function formatearPingGanadores(ganadores, resultados, miembros, guild, membersOverride = null) {
     let expanded = [];
     for (const g of ganadores) {
         const parsed = utils.parsearGanador(g);
@@ -577,7 +574,7 @@ function formatearPingGanadores(ganadores, resultados, miembros, guild) {
     });
     let list = expanded.map((name, i) => `${i + 1}. ${utils.aplicarCanonico(name, miembros)}`).join('\n');
     
-    let members = guild.members.cache;
+    const members = membersOverride || (guild && guild.members ? guild.members.cache : new Map());
     let mentions = [...new Set(expanded)].map(name => {
         const norm = utils.normalizar(name);
         const canon = utils.normalizar(utils.aplicarCanonico(name, miembros));
