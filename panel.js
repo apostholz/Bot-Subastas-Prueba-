@@ -558,6 +558,99 @@ async function crearPanelEnThread(client, thread, item, funciones, creadoPor) {
     return session;
 }
 
+function dividirTexto(texto, max = 1900) {
+    const chunks = [];
+    let current = '';
+    for (const linea of texto.split('\n')) {
+        if (current.length + linea.length + 1 > max) {
+            if (current) chunks.push(current);
+            current = linea;
+        } else {
+            current += (current ? '\n' : '') + linea;
+        }
+    }
+    if (current) chunks.push(current);
+    return chunks;
+}
+
+async function enviarPrioridadLarga(interaction, content, components, ephemeral = true) {
+    const chunks = dividirTexto(content, 1900);
+    if (chunks.length === 0) chunks.push(' ');
+    await interaction.reply({
+        content: chunks[0],
+        components: chunks.length === 1 ? components : [],
+        ephemeral
+    });
+    for (let i = 1; i < chunks.length; i++) {
+        await interaction.followUp({
+            content: chunks[i],
+            components: i === chunks.length - 1 ? components : [],
+            ephemeral
+        });
+    }
+}
+
+function renderHistorialCategoria(session, categoria, page, db, miembros, funciones) {
+    const catIndex = Math.max(0, CATEGORIAS_PANEL.indexOf(categoria));
+    const todos = session.interesados.map(j => ({
+        jugador: j,
+        ...funciones.calcularPrioridad(j, categoria, db.compras, miembros)
+    }));
+    todos.sort(funciones.compararPrioridad);
+
+    const porPagina = 5;
+    const totalPaginas = Math.max(1, Math.ceil(todos.length / porPagina));
+    const paginaActual = Math.min(Math.max(1, page), totalPaginas);
+    const inicio = (paginaActual - 1) * porPagina;
+    const slice = todos.slice(inicio, inicio + porPagina);
+
+    let out = `📂 **${categoria}** — Últimas 5 compras por jugador\n_Página ${paginaActual}/${totalPaginas} · ${todos.length} jugador${todos.length === 1 ? '' : 'es'}_\n\n`;
+
+    if (slice.length === 0) {
+        out += 'Sin interesados.';
+    } else {
+        for (const t of slice) {
+            const nombre = funciones.aplicarCanonico(t.jugador, miembros);
+            let comprasJ = db.compras.filter(c =>
+                c.categoria === categoria &&
+                utils.contarGanador(c.ganadores, t.jugador, miembros) > 0
+            );
+            comprasJ.sort(utils.ordenarComprasDesc);
+            const ultimas = comprasJ.slice(0, 5);
+
+            out += `**${nombre}** (últimas ${ultimas.length}):\n`;
+            if (ultimas.length === 0) {
+                out += `Sin compras.\n`;
+            } else {
+                for (const c of ultimas) {
+                    const n = utils.contarGanador(c.ganadores, t.jugador, miembros);
+                    out += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${n}x ${c.objeto}\n`;
+                }
+            }
+            out += `\n`;
+        }
+    }
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`panel_hist_cat_pick:${session.id}:${paginaActual}:${catIndex}`)
+            .setLabel('📂 Categoría')
+            .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId(`panel_hist:cat:${session.id}:${paginaActual - 1}:${catIndex}`)
+            .setLabel('◀')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(paginaActual <= 1),
+        new ButtonBuilder()
+            .setCustomId(`panel_hist:cat:${session.id}:${paginaActual + 1}:${catIndex}`)
+            .setLabel('▶')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(paginaActual >= totalPaginas)
+    );
+
+    return { content: out.trimEnd(), components: [row] };
+}
+
 function setupPanel(client, funciones) {
     setInterval(async () => {
         if (refrescandoPaneles) return;
@@ -737,6 +830,9 @@ function setupPanel(client, funciones) {
                 }
 
                 if (sub === 'objeto') {
+                    if (session.estado === 'bloqueada' && !esLiderUsuario) {
+                        return interaction.reply({ content: '❌ Solo líderes/helpers pueden editar una subasta bloqueada.', ephemeral: true });
+                    }
                     const db = funciones.cargarDB();
                     const nombre = interaction.options.getString('nombre');
                     const categoria = logic.inferirCategoria(nombre, db);
@@ -862,7 +958,7 @@ function setupPanel(client, funciones) {
                     pPayload.id = id;
 
                     const { content, components } = funciones.renderPrioridad(pPayload, miembros);
-                    return interaction.reply({ content, components, ephemeral: true });
+                    return enviarPrioridadLarga(interaction, content, components, true);
                 }
 
                 if (accion === 'logs') {
@@ -872,14 +968,19 @@ function setupPanel(client, funciones) {
 
                 if (accion === 'historial') {
                     if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
+                    const catIndexInicial = Math.max(0, CATEGORIAS_PANEL.indexOf(session.item.categoria));
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_hist:res:${sessionId}:1`).setLabel('Resumido').setStyle(ButtonStyle.Primary),
-                        new ButtonBuilder().setCustomId(`panel_hist:det:${sessionId}`).setLabel('Detallado').setStyle(ButtonStyle.Secondary)
+                        new ButtonBuilder().setCustomId(`panel_hist:det:${sessionId}`).setLabel('Detallado').setStyle(ButtonStyle.Secondary),
+                        new ButtonBuilder().setCustomId(`panel_hist:cat:${sessionId}:1:${catIndexInicial}`).setLabel('Por Categoría').setStyle(ButtonStyle.Secondary)
                     );
                     return interaction.reply({ content: 'Elegí el formato del historial:', components: [row], ephemeral: true });
                 }
 
                 if (accion === 'editar') {
+                    if (session.estado === 'bloqueada' && !esLiderUsuario) {
+                        return interaction.reply({ content: '❌ Solo líderes/helpers pueden editar una subasta bloqueada.', ephemeral: true });
+                    }
                     const embed = new EmbedBuilder().setTitle('✏️ Editar panel').setDescription('Elegí qué querés editar:');
                     const row1 = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_edit:evento:${sessionId}`).setLabel('Evento').setStyle(ButtonStyle.Secondary),
@@ -928,6 +1029,7 @@ function setupPanel(client, funciones) {
                 const tipo = partes[1];
                 const sessionId = partes[2];
                 const page = parseInt(partes[3]) || 1;
+                const catIndex = parseInt(partes[4]) || 0;
 
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
@@ -986,6 +1088,41 @@ function setupPanel(client, funciones) {
                     rows.push(row);
                     return interaction.update({ content: 'Elegí el jugador:', components: rows });
                 }
+
+                if (tipo === 'cat') {
+                    const categoria = CATEGORIAS_PANEL[catIndex] || CATEGORIAS_PANEL[0];
+                    const render = renderHistorialCategoria(session, categoria, page, db, miembros, funciones);
+                    return interaction.update({ content: render.content, components: render.components });
+                }
+            }
+
+            if (interaction.isButton() && interaction.customId.startsWith('panel_hist_cat_pick:')) {
+                const [, sessionId, pageStr, catIndexStr] = interaction.customId.split(':');
+                const subastas = cargarSubastas();
+                const session = subastas[sessionId];
+                if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
+                const page = parseInt(pageStr) || 1;
+                const catIndex = parseInt(catIndexStr) || 0;
+
+                const row = new ActionRowBuilder().addComponents(
+                    new StringSelectMenuBuilder()
+                        .setCustomId(`panel_hist_cat_sel:${sessionId}:${page}:${catIndex}`)
+                        .setPlaceholder('Elegir categoría')
+                        .addOptions(CATEGORIAS_PANEL.map((c, i) => ({ label: c, value: c, default: i === catIndex })))
+                );
+                return interaction.reply({ content: 'Elegí categoría:', components: [row], ephemeral: true });
+            }
+
+            if (interaction.isStringSelectMenu() && interaction.customId.startsWith('panel_hist_cat_sel:')) {
+                const [, sessionId, pageStr, catIndexStr] = interaction.customId.split(':');
+                const subastas = cargarSubastas();
+                const session = subastas[sessionId];
+                if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
+                const db = funciones.cargarDB();
+                const miembros = funciones.cargarMiembros();
+                const categoria = interaction.values[0];
+                const render = renderHistorialCategoria(session, categoria, 1, db, miembros, funciones);
+                return interaction.update({ content: render.content, components: render.components });
             }
 
             if (interaction.isButton() && interaction.customId.startsWith('panel_hist_p:')) {
@@ -1035,6 +1172,10 @@ function setupPanel(client, funciones) {
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado.', ephemeral: true });
                 const esLiderUsuario = esLider(interaction.member, funciones);
 
+                if (session.estado === 'bloqueada' && !esLiderUsuario) {
+                    return interaction.reply({ content: '❌ Solo líderes/helpers pueden editar una subasta bloqueada.', ephemeral: true });
+                }
+
                 if (campo === 'evento') {
                     const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`panel_sel:evento:${sessionId}`).setPlaceholder('Elegir evento').addOptions(EVENTOS_PANEL.map(e => ({ label: e, value: e }))));
                     return interaction.reply({ content: 'Elegí evento:', components: [row], ephemeral: true });
@@ -1069,6 +1210,11 @@ function setupPanel(client, funciones) {
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado.', ephemeral: true });
+
+                if (session.estado === 'bloqueada' && !esLider(interaction.member, funciones)) {
+                    return interaction.reply({ content: '❌ Solo líderes/helpers pueden editar una subasta bloqueada.', ephemeral: true });
+                }
+
                 session.item[campo] = valor;
                 pushHistorial(session, interaction, `Cambió ${campo} a ${valor}`);
                 guardarSubastas(subastas);
@@ -1098,6 +1244,10 @@ function setupPanel(client, funciones) {
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Sesión no encontrada.', ephemeral: true });
+
+                if (session.estado === 'bloqueada' && !esLider(interaction.member, funciones)) {
+                    return interaction.reply({ content: '❌ Solo líderes/helpers pueden editar una subasta bloqueada.', ephemeral: true });
+                }
 
                 if (tipo === 'cantidad') {
                     const valor = parseInt(interaction.fields.getTextInputValue('valor'), 10);
@@ -1223,6 +1373,8 @@ function setupPanel(client, funciones) {
 
                     const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
                     delete subastas[session.id]; guardarSubastas(subastas);
+
+                    await limpiarSlotBossPorThread(session.threadId, client);
 
                     await refrescarTodo(client, funciones);
 
