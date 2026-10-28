@@ -29,7 +29,7 @@ const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos',
 const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
 
 const pendingPanel = new Map();
-const pendingHistories = new Map(); // Guarda las INTERACCIONES de historial
+const pendingHistories = new Map();
 let refrescandoPaneles = false;
 let procesandoPaneles = false;
 
@@ -137,7 +137,19 @@ function esLider(member, funciones) {
     if (!member) return false;
     if (member.id === member.guild.ownerId) return true;
     if (member.permissions && member.permissions.has('Administrator')) return true;
-    return member.roles.cache.has(funciones.ROL_LIDER) || member.roles.cache.has(funciones.ROL_HELPER);
+    return member.roles.cache.has(funciones.ROL_LIDER);
+}
+
+function esAuctionMod(member, funciones) {
+    if (!member) return false;
+    if (esLider(member, funciones)) return true;
+    return member.roles.cache.has(funciones.ROL_HELPER);
+}
+
+function esOficial(member, funciones) {
+    if (!member) return false;
+    if (esAuctionMod(member, funciones)) return true;
+    return !!(funciones.ROL_OFICIAL && member.roles.cache.has(funciones.ROL_OFICIAL));
 }
 
 function obtenerEventoPorHora() {
@@ -734,22 +746,9 @@ function setupPanel(client, funciones) {
             if (interaction.isChatInputCommand() && interaction.commandName === 'panel') {
                 const sub = interaction.options.getSubcommand();
                 const subastas = cargarSubastas();
-                const esLiderUsuario = esLider(interaction.member, funciones);
-
-                if (sub === 'refresh') {
-                    if (refrescandoPaneles) return interaction.reply({ content: '⏳ Ya hay un refresco en curso.', ephemeral: true });
-                    refrescandoPaneles = true;
-                    try {
-                        await interaction.deferReply({ ephemeral: true });
-                        const cant = await refrescarTodo(client, funciones);
-                        const movidos = await moverPanelesAlFinal(client, funciones);
-                        return interaction.editReply({ content: `✅ Refrescados **${cant}** paneles activos. Movidos al final: **${movidos}**.` });
-                    } finally {
-                        refrescandoPaneles = false;
-                    }
-                }
 
                 if (sub === 'crear') {
+                    if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                     await interaction.deferReply();
                     if (!interaction.channel.isThread()) return interaction.editReply({ content: '❌ Solo funciona en threads.' });
                     const threadId = interaction.channelId;
@@ -785,7 +784,7 @@ function setupPanel(client, funciones) {
                 }
 
                 if (sub === 'indice') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
+                    if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                     await interaction.deferReply({ ephemeral: true });
                     const indice = cargarIndice();
                     let canal = interaction.channel, msg = null;
@@ -797,25 +796,12 @@ function setupPanel(client, funciones) {
                     return interaction.editReply({ content: '✅ Índice actualizado.' });
                 }
 
-                if (sub === 'cancelar') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Only leaders/staff.', ephemeral: true });
-                    if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only in threads.', ephemeral: true });
-                    const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
-                    if (!session) return interaction.reply({ content: '❌ No hay panel activo.', ephemeral: true });
-
-                    const id = guardarPendientePanel('cancelar_subasta', { sessionId: session.id }, interaction.user.id);
-                    const row = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, cancelar y eliminar').setStyle(ButtonStyle.Danger),
-                        new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Volver').setStyle(ButtonStyle.Secondary)
-                    );
-                    return interaction.reply({ content: '⚠️ **¿Cancelar esta subasta y eliminar el panel?**', components: [row], ephemeral: true });
-                }
-
                 if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only in threads.', ephemeral: true });
                 const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
                 if (!session) return interaction.reply({ content: '❌ No hay panel activo.', ephemeral: true });
 
                 if (sub === 'ver') {
+                    if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                     if (session.messageId) {
                         try {
                             const canal = await client.channels.fetch(session.channelId);
@@ -831,9 +817,7 @@ function setupPanel(client, funciones) {
                 }
 
                 if (sub === 'objeto') {
-                    if (session.estado === 'bloqueada' && !esLiderUsuario) {
-                        return interaction.reply({ content: '❌ Solo líderes/helpers pueden editar una subasta bloqueada.', ephemeral: true });
-                    }
+                    if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                     const db = funciones.cargarDB();
                     const nombre = interaction.options.getString('nombre');
                     const categoria = logic.inferirCategoria(nombre, db);
@@ -845,15 +829,11 @@ function setupPanel(client, funciones) {
                 }
 
                 if (sub === 'interesado') {
+                    if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                     const jugadorRaw = interaction.options.getString('jugador');
                     const accion = interaction.options.getString('accion') || 'añadir';
 
-                    if (accion === 'añadir' && session.estado === 'bloqueada' && !esLiderUsuario) {
-                        return interaction.reply({ content: '❌ The auction is locked. You cant join.', ephemeral: true });
-                    }
-
                     if (accion === 'quitar') {
-                        if (!esLiderUsuario) return interaction.reply({ content: '❌ Only leaders/staff.', ephemeral: true });
                         const miembros = funciones.cargarMiembros();
                         const canon = funciones.aplicarCanonico(jugadorRaw, miembros);
                         const idx = session.interesados.findIndex(i => utils.claveJugador(i, miembros) === utils.claveJugador(canon, miembros));
@@ -870,7 +850,12 @@ function setupPanel(client, funciones) {
 
             if (interaction.isChatInputCommand() && interaction.commandName === 'control') {
                 const sub = interaction.options.getSubcommand();
-                if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Only leaders/staff.', ephemeral: true });
+
+                if (sub === 'agregar' || sub === 'quitar') {
+                    if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Líderes/Admins.', ephemeral: true });
+                } else if (sub === 'panel') {
+                    if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
+                }
 
                 if (sub === 'agregar') {
                     const tId = interaction.options.getChannel('canal')?.id || interaction.channelId;
@@ -916,10 +901,9 @@ function setupPanel(client, funciones) {
 
                 const db = funciones.cargarDB();
                 const miembros = funciones.cargarMiembros();
-                const esLiderUsuario = esLider(interaction.member, funciones);
 
                 if (accion === 'bloquear') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Only leaders/staff can lock the auction.', ephemeral: true });
+                    if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                     session.estado = session.estado === 'abierta' ? 'bloqueada' : 'abierta';
                     pushHistorial(session, interaction, session.estado === 'abierta' ? 'Subasta desbloqueada' : 'Subasta bloqueada');
                     guardarSubastas(subastas);
@@ -979,9 +963,7 @@ function setupPanel(client, funciones) {
                 }
 
                 if (accion === 'editar') {
-                    if (session.estado === 'bloqueada' && !esLiderUsuario) {
-                        return interaction.reply({ content: '❌ Solo líderes/helpers pueden editar una subasta bloqueada.', ephemeral: true });
-                    }
+                    if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                     const embed = new EmbedBuilder().setTitle('✏️ Editar panel').setDescription('Elegí qué querés editar:');
                     const row1 = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_edit:evento:${sessionId}`).setLabel('Evento').setStyle(ButtonStyle.Secondary),
@@ -992,12 +974,12 @@ function setupPanel(client, funciones) {
                         new ButtonBuilder().setCustomId(`panel_edit:objeto:${sessionId}`).setLabel('Objeto').setStyle(ButtonStyle.Secondary),
                         new ButtonBuilder().setCustomId(`panel_edit:agregar_interesado:${sessionId}`).setLabel('Añadir interesado').setStyle(ButtonStyle.Success)
                     );
-                    if (esLiderUsuario) row2.addComponents(new ButtonBuilder().setCustomId(`panel_edit:quitar_interesado:${sessionId}`).setLabel('Quitar interesado').setStyle(ButtonStyle.Danger));
+                    if (esOficial(interaction.member, funciones)) row2.addComponents(new ButtonBuilder().setCustomId(`panel_edit:quitar_interesado:${sessionId}`).setLabel('Quitar interesado').setStyle(ButtonStyle.Danger));
                     return interaction.reply({ embeds: [embed], components: [row1, row2], ephemeral: true });
                 }
 
                 if (accion === 'registrar') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Only staff/leaders.', ephemeral: true });
+                    if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                     if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
 
                     const resultados = session.interesados.map(j => ({ jugador: j, ...funciones.calcularPrioridad(j, session.item.categoria, db.compras, miembros) }));
@@ -1015,7 +997,7 @@ function setupPanel(client, funciones) {
                 }
 
                 if (accion === 'cancelar') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Only leaders/staff.', ephemeral: true });
+                    if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                     const id = guardarPendientePanel('cancelar_subasta', { sessionId: session.id }, interaction.user.id);
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, cancelar y eliminar').setStyle(ButtonStyle.Danger),
@@ -1093,7 +1075,6 @@ function setupPanel(client, funciones) {
                 if (tipo === 'cat') {
                     const categoria = CATEGORIAS_PANEL[catIndex] || CATEGORIAS_PANEL[0];
                     const render = renderHistorialCategoria(session, categoria, page, db, miembros, funciones);
-                    // GUARDAMOS LA INTERACCIÓN ORIGINAL
                     pendingHistories.set(interaction.message.id, interaction);
                     return interaction.update({ content: render.content, components: render.components });
                 }
@@ -1134,7 +1115,6 @@ function setupPanel(client, funciones) {
                     } catch (e) {
                         console.error('Error editando el historial original:', e);
                     }
-                    // NO borramos del Map para permitir cambios múltiples
                 }
 
                 return interaction.update({ content: '✅ Categoría actualizada en el historial.', components: [] });
@@ -1181,15 +1161,11 @@ function setupPanel(client, funciones) {
             }
 
             if (interaction.isButton() && interaction.customId.startsWith('panel_edit:')) {
+                if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                 const [, campo, sessionId] = interaction.customId.split(':');
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado.', ephemeral: true });
-                const esLiderUsuario = esLider(interaction.member, funciones);
-
-                if (session.estado === 'bloqueada' && !esLiderUsuario) {
-                    return interaction.reply({ content: '❌ Solo líderes/helpers pueden editar una subasta bloqueada.', ephemeral: true });
-                }
 
                 if (campo === 'evento') {
                     const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`panel_sel:evento:${sessionId}`).setPlaceholder('Elegir evento').addOptions(EVENTOS_PANEL.map(e => ({ label: e, value: e }))));
@@ -1211,7 +1187,6 @@ function setupPanel(client, funciones) {
                     return interaction.showModal(modal);
                 }
                 if (campo === 'quitar_interesado') {
-                    if (!esLiderUsuario) return interaction.reply({ content: '❌ Only leaders/staff.', ephemeral: true });
                     if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados para quitar.', ephemeral: true });
                     const opciones = session.interesados.slice(0, 25).map(j => ({ label: funciones.aplicarCanonico(j, funciones.cargarMiembros()), value: j }));
                     const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`panel_sel_quitar:${sessionId}`).setPlaceholder('Elegí a quién quitar').addOptions(opciones));
@@ -1220,15 +1195,12 @@ function setupPanel(client, funciones) {
             }
 
             if (interaction.isStringSelectMenu() && interaction.customId.startsWith('panel_sel:')) {
+                if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                 const [, campo, sessionId] = interaction.customId.split(':');
                 const valor = interaction.values[0];
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado.', ephemeral: true });
-
-                if (session.estado === 'bloqueada' && !esLider(interaction.member, funciones)) {
-                    return interaction.reply({ content: '❌ Solo líderes/helpers pueden editar una subasta bloqueada.', ephemeral: true });
-                }
 
                 session.item[campo] = valor;
                 pushHistorial(session, interaction, `Cambió ${campo} a ${valor}`);
@@ -1238,12 +1210,12 @@ function setupPanel(client, funciones) {
             }
 
             if (interaction.isStringSelectMenu() && interaction.customId.startsWith('panel_sel_quitar:')) {
+                if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                 const sessionId = interaction.customId.split(':')[1];
                 const valor = interaction.values[0];
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado.', ephemeral: true });
-                if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
 
                 const canon = funciones.aplicarCanonico(valor, funciones.cargarMiembros());
                 const id = guardarPendientePanel('quitar_interesado', { sessionId: session.id, jugador: valor }, interaction.user.id);
@@ -1260,11 +1232,8 @@ function setupPanel(client, funciones) {
                 const session = subastas[sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Sesión no encontrada.', ephemeral: true });
 
-                if (session.estado === 'bloqueada' && !esLider(interaction.member, funciones)) {
-                    return interaction.reply({ content: '❌ Solo líderes/helpers pueden editar una subasta bloqueada.', ephemeral: true });
-                }
-
                 if (tipo === 'cantidad') {
+                    if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                     const valor = parseInt(interaction.fields.getTextInputValue('valor'), 10);
                     if (isNaN(valor) || valor < 0) return interaction.reply({ content: '❌ Cantidad inválida.', ephemeral: true });
                     session.item.cantidad = valor;
@@ -1275,13 +1244,14 @@ function setupPanel(client, funciones) {
                 }
 
                 if (tipo === 'agregar_interesado') {
+                    if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                     const jugadorRaw = interaction.fields.getTextInputValue('jugador').trim();
                     if (!jugadorRaw) return interaction.reply({ content: '❌ Nombre inválido.', ephemeral: true });
                     return mostrarConfirmacionAgregar(interaction, session, jugadorRaw, funciones);
                 }
 
                 if (tipo === 'registrar') {
-                    if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
+                    if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                     const miembros = funciones.cargarMiembros();
 
                     const canonizarGanador = (valor) => {
@@ -1311,7 +1281,6 @@ function setupPanel(client, funciones) {
 
                     const id = guardarPendientePanel('registrar_resultado', { sessionId, ganadores: g, perdedores: p, cantidad: cant }, interaction.user.id);
 
-                    // --- PREVIEW CORREGIDO ---
                     const gExpanded = [];
                     const gMultiples = [];
                     for (const gItem of g) {
@@ -1334,7 +1303,6 @@ function setupPanel(client, funciones) {
                         txt += `\n\n${pTitle}\n${pBase.join(', ')}`;
                     }
                     txt += `\n\n¿Confirmás y guardás en el historial?`;
-                    // --- FIN PREVIEW CORREGIDO ---
 
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Confirmar y guardar').setStyle(ButtonStyle.Success),
@@ -1414,7 +1382,6 @@ function setupPanel(client, funciones) {
 
                     await refrescarTodo(client, funciones);
 
-                    // --- MENSAJE PÚBLICO CORREGIDO ---
                     const ganadoresExpandidos = [];
                     const ganadoresMultiples = [];
                     for (const gItem of entrada.ganadores) {
@@ -1438,7 +1405,6 @@ function setupPanel(client, funciones) {
                     }
 
                     if (!syncRes.ok) msg += `\n\n⚠️ Sync falló: ${syncRes.motivo}`;
-                    // --- FIN MENSAJE PÚBLICO CORREGIDO ---
 
                     pendingPanel.delete(id);
                     await interaction.editReply({ content: '✅ Acción completada.', components: [] });
@@ -1522,7 +1488,7 @@ function setupPanel(client, funciones) {
             }
 
             if (interaction.isButton() && interaction.customId.startsWith('control_btn:')) {
-                if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
+                if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                 const partes = interaction.customId.split(':');
                 const accion = partes[1];
                 const threadId = partes[2];
@@ -1685,7 +1651,7 @@ function setupPanel(client, funciones) {
             }
 
             if (interaction.isModalSubmit() && interaction.customId.startsWith('control_modal:')) {
-                if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/helpers.', ephemeral: true });
+                if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                 const partes = interaction.customId.split(':');
                 const accion = partes[1];
                 const threadId = partes[2];
