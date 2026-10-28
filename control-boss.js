@@ -62,6 +62,23 @@ function esLiderBoss(member, funciones) {
     return member.roles.cache.has(funciones.ROL_LIDER);
 }
 
+function esAuctionModBoss(member, funciones) {
+    if (!member) return false;
+    if (member.id === member.guild.ownerId) return true;
+    if (member.permissions && member.permissions.has('Administrator')) return true;
+    return member.roles.cache.has(funciones.ROL_LIDER) ||
+        member.roles.cache.has(funciones.ROL_HELPER);
+}
+
+function esOficialBoss(member, funciones) {
+    if (!member) return false;
+    if (member.id === member.guild.ownerId) return true;
+    if (member.permissions && member.permissions.has('Administrator')) return true;
+    return member.roles.cache.has(funciones.ROL_LIDER) ||
+        member.roles.cache.has(funciones.ROL_HELPER) ||
+        (funciones.ROL_OFICIAL && member.roles.cache.has(funciones.ROL_OFICIAL));
+}
+
 function slotConfigurado(s) { return !!(s && s.objeto && s.texto && s.imagen); }
 
 function slotTieneSubastaActiva(slot) {
@@ -335,11 +352,11 @@ function setupControlBoss(client, funciones) {
             }
 
             if (interaction.isChatInputCommand() && interaction.commandName === 'control-boss') {
-                if (!esLiderBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/admins.', ephemeral: true });
                 const sub = interaction.options.getSubcommand();
                 const grupo = interaction.options.getSubcommandGroup(false);
 
                 if (sub === 'canal') {
+                    if (!esLiderBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/admins.', ephemeral: true });
                     const canal = interaction.options.getChannel('canal');
                     if (canal.isThread()) {
                         return interaction.reply({ content: '❌ El canal de anuncios debe ser un canal de texto, no un thread.', ephemeral: true });
@@ -352,6 +369,7 @@ function setupControlBoss(client, funciones) {
                 }
 
                 if (grupo === 'objeto' && sub === 'set') {
+                    if (!esLiderBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/admins.', ephemeral: true });
                     const slot = interaction.options.getInteger('slot');
                     if (slot < 1 || slot > 4) return interaction.reply({ content: '❌ Slot inválido. Usá 1 a 4.', ephemeral: true });
                     const objeto = interaction.options.getString('objeto').trim();
@@ -373,6 +391,7 @@ function setupControlBoss(client, funciones) {
                 }
 
                 if (grupo === 'objeto' && sub === 'quitar') {
+                    if (!esLiderBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo líderes/admins.', ephemeral: true });
                     const slot = interaction.options.getInteger('slot');
                     if (slot < 1 || slot > 4) return interaction.reply({ content: '❌ Slot inválido. Usá 1 a 4.', ephemeral: true });
                     const config = cargarConfig();
@@ -384,6 +403,7 @@ function setupControlBoss(client, funciones) {
                 }
 
                 if (grupo === 'objeto' && sub === 'lista') {
+                    if (!esAuctionModBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                     const config = cargarConfig();
                     let out = '**Slots de anuncios**\n\n';
                     for (const s of config.slots) {
@@ -393,6 +413,7 @@ function setupControlBoss(client, funciones) {
                 }
 
                 if (sub === 'panel') {
+                    if (!esAuctionModBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                     await interaction.deferReply({ ephemeral: true });
                     const config = cargarConfig();
                     const payload = await renderPanelControlBoss(config);
@@ -419,6 +440,7 @@ function setupControlBoss(client, funciones) {
                 }
 
                 if (sub === 'estado') {
+                    if (!esAuctionModBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                     const pendientes = cargarPendientes();
                     const abiertos = pendientes.filter(p => p.estado === 'pendiente').length;
                     const usados = pendientes.filter(p => p.estado === 'usado').length;
@@ -428,6 +450,7 @@ function setupControlBoss(client, funciones) {
             }
 
             if (interaction.isButton() && interaction.customId.startsWith('boss_slot_abrir:')) {
+                if (!esOficialBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                 const slot = parseInt(interaction.customId.split(':')[1], 10);
                 const config = cargarConfig();
                 const s = config.slots.find(x => x.slot === slot);
@@ -444,6 +467,7 @@ function setupControlBoss(client, funciones) {
             }
 
             if (interaction.isButton() && interaction.customId.startsWith('boss_slot_cerrar:')) {
+                if (!esAuctionModBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                 const slot = parseInt(interaction.customId.split(':')[1], 10);
                 const config = cargarConfig();
                 const s = config.slots.find(x => x.slot === slot);
@@ -470,6 +494,7 @@ function setupControlBoss(client, funciones) {
             }
 
             if (interaction.isButton() && interaction.customId === 'boss_abrir_todos') {
+                if (!esAuctionModBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                 const config = cargarConfig();
                 const subastas = cargarSubastas();
                 const disponibles = [];
@@ -500,6 +525,7 @@ function setupControlBoss(client, funciones) {
             }
 
             if (interaction.isButton() && interaction.customId === 'boss_cerrar_todos') {
+                if (!esAuctionModBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                 const config = cargarConfig();
                 const subastas = cargarSubastas();
                 const activos = [];
@@ -523,6 +549,7 @@ function setupControlBoss(client, funciones) {
             }
 
             if (interaction.isModalSubmit() && interaction.customId.startsWith('boss_modal:')) {
+                if (!esOficialBoss(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                 const slot = parseInt(interaction.customId.split(':')[1], 10);
                 const config = cargarConfig();
                 const s = config.slots.find(x => x.slot === slot);
@@ -562,8 +589,20 @@ function setupControlBoss(client, funciones) {
                     try { await interaction.update({ content: '❌ Acción cancelada.', components: [] }); } catch(e) {}
                     return; 
                 }
-                confirmaciones.delete(id);
 
+                if ((tipo === 'abrir_todos' || tipo === 'cerrar' || tipo === 'cerrar_todos') && !esAuctionModBoss(interaction.member, funciones)) {
+                    confirmaciones.delete(id);
+                    try { await interaction.update({ content: '❌ No tienes permiso para esta acción.', components: [] }); } catch(e) {}
+                    return;
+                }
+
+                if (tipo === 'abrir' && !esOficialBoss(interaction.member, funciones)) {
+                    confirmaciones.delete(id);
+                    try { await interaction.update({ content: '❌ No tienes permiso para esta acción.', components: [] }); } catch(e) {}
+                    return;
+                }
+
+                confirmaciones.delete(id);
                 try { await interaction.deferUpdate(); } catch (e) {}
 
                 const config = cargarConfig();
