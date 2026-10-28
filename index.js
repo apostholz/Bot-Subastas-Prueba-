@@ -1215,12 +1215,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const sub = interaction.options.getSubcommand();
             if (sub === 'lista') {
                 const can = Object.entries(miembros.canonicos || {}).map(([k, v]) => `\`${k}\` → **${v}**`).join('\n') || '(ninguno)';
-                const ex = miembros.excluidos.map(e => `• ${e}`).join('\n') || '(ninguno)';
-                return interaction.reply({ content: `**Canónicos registrados:**\n${can}\n\n**Excluidos del ranking:**\n${ex}`, ephemeral: true });
+                return logic.responderLargo(interaction, `**Canónicos registrados:**\n${can}`, true);
             }
             if (sub === 'excluidos') {
                 const ex = miembros.excluidos.map(e => `• ${e}`).join('\n') || '(ninguno)';
-                return interaction.reply({ content: `**Excluidos del ranking:**\n${ex}`, ephemeral: true });
+                return logic.responderLargo(interaction, `**Excluidos del ranking:**\n${ex}`, true);
             }
             const nombreRaw = interaction.options.getString('nombre');
             const nombres = nombreRaw.split(',').map(s => s.trim()).filter(Boolean);
@@ -1638,14 +1637,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     "## Definir nombres\n" +
                     "`/miembros canonico` · definir la forma correcta de un nombre\n" +
                     "`/miembros quitar-canonico` · eliminar un canónico\n" +
-                    "`/miembros lista` · listar canónicos y excluidos\n" +
+                    "`/miembros lista` · listar canónicos registrados\n" +
                     "`/miembros excluir` · excluir nombres del ranking\n" +
                     "`/miembros excluidos` · listar solo los excluidos\n" +
                     "`/miembros incluir` · reincluir nombres excluidos"
                 );
             }
 
-            return interaction.reply({ content: secciones.join('\n\n'), ephemeral: true });
+            return logic.responderLargo(interaction, secciones.join('\n\n'), true);
         }
     } catch (err) {
         if (err.code === 10062) {
