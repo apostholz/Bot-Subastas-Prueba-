@@ -29,7 +29,7 @@ const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos',
 const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
 
 const pendingPanel = new Map();
-const pendingHistories = new Map(); // <-- NUEVO: Guarda las interacciones de historial
+const pendingHistories = new Map(); // Guarda los MENSAJES de historial
 let refrescandoPaneles = false;
 let procesandoPaneles = false;
 
@@ -1105,7 +1105,7 @@ function setupPanel(client, funciones) {
                 const catIndex = parseInt(catIndexStr) || 0;
                 
                 const historyMsgId = interaction.message.id;
-                pendingHistories.set(historyMsgId, interaction);
+                pendingHistories.set(historyMsgId, interaction.message); // Guardamos el MENSAJE, no la interacción
 
                 const row = new ActionRowBuilder().addComponents(
                     new StringSelectMenuBuilder()
@@ -1126,10 +1126,10 @@ function setupPanel(client, funciones) {
                 
                 const render = renderHistorialCategoria(session, categoria, 1, db, miembros, funciones);
                 
-                const originalInteraction = pendingHistories.get(historyMsgId);
-                if (originalInteraction) {
+                const originalMsg = pendingHistories.get(historyMsgId); // Recuperamos el MENSAJE
+                if (originalMsg) {
                     try {
-                        await originalInteraction.editReply({ content: render.content, components: render.components });
+                        await originalMsg.edit({ content: render.content, components: render.components }); // Editamos el mensaje original
                     } catch (e) {
                         console.error('Error editando el historial original:', e);
                     }
@@ -1310,7 +1310,7 @@ function setupPanel(client, funciones) {
 
                     const id = guardarPendientePanel('registrar_resultado', { sessionId, ganadores: g, perdedores: p, cantidad: cant }, interaction.user.id);
 
-                    // --- INICIO PREVIEW CORREGIDO ---
+                    // --- PREVIEW CORREGIDO ---
                     const gExpanded = [];
                     const gMultiples = [];
                     for (const gItem of g) {
@@ -1325,7 +1325,7 @@ function setupPanel(client, funciones) {
                     const gNumbered = gOrdered.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
                     const gTitle = gOrdered.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-                    let txt = `✅ **Resultado registrado** (pendiente de confirmar)\n📅 ${utils.formatearFecha(session.item.fecha)} ${utils.etiquetaDias(session.item.fecha)}\n· **${cant}x ${session.item.objeto}** (${session.item.categoria})\n\n${gTitle}\n${gNumbered || 'nadie'}`;
+                    let txt = `✅ **Resultado registrado** (pendiente de confirmar)\n📅 ${utils.formatearFecha(session.item.fecha)} ${utils.etiquetaDias(session.item.fecha)}\n\n· **${cant}**x ${session.item.objeto} (${session.item.categoria})\n\n${gTitle}\n${gNumbered || 'nadie'}`;
                     
                     if (p.length > 0) {
                         const pBase = p.map(pItem => funciones.aplicarCanonico(utils.parsearGanador(pItem).nombre, miembros));
@@ -1413,7 +1413,7 @@ function setupPanel(client, funciones) {
 
                     await refrescarTodo(client, funciones);
 
-                    // --- INICIO MENSAJE PÚBLICO CORREGIDO ---
+                    // --- MENSAJE PÚBLICO CORREGIDO ---
                     const ganadoresExpandidos = [];
                     const ganadoresMultiples = [];
                     for (const gItem of entrada.ganadores) {
@@ -1428,7 +1428,7 @@ function setupPanel(client, funciones) {
                     const ganadoresNumerados = ganadoresOrdenados.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
                     const tituloGanadores = ganadoresOrdenados.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-                    let msg = `✅ Resultado registrado: #${entrada.id}\n📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)}\n· **${entrada.cantidad}x ${entrada.objeto}** (${entrada.categoria})\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
+                    let msg = `✅ Resultado registrado: #${entrada.id}\n📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)}\n\n· **${entrada.cantidad}**x ${entrada.objeto} (${entrada.categoria})\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
                     
                     if (entrada.perdedores.length > 0) {
                         const perdedoresBase = entrada.perdedores.map(pItem => funciones.aplicarCanonico(utils.parsearGanador(pItem).nombre, miembros));
