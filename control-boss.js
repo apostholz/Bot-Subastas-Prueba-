@@ -341,6 +341,9 @@ function setupControlBoss(client, funciones) {
 
                 if (sub === 'canal') {
                     const canal = interaction.options.getChannel('canal');
+                    if (canal.isThread()) {
+                        return interaction.reply({ content: '❌ El canal de anuncios debe ser un canal de texto, no un thread.', ephemeral: true });
+                    }
                     const config = cargarConfig();
                     config.canalAnunciosId = canal.id;
                     guardarConfig(config);
