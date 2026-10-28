@@ -29,7 +29,7 @@ const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos',
 const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
 
 const pendingPanel = new Map();
-const pendingHistories = new Map(); // <-- NUEVO: Guarda los mensajes de historial para editarlos
+const pendingHistories = new Map(); // <-- NUEVO: Guarda las interacciones de historial
 let refrescandoPaneles = false;
 let procesandoPaneles = false;
 
@@ -635,7 +635,7 @@ function renderHistorialCategoria(session, categoria, page, db, miembros, funcio
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`panel_hist_cat_pick:${session.id}:${paginaActual}:${catIndex}`)
-            .setLabel(`📂 ${categoria}`) // Muestra el nombre dinámico
+            .setLabel(`📂 ${categoria}`)
             .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId(`panel_hist:cat:${session.id}:${paginaActual - 1}:${catIndex}`)
@@ -1099,15 +1099,13 @@ function setupPanel(client, funciones) {
 
             if (interaction.isButton() && interaction.customId.startsWith('panel_hist_cat_pick:')) {
                 const [, sessionId, pageStr, catIndexStr] = interaction.customId.split(':');
-                const subastas = cargarSubastas();
-                const session = subastas[sessionId];
+                const session = cargarSubastas()[sessionId];
                 if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
                 const page = parseInt(pageStr) || 1;
                 const catIndex = parseInt(catIndexStr) || 0;
                 
                 const historyMsgId = interaction.message.id;
-                // GUARDAMOS EL MENSAJE EN MEMORIA
-                pendingHistories.set(historyMsgId, interaction.message);
+                pendingHistories.set(historyMsgId, interaction);
 
                 const row = new ActionRowBuilder().addComponents(
                     new StringSelectMenuBuilder()
@@ -1115,14 +1113,12 @@ function setupPanel(client, funciones) {
                         .setPlaceholder('Elegir categoría')
                         .addOptions(CATEGORIAS_PANEL.map((c, i) => ({ label: c, value: c, default: i === catIndex })))
                 );
-                // Enviamos el selector en un nuevo mensaje ephemeral
                 return interaction.reply({ content: 'Elegí categoría:', components: [row], ephemeral: true });
             }
 
             if (interaction.isStringSelectMenu() && interaction.customId.startsWith('panel_hist_cat_sel:')) {
                 const [, sessionId, pageStr, catIndexStr, historyMsgId] = interaction.customId.split(':');
-                const subastas = cargarSubastas();
-                const session = subastas[sessionId];
+                const session = cargarSubastas()[sessionId];
                 if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
                 const db = funciones.cargarDB();
                 const miembros = funciones.cargarMiembros();
@@ -1130,18 +1126,16 @@ function setupPanel(client, funciones) {
                 
                 const render = renderHistorialCategoria(session, categoria, 1, db, miembros, funciones);
                 
-                // RECUPERAMOS EL MENSAJE DE MEMORIA Y LO EDITAMOS
-                const historyMsg = pendingHistories.get(historyMsgId);
-                if (historyMsg) {
+                const originalInteraction = pendingHistories.get(historyMsgId);
+                if (originalInteraction) {
                     try {
-                        await historyMsg.edit({ content: render.content, components: render.components });
+                        await originalInteraction.editReply({ content: render.content, components: render.components });
                     } catch (e) {
                         console.error('Error editando el historial original:', e);
                     }
                     pendingHistories.delete(historyMsgId);
                 }
 
-                // Limpiamos el mensaje del selector
                 return interaction.update({ content: '✅ Categoría actualizada en el historial.', components: [] });
             }
 
@@ -1316,9 +1310,30 @@ function setupPanel(client, funciones) {
 
                     const id = guardarPendientePanel('registrar_resultado', { sessionId, ganadores: g, perdedores: p, cantidad: cant }, interaction.user.id);
 
-                    let txt = `📋 **Confirmar registro**\n\n**Objeto:** ${session.item.objeto}\n**Categoría:** ${session.item.categoria}\n**Evento:** ${session.item.evento}\n**Fecha:** ${session.item.fecha}\n**Cantidad:** ${cant}\n\n🏆 **Ganadores:** ${g.map(x => `**${x}**`).join(', ') || 'nadie'}\n`;
-                    if (p.length > 0) txt += `💔 **Perdedores:** ${p.join(', ')}\n`;
-                    txt += `\n¿Confirmás y guardás en el historial?`;
+                    // --- INICIO PREVIEW CORREGIDO ---
+                    const gExpanded = [];
+                    const gMultiples = [];
+                    for (const gItem of g) {
+                        const parsed = utils.parsearGanador(gItem);
+                        if (parsed.cantidad > 1) {
+                            for (let i = 0; i < parsed.cantidad; i++) gMultiples.push(parsed.nombre);
+                        } else {
+                            gExpanded.push(parsed.nombre);
+                        }
+                    }
+                    const gOrdered = [...gExpanded, ...gMultiples];
+                    const gNumbered = gOrdered.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
+                    const gTitle = gOrdered.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
+
+                    let txt = `✅ **Resultado registrado** (pendiente de confirmar)\n📅 ${utils.formatearFecha(session.item.fecha)} ${utils.etiquetaDias(session.item.fecha)}\n· **${cant}x ${session.item.objeto}** (${session.item.categoria})\n\n${gTitle}\n${gNumbered || 'nadie'}`;
+                    
+                    if (p.length > 0) {
+                        const pBase = p.map(pItem => funciones.aplicarCanonico(utils.parsearGanador(pItem).nombre, miembros));
+                        const pTitle = p.length === 1 ? '💔 **Non-winner:**' : '💔 **Non-winners:**';
+                        txt += `\n\n${pTitle}\n${pBase.join(', ')}`;
+                    }
+                    txt += `\n\n¿Confirmás y guardás en el historial?`;
+                    // --- FIN PREVIEW CORREGIDO ---
 
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Confirmar y guardar').setStyle(ButtonStyle.Success),
@@ -1398,10 +1413,11 @@ function setupPanel(client, funciones) {
 
                     await refrescarTodo(client, funciones);
 
+                    // --- INICIO MENSAJE PÚBLICO CORREGIDO ---
                     const ganadoresExpandidos = [];
                     const ganadoresMultiples = [];
-                    for (const g of entrada.ganadores) {
-                        const parsed = utils.parsearGanador(g);
+                    for (const gItem of entrada.ganadores) {
+                        const parsed = utils.parsearGanador(gItem);
                         if (parsed.cantidad > 1) {
                             for (let i = 0; i < parsed.cantidad; i++) ganadoresMultiples.push(parsed.nombre);
                         } else {
@@ -1409,23 +1425,19 @@ function setupPanel(client, funciones) {
                         }
                     }
                     const ganadoresOrdenados = [...ganadoresExpandidos, ...ganadoresMultiples];
-
-                    const ganadoresNumerados = ganadoresOrdenados
-                        .map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`)
-                        .join('\n');
-
+                    const ganadoresNumerados = ganadoresOrdenados.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
                     const tituloGanadores = ganadoresOrdenados.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-                    let msg = `✅ Resultado registrado: #${entrada.id} · 📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${entrada.cantidad}x ${entrada.objeto} (${entrada.categoria})`;
-                    msg += `\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
-
+                    let msg = `✅ Resultado registrado: #${entrada.id}\n📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)}\n· **${entrada.cantidad}x ${entrada.objeto}** (${entrada.categoria})\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
+                    
                     if (entrada.perdedores.length > 0) {
-                        const perdedoresBase = entrada.perdedores.map(p => funciones.aplicarCanonico(utils.parsearGanador(p).nombre, miembros));
+                        const perdedoresBase = entrada.perdedores.map(pItem => funciones.aplicarCanonico(utils.parsearGanador(pItem).nombre, miembros));
                         const tituloPerdedores = entrada.perdedores.length === 1 ? '💔 **Non-winner:**' : '💔 **Non-winners:**';
                         msg += `\n\n${tituloPerdedores}\n${perdedoresBase.join(', ')}`;
                     }
 
                     if (!syncRes.ok) msg += `\n\n⚠️ Sync falló: ${syncRes.motivo}`;
+                    // --- FIN MENSAJE PÚBLICO CORREGIDO ---
 
                     pendingPanel.delete(id);
                     await interaction.editReply({ content: '✅ Acción completada.', components: [] });
@@ -1438,8 +1450,8 @@ function setupPanel(client, funciones) {
 
                             const nombresBase = [];
                             const vistosBase = new Set();
-                            for (const g of entrada.ganadores) {
-                                const nombreBase = utils.parsearGanador(g).nombre;
+                            for (const gItem of entrada.ganadores) {
+                                const nombreBase = utils.parsearGanador(gItem).nombre;
                                 const key = utils.claveJugador(nombreBase, miembros);
                                 if (!vistosBase.has(key)) {
                                     vistosBase.add(key);
