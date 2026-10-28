@@ -10,6 +10,7 @@ const BACKUP_FILE = path.join(DATA_DIR, 'backup.csv');
 
 const ROL_LIDER = '1547712440593031249';
 const ROL_HELPER = '1560311703118545007';
+const ROL_OFICIAL = '1564961258061566082';
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -268,5 +269,5 @@ module.exports = {
     fechaHoyArgentina, convertirFecha, convertirFechaDia, formatearFecha, diasDesde, etiquetaDias, filtrarPorPeriodo,
     CATEGORIAS, CATEGORIAS_TOTAL, ABREVIATURAS, ICONOS, OBJETOS_PROHIBIDOS, PESOS, getFactorTemporal,
     nombreBonitoEvento, ordenEvento, ordenCategoria, bloqueDeCategoria, ordenarComprasDesc,
-    ROL_LIDER, ROL_HELPER, DB_FILE, CSV_FILE, BACKUP_FILE, DATA_DIR
+    ROL_LIDER, ROL_HELPER, ROL_OFICIAL, DB_FILE, CSV_FILE, BACKUP_FILE, DATA_DIR
 };
