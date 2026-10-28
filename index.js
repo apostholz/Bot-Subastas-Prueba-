@@ -1570,10 +1570,82 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         if (interaction.commandName === 'ayuda') {
-            return interaction.reply({
-                content: `**Comandos:**\n\`/sub\` · registrar compra\n\`/subf\` · registrar con fecha\n\`/registro-rapido\` · registrar varias entradas (Admin)\n\`/historial\` · historial privado\n\`/historial2\` · historial público\n\`/dia\` · compras de un día\n\`/total\` · totales por categoría\n\`/ranking\` · tabla general\n\`/prioridad\` · calcular prioridad\n\`/alertas\` · alertas de acaparamiento\n\`/objeto\` · apariciones de un objeto\n\`/categoria\` · apariciones de una categoría\n\`/catalogo\` · gestionar catálogo de objetos (Líder)\n\`/backup\` · exportar CSV (Admin)\n\`/sync\` · sincronizar con GitHub (Admin)\n\`/miembros\` · gestionar nombres y exclusiones\n\`/editar\` · editar entrada\n\`/borrar\` · borrar por ID\n\`/dado\` · tirar dado para un jugador en la subasta actual\n\`/dados lista\` · ver la lista de dados tirados en el thread\n\`/dados limpiar-lista\` · limpiar dados del thread\n\`/ayuda\` · este mensaje\n\n**Paneles:**\n\`/panel crear\` · crear panel\n\`/panel ver\` · mostrar panel\n\`/panel objeto\` · cambiar objeto\n\`/panel interesado\` · añadir/quitar interesados\n\`/panel cancelar\` · cancelar subasta\n\`/panel indice\` · crear/actualizar índice\n\`/panel refresh\` · forzar actualización\n\n**Control:**\n\`/control agregar\` · añadir thread fijo\n\`/control quitar\` · quitar thread fijo\n\`/control panel\` · crear/actualizar Panel de Control de Invasión\n\`/control-boss\` · gestionar anuncios automáticos`,
-                ephemeral: true
-            });
+            const esDueño = interaction.guild && interaction.guild.ownerId === interaction.user.id;
+            const esAdmin = interaction.member && interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+            const esLider = esDueño || esAdmin || (interaction.member && interaction.member.roles.cache.has(utils.ROL_LIDER));
+            const esAuctionMod = esLider || (interaction.member && interaction.member.roles.cache.has(utils.ROL_HELPER));
+            const esOficial = esAuctionMod || (interaction.member && utils.ROL_OFICIAL && interaction.member.roles.cache.has(utils.ROL_OFICIAL));
+
+            const secciones = [];
+
+            secciones.push(`# __Comandos generales__\n` +
+                "`/historial` · historial privado para no llenar el chat\n" +
+                "`/historial2` · historial visible para todos\n" +
+                "`/dia` · ver todas las compras de cada día\n" +
+                "`/total` · unidades compradas totales de un jugador por categoría\n" +
+                "`/ranking` · tabla general de clasificación\n" +
+                "`/prioridad` · calcular prioridad entre jugadores\n" +
+                "`/alertas` · alertas por acaparamiento de ítems\n" +
+                "`/objeto` · ver lista de apariciones de un objeto\n" +
+                "`/categoria` · ver apariciones de todos los objetos de una categoría\n" +
+                "`/dado` · tirar dados para mí u otro usuario en la subasta\n" +
+                "`/dados lista` · ver lista de dados lanzados en el thread\n" +
+                "`/ayuda` · este mensaje"
+            );
+
+            if (esOficial) {
+                let paneles = `# __Paneles__\n` +
+                    "`/panel crear` · crear panel en un thread\n" +
+                    "`/panel ver` · mostrar panel nuevamente\n" +
+                    "`/panel objeto` · cambiar objeto del panel\n" +
+                    "`/panel interesado` · añadir/quitar interesados";
+                if (esAuctionMod) {
+                    paneles += "\n`/panel indice` · crear/actualizar índice de subastas activas";
+                }
+                secciones.push(paneles);
+            }
+
+            if (esAuctionMod) {
+                secciones.push(`# __Auction Mod / Líder__\n` +
+                    "`/sub` · registrar compra de hoy\n" +
+                    "`/subf` · registrar compra de una fecha específica\n" +
+                    "`/dados limpiar-lista` · borrar los dados de un jugador o de todos\n\n" +
+                    "## Editar compras registradas\n" +
+                    "`/editar ganador` · agregar/quitar ganadores\n" +
+                    "`/editar reemplazar-ganador` · reemplazar un ganador por otro\n" +
+                    "`/editar perdedor` · agregar/quitar perdedores\n" +
+                    "`/editar reemplazar-perdedor` · reemplazar un perdedor por otro\n" +
+                    "`/editar set` · cambiar objeto, cantidad, categoría, evento o fecha\n" +
+                    "`/borrar` · borrar una compra completa por ID\n\n" +
+                    "## Control\n" +
+                    "`/control panel` · crear/actualizar Panel de Control de Invasión\n" +
+                    "`/control-boss panel` · crear/actualizar Panel de Control de Banquete\n" +
+                    "`/control-boss objeto lista` · listar slots configurados\n" +
+                    "`/control-boss estado` · ver estado de anuncios pendientes"
+                );
+            }
+
+            if (esLider) {
+                secciones.push(`# __Líder__\n` +
+                    "`/catalogo` · añadir objetos nuevos al bot sin registrar una compra\n\n" +
+                    "## Control de Invasión\n" +
+                    "`/control agregar` · añadir thread al Panel de Control de Invasión\n" +
+                    "`/control quitar` · quitar thread fijo\n\n" +
+                    "## Control de Banquete\n" +
+                    "`/control-boss canal` · configurar canal para enviar imagen y crear subasta\n" +
+                    "`/control-boss objeto set` · configurar un objeto en un slot\n" +
+                    "`/control-boss objeto quitar` · liberar un slot\n\n" +
+                    "## Definir nombres\n" +
+                    "`/miembros canonico` · definir la forma correcta de un nombre\n" +
+                    "`/miembros quitar-canonico` · eliminar un canónico\n" +
+                    "`/miembros lista` · listar canónicos y excluidos\n" +
+                    "`/miembros excluir` · excluir nombres del ranking\n" +
+                    "`/miembros excluidos` · listar solo los excluidos\n" +
+                    "`/miembros incluir` · reincluir nombres excluidos"
+                );
+            }
+
+            return interaction.reply({ content: secciones.join('\n\n'), ephemeral: true });
         }
     } catch (err) {
         if (err.code === 10062) {
@@ -1605,7 +1677,8 @@ const funciones = {
     guardarPendiente: guardarPendiente,
     formatearPingGanadores: logic.formatearPingGanadores,
     ROL_LIDER: utils.ROL_LIDER,
-    ROL_HELPER: utils.ROL_HELPER
+    ROL_HELPER: utils.ROL_HELPER,
+    ROL_OFICIAL: utils.ROL_OFICIAL
 };
 
 setupPanel(client, funciones);
