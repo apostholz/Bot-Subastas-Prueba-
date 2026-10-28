@@ -29,7 +29,7 @@ const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos',
 const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
 
 const pendingPanel = new Map();
-const pendingHistories = new Map(); // Guarda los MENSAJES de historial
+const pendingHistories = new Map(); // Guarda las INTERACCIONES de historial
 let refrescandoPaneles = false;
 let procesandoPaneles = false;
 
@@ -1093,6 +1093,8 @@ function setupPanel(client, funciones) {
                 if (tipo === 'cat') {
                     const categoria = CATEGORIAS_PANEL[catIndex] || CATEGORIAS_PANEL[0];
                     const render = renderHistorialCategoria(session, categoria, page, db, miembros, funciones);
+                    // GUARDAMOS LA INTERACCIÓN ORIGINAL
+                    pendingHistories.set(interaction.message.id, interaction);
                     return interaction.update({ content: render.content, components: render.components });
                 }
             }
@@ -1105,7 +1107,6 @@ function setupPanel(client, funciones) {
                 const catIndex = parseInt(catIndexStr) || 0;
                 
                 const historyMsgId = interaction.message.id;
-                pendingHistories.set(historyMsgId, interaction.message); // Guardamos el MENSAJE, no la interacción
 
                 const row = new ActionRowBuilder().addComponents(
                     new StringSelectMenuBuilder()
@@ -1126,14 +1127,14 @@ function setupPanel(client, funciones) {
                 
                 const render = renderHistorialCategoria(session, categoria, 1, db, miembros, funciones);
                 
-                const originalMsg = pendingHistories.get(historyMsgId); // Recuperamos el MENSAJE
-                if (originalMsg) {
+                const originalInteraction = pendingHistories.get(historyMsgId);
+                if (originalInteraction) {
                     try {
-                        await originalMsg.edit({ content: render.content, components: render.components }); // Editamos el mensaje original
+                        await originalInteraction.editReply({ content: render.content, components: render.components });
                     } catch (e) {
                         console.error('Error editando el historial original:', e);
                     }
-                    pendingHistories.delete(historyMsgId);
+                    // NO borramos del Map para permitir cambios múltiples
                 }
 
                 return interaction.update({ content: '✅ Categoría actualizada en el historial.', components: [] });
@@ -1325,7 +1326,7 @@ function setupPanel(client, funciones) {
                     const gNumbered = gOrdered.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
                     const gTitle = gOrdered.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-                    let txt = `✅ **Resultado registrado** (pendiente de confirmar)\n📅 ${utils.formatearFecha(session.item.fecha)} ${utils.etiquetaDias(session.item.fecha)}\n\n· **${cant}**x ${session.item.objeto} (${session.item.categoria})\n\n${gTitle}\n${gNumbered || 'nadie'}`;
+                    let txt = `✅ **Resultado registrado** (pendiente de confirmar)\n📅 ${utils.formatearFecha(session.item.fecha)} ${utils.etiquetaDias(session.item.fecha)}\n\n· **${cant}**x **${session.item.objeto}** (${session.item.categoria})\n\n${gTitle}\n${gNumbered || 'nadie'}`;
                     
                     if (p.length > 0) {
                         const pBase = p.map(pItem => funciones.aplicarCanonico(utils.parsearGanador(pItem).nombre, miembros));
@@ -1428,7 +1429,7 @@ function setupPanel(client, funciones) {
                     const ganadoresNumerados = ganadoresOrdenados.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
                     const tituloGanadores = ganadoresOrdenados.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-                    let msg = `✅ Resultado registrado: #${entrada.id}\n📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)}\n\n· **${entrada.cantidad}**x ${entrada.objeto} (${entrada.categoria})\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
+                    let msg = `✅ Resultado registrado: #${entrada.id}\n📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)}\n\n· **${entrada.cantidad}**x **${entrada.objeto}** (${entrada.categoria})\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
                     
                     if (entrada.perdedores.length > 0) {
                         const perdedoresBase = entrada.perdedores.map(pItem => funciones.aplicarCanonico(utils.parsearGanador(pItem).nombre, miembros));
