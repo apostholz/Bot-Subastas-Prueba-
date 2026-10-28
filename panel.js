@@ -29,6 +29,7 @@ const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos',
 const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
 
 const pendingPanel = new Map();
+const pendingHistories = new Map(); // <-- NUEVO: Guarda los mensajes de historial para editarlos
 let refrescandoPaneles = false;
 let procesandoPaneles = false;
 
@@ -1103,11 +1104,14 @@ function setupPanel(client, funciones) {
                 if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
                 const page = parseInt(pageStr) || 1;
                 const catIndex = parseInt(catIndexStr) || 0;
-                const historyMsgId = interaction.message.id; // Guardamos el ID del mensaje de historial original
+                
+                const historyMsgId = interaction.message.id;
+                // GUARDAMOS EL MENSAJE EN MEMORIA
+                pendingHistories.set(historyMsgId, interaction.message);
 
                 const row = new ActionRowBuilder().addComponents(
                     new StringSelectMenuBuilder()
-                        .setCustomId(`panel_hist_cat_sel:${sessionId}:${page}:${catIndex}:${historyMsgId}`) // Pasamos el ID al customId
+                        .setCustomId(`panel_hist_cat_sel:${sessionId}:${page}:${catIndex}:${historyMsgId}`)
                         .setPlaceholder('Elegir categoría')
                         .addOptions(CATEGORIAS_PANEL.map((c, i) => ({ label: c, value: c, default: i === catIndex })))
                 );
@@ -1126,12 +1130,15 @@ function setupPanel(client, funciones) {
                 
                 const render = renderHistorialCategoria(session, categoria, 1, db, miembros, funciones);
                 
-                // Editamos el mensaje original del historial
-                try {
-                    const historyMsg = await interaction.channel.messages.fetch(historyMsgId);
-                    await historyMsg.edit({ content: render.content, components: render.components });
-                } catch (e) {
-                    console.error('Error editando el historial original:', e);
+                // RECUPERAMOS EL MENSAJE DE MEMORIA Y LO EDITAMOS
+                const historyMsg = pendingHistories.get(historyMsgId);
+                if (historyMsg) {
+                    try {
+                        await historyMsg.edit({ content: render.content, components: render.components });
+                    } catch (e) {
+                        console.error('Error editando el historial original:', e);
+                    }
+                    pendingHistories.delete(historyMsgId);
                 }
 
                 // Limpiamos el mensaje del selector
