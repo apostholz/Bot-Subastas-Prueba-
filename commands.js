@@ -74,7 +74,7 @@ const commandsData = [
         .addStringOption(o => o.setName('periodo').setDescription('Periodo a considerar').setRequired(false).addChoices(...periodoChoices))
         .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
-    new SlashCommandBuilder().setName('catalogo').setDescription('Gestionar catálogo de objetos').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    new SlashCommandBuilder().setName('catalogo').setDescription('Gestionar catálogo de objetos')
         .addSubcommand(sub => sub.setName('agregar').setDescription('Agregar o actualizar objeto en el catálogo')
             .addStringOption(o => o.setName('objeto').setDescription('Nombre del objeto').setRequired(true).setAutocomplete(true))
             .addStringOption(o => o.setName('categoria').setDescription('Categoría del objeto').setRequired(true).addChoices(...catChoices)))
@@ -85,13 +85,18 @@ const commandsData = [
     new SlashCommandBuilder().setName('backup').setDescription('Exportar todas las compras a un CSV').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder().setName('sync').setDescription('Sincronizar la base local con GitHub').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-    new SlashCommandBuilder().setName('miembros').setDescription('Gestionar nombres y exclusiones').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-        .addSubcommand(sub => sub.setName('excluir').setDescription('Excluir nombres').addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(sub => sub.setName('incluir').setDescription('Reincluir nombres').addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(sub => sub.setName('canonico').setDescription('Definir canónicos').addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName('como').setDescription('Forma correcta').setRequired(true)))
-        .addSubcommand(sub => sub.setName('quitar-canonico').setDescription('Eliminar canónico').addStringOption(o => o.setName('nombre').setDescription('Nombre').setRequired(true).setAutocomplete(true)))
+    new SlashCommandBuilder().setName('miembros').setDescription('Gestionar nombres y exclusiones')
+        .addSubcommand(sub => sub.setName('canonico').setDescription('Definir canónicos')
+            .addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
+            .addStringOption(o => o.setName('como').setDescription('Forma correcta').setRequired(true)))
+        .addSubcommand(sub => sub.setName('quitar-canonico').setDescription('Eliminar canónico')
+            .addStringOption(o => o.setName('nombre').setDescription('Nombre').setRequired(true).setAutocomplete(true)))
         .addSubcommand(sub => sub.setName('lista').setDescription('Listar canónicos y excluidos'))
-        .addSubcommand(sub => sub.setName('excluidos').setDescription('Listar excluidos')),
+        .addSubcommand(sub => sub.setName('excluir').setDescription('Excluir nombres')
+            .addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(sub => sub.setName('excluidos').setDescription('Listar excluidos'))
+        .addSubcommand(sub => sub.setName('incluir').setDescription('Reincluir nombres')
+            .addStringOption(o => o.setName('nombre').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))),
 
     new SlashCommandBuilder().setName('editar').setDescription('Editar una entrada existente')
         .addSubcommand(sub => sub.setName('ganador').setDescription('Agregar o quitar ganadores')
@@ -134,18 +139,20 @@ const commandsData = [
             .addIntegerOption(o => o.setName('cantidad').setDescription('Cantidad').setRequired(true))
             .addStringOption(o => o.setName('evento').setDescription('Evento (opcional)').setRequired(false).addChoices(...eventoChoices)))
         .addSubcommand(sub => sub.setName('ver').setDescription('Mostrar el panel activo de este thread'))
-        .addSubcommand(sub => sub.setName('objeto').setDescription('Cambiar el objeto del panel activo').addStringOption(o => o.setName('nombre').setDescription('Nuevo nombre del objeto').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(sub => sub.setName('interesado').setDescription('Añadir o quitar interesado').addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)).addStringOption(o => o.setName('accion').setDescription('Añadir o Quitar').setRequired(false).addChoices({ name: 'Añadir', value: 'añadir' }, { name: 'Quitar', value: 'quitar' })))
-        .addSubcommand(sub => sub.setName('cancelar').setDescription('Cancelar la subasta activa de este thread (solo líder/helper)'))
-        .addSubcommand(sub => sub.setName('indice').setDescription('Crear/actualizar índice privado en este canal (solo líder/helper)'))
-        .addSubcommand(sub => sub.setName('refresh').setDescription('Forzar actualización de todos los paneles')),
+        .addSubcommand(sub => sub.setName('objeto').setDescription('Cambiar el objeto del panel activo')
+            .addStringOption(o => o.setName('nombre').setDescription('Nuevo nombre del objeto').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(sub => sub.setName('interesado').setDescription('Añadir o quitar interesado')
+            .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true))
+            .addStringOption(o => o.setName('accion').setDescription('Añadir o Quitar').setRequired(false).addChoices({ name: 'Añadir', value: 'añadir' }, { name: 'Quitar', value: 'quitar' })))
+        .addSubcommand(sub => sub.setName('indice').setDescription('Crear/actualizar índice privado en este canal')),
 
     new SlashCommandBuilder().setName('control').setDescription('Gestionar el Panel de Control de Subastas')
         .addSubcommand(sub => sub.setName('agregar').setDescription('Añadir un thread a la lista fija')
             .addStringOption(o => o.setName('objeto').setDescription('Objeto por defecto para este thread').setRequired(false).setAutocomplete(true))
             .addStringOption(o => o.setName('categoria').setDescription('Categoría por defecto para este thread').setRequired(false).addChoices(...catChoices))
             .addChannelOption(o => o.setName('canal').setDescription('Thread a fijar (o usa este mismo)').setRequired(false)))
-        .addSubcommand(sub => sub.setName('quitar').setDescription('Quitar un thread de la lista fija').addChannelOption(o => o.setName('canal').setDescription('Thread a quitar (o usa este mismo)').setRequired(false)))
+        .addSubcommand(sub => sub.setName('quitar').setDescription('Quitar un thread de la lista fija')
+            .addChannelOption(o => o.setName('canal').setDescription('Thread a quitar (o usa este mismo)').setRequired(false)))
         .addSubcommand(sub => sub.setName('panel').setDescription('Crear/actualizar el Panel de Control en este canal')),
 
     new SlashCommandBuilder().setName('control-boss').setDescription('Gestionar anuncios automáticos para subastas')
