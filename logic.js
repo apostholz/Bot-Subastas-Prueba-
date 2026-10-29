@@ -384,7 +384,8 @@ function formatearLineaFechaEvento(fecha, evento) {
 function formatearBloqueCompra(entrada, miembros, opciones = {}) {
     const {
         titulo = 'Compra registrada',
-        autor = null
+        autor = null,
+        numerar = true
     } = opciones;
 
     const cantidad = entrada.cantidad || 1;
@@ -403,10 +404,12 @@ function formatearBloqueCompra(entrada, miembros, opciones = {}) {
     }
 
     const gOrdered = [...gExpanded, ...gMultiples];
-    const gNumbered = gOrdered.map((nombre, i) => `${i + 1}. ${utils.aplicarCanonico(nombre, miembros)}`).join('\n');
+    const gBloque = numerar
+        ? gOrdered.map((nombre, i) => `${i + 1}. ${utils.aplicarCanonico(nombre, miembros)}`).join('\n')
+        : gOrdered.map(nombre => utils.aplicarCanonico(nombre, miembros)).join(', ');
     const gTitle = gOrdered.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-    let out = `✅ ${titulo}: #${entrada.id}\n${formatearLineaFechaEvento(entrada.fecha, entrada.evento)}\n\n· **${cantidad}**x **${entrada.objeto}** (${entrada.categoria})\n\n${gTitle}\n${gNumbered || 'nadie'}`;
+    let out = `✅ ${titulo}: #${entrada.id}\n${formatearLineaFechaEvento(entrada.fecha, entrada.evento)}\n\n· **${cantidad}**x **${entrada.objeto}** (${entrada.categoria})\n\n${gTitle}\n${gBloque || 'nadie'}`;
 
     if (p.length > 0) {
         const pBase = p.map(pItem => utils.aplicarCanonico(utils.parsearGanador(pItem).nombre, miembros));
