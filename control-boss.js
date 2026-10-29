@@ -21,6 +21,8 @@ const PENDIENTES_FILE = path.join(DATA_DIR, 'control_boss_pendientes.json');
 const PANEL_FILE = path.join(DATA_DIR, 'control_boss_panel.json');
 const IMG_DIR = path.join(DATA_DIR, 'imagenes', 'anuncios');
 
+const AUDIT_CHANNEL_ID = process.env.AUDIT_CHANNEL_ID || null;
+
 const confirmaciones = new Map();
 const enProceso = new Set();
 const slotsEnProceso = new Set();
@@ -54,6 +56,16 @@ function cargarSubastas() { const f = path.join(DATA_DIR, 'subastas_activas.json
 function guardarSubastas(d) { const f = path.join(DATA_DIR, 'subastas_activas.json'); guardarJSON(f, d); }
 function cargarArchivadas() { const f = path.join(DATA_DIR, 'subastas_archivadas.json'); return cargarJSON(f, {}); }
 function guardarArchivadas(d) { const f = path.join(DATA_DIR, 'subastas_archivadas.json'); guardarJSON(f, d); }
+
+async function enviarAuditoria(client, contenido) {
+    if (!AUDIT_CHANNEL_ID) return;
+    try {
+        const canal = await client.channels.fetch(AUDIT_CHANNEL_ID);
+        if (canal) await canal.send({ content: contenido });
+    } catch (e) {
+        console.error('Error enviando auditoría:', e.message);
+    }
+}
 
 function esLiderBoss(member, funciones) {
     if (!member) return false;
@@ -662,6 +674,8 @@ function setupControlBoss(client, funciones) {
                 if (tipo === 'cerrar' || tipo === 'cerrar_todos') {
                     const slotsACerrar = tipo === 'cerrar' ? [p.slot] : p.activos;
                     let cerrados = 0;
+                    const detalleCerradas = [];
+                    const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
 
                     for (const slotNum of slotsACerrar) {
                         const s = config.slots.find(x => x.slot === slotNum);
@@ -675,7 +689,7 @@ function setupControlBoss(client, funciones) {
                         }
 
                         session.estado = 'cancelada';
-                        session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || 'Líder', accion: 'Cancelada desde Panel Boss' });
+                        session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: nombreUsuario, accion: 'Cancelada desde Panel Boss' });
                         
                         const archivadas = cargarArchivadas();
                         archivadas[session.id] = session;
@@ -683,6 +697,13 @@ function setupControlBoss(client, funciones) {
                         
                         delete subastas[session.id];
                         guardarSubastas(subastas);
+
+                        detalleCerradas.push({
+                            slot: slotNum,
+                            objeto: s.objeto,
+                            interesados: session.interesados.length,
+                            threadId: session.threadId
+                        });
 
                         try {
                             const thread = await client.channels.fetch(session.threadId);
@@ -705,6 +726,12 @@ function setupControlBoss(client, funciones) {
                         const { actualizarIndice } = require('./panel');
                         await actualizarIndice(client, funciones);
                     } catch (e) {}
+
+                    if (detalleCerradas.length > 0) {
+                        const lista = detalleCerradas.map(d => `• Slot ${d.slot} — **${d.objeto}** (${d.interesados} interesados)`).join('\n');
+                        const accionLabel = tipo === 'cerrar_todos' ? 'Cierre de Banquete (TODAS)' : 'Cierre de Banquete';
+                        await enviarAuditoria(client, `🔒 **${accionLabel}**\n👤 Cerrada por: **${nombreUsuario}** (<@${interaction.user.id}>)\n📦 ${detalleCerradas.length} subasta(s):\n${lista}\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+                    }
 
                     try {
                         await interaction.editReply({ content: `✅ ${cerrados} subasta(s) cerrada(s) y thread(s) eliminado(s).`, components: [] });
