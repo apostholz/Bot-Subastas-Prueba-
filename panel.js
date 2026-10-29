@@ -862,6 +862,18 @@ function setupPanel(client, funciones) {
             if (interaction.isChatInputCommand() && interaction.commandName === 'control') {
                 const sub = interaction.options.getSubcommand();
 
+                if (sub === 'refresh') {
+                    if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
+                    await interaction.deferReply({ ephemeral: true });
+                    const cant = await refrescarTodo(client, funciones);
+                    const movidos = await moverPanelesAlFinal(client, funciones);
+                    try {
+                        const { actualizarPanelControlBoss } = require('./control-boss');
+                        await actualizarPanelControlBoss(client);
+                    } catch {}
+                    return interaction.editReply({ content: `✅ Refrescados **${cant}** paneles activos. Movidos al final: **${movidos}**.` });
+                }
+
                 if (sub === 'agregar' || sub === 'quitar') {
                     if (!esLider(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Líderes/Admins.', ephemeral: true });
                 } else if (sub === 'panel') {
