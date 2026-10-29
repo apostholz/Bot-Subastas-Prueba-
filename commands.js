@@ -44,6 +44,10 @@ const commandsData = [
         .addStringOption(o => o.setName('fecha').setDescription('DD/MM/YY, "hoy" o "ayer"').setRequired(true))
         .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
+    new SlashCommandBuilder().setName('compra').setDescription('Ver compras específicas por ID')
+        .addStringOption(o => o.setName('ids').setDescription('IDs separados por coma (ej: 301,302)').setRequired(true))
+        .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
+
     new SlashCommandBuilder().setName('total').setDescription('Totales por categoría de uno o varios jugadores')
         .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('periodo').setDescription('Periodo a considerar').setRequired(false).addChoices(...periodoChoices))
@@ -185,6 +189,9 @@ const commandsData = [
         .addSubcommand(sub => sub.setName('borrar-valor').setDescription('Borrar números específicos de un jugador')
             .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true))
             .addStringOption(o => o.setName('valores').setDescription('Números separados por coma (ej: 5,17)').setRequired(true)))
+        .addSubcommand(sub => sub.setName('bloquear').setDescription('Bloquear el uso de /dado en este thread (solo roles mayores)')
+            .addIntegerOption(o => o.setName('minutos').setDescription('Duración en minutos (default 60)').setRequired(false).setMinValue(1).setMaxValue(1440)))
+        .addSubcommand(sub => sub.setName('desbloquear').setDescription('Desbloquear el uso de /dado en este thread (solo roles mayores)'))
 ];
 
 module.exports = { commandsData };
