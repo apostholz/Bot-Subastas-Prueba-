@@ -61,7 +61,7 @@ async function enviarAuditoria(client, contenido) {
     if (!AUDIT_CHANNEL_ID) return;
     try {
         const canal = await client.channels.fetch(AUDIT_CHANNEL_ID);
-        if (canal) await canal.send({ content: contenido });
+        if (canal) await canal.send({ content: contenido, allowedMentions: { parse: [] } });
     } catch (e) {
         console.error('Error enviando auditoría:', e.message);
     }
@@ -701,6 +701,7 @@ function setupControlBoss(client, funciones) {
                         detalleCerradas.push({
                             slot: slotNum,
                             objeto: s.objeto,
+                            cantidad: session.item.cantidad,
                             interesados: session.interesados.length,
                             threadId: session.threadId
                         });
@@ -728,9 +729,9 @@ function setupControlBoss(client, funciones) {
                     } catch (e) {}
 
                     if (detalleCerradas.length > 0) {
-                        const lista = detalleCerradas.map(d => `• Slot ${d.slot} — **${d.objeto}** (${d.interesados} interesados)`).join('\n');
+                        const lista = detalleCerradas.map(d => `• Slot ${d.slot} — **${d.objeto}** · Cantidad: ${d.cantidad} · Interesados: ${d.interesados}`).join('\n');
                         const accionLabel = tipo === 'cerrar_todos' ? 'Cierre de Banquete (TODAS)' : 'Cierre de Banquete';
-                        await enviarAuditoria(client, `🔒 **${accionLabel}**\n👤 Cerrada por: **${nombreUsuario}** (<@${interaction.user.id}>)\n📦 ${detalleCerradas.length} subasta(s):\n${lista}\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+                        await enviarAuditoria(client, `🔒 **${accionLabel}**\n👤 Cerrada por: **${nombreUsuario}**\n📦 ${detalleCerradas.length} subasta(s):\n${lista}\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
                     }
 
                     try {
