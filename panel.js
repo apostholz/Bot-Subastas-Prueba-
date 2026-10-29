@@ -59,6 +59,17 @@ function cargarThreadsFijos() {
 function guardarThreadsFijos(d) { guardarJSON(THREADS_FILE, d); }
 function generarId() { return Math.random().toString(36).slice(2, 10); }
 
+function formatearFechaHoraRegistro(date = new Date()) {
+    return date.toLocaleString('en-US', {
+        month: '2-digit',
+        day: '2-digit',
+        year: '2-digit',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+    });
+}
+
 function esThreadBoss(threadId) {
     if (!fs.existsSync(BOSS_CONFIG_FILE)) return false;
     try {
@@ -1086,7 +1097,7 @@ function setupPanel(client, funciones) {
                 if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
                 const page = parseInt(pageStr) || 1;
                 const catIndex = parseInt(catIndexStr) || 0;
-                
+
                 const historyMsgId = interaction.message.id;
 
                 const row = new ActionRowBuilder().addComponents(
@@ -1105,9 +1116,9 @@ function setupPanel(client, funciones) {
                 const db = funciones.cargarDB();
                 const miembros = funciones.cargarMiembros();
                 const categoria = interaction.values[0];
-                
+
                 const render = renderHistorialCategoria(session, categoria, 1, db, miembros, funciones);
-                
+
                 const originalInteraction = pendingHistories.get(historyMsgId);
                 if (originalInteraction) {
                     try {
@@ -1202,11 +1213,13 @@ function setupPanel(client, funciones) {
                 const session = subastas[sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado.', ephemeral: true });
 
+                await interaction.deferUpdate();
+
                 session.item[campo] = valor;
                 pushHistorial(session, interaction, `Cambió ${campo} a ${valor}`);
                 guardarSubastas(subastas);
                 await refrescarTodo(client, funciones);
-                return interaction.update({ content: `✅ ${campo} cambiado a **${valor}**.`, components: [] });
+                return interaction.editReply({ content: `✅ ${campo} cambiado a **${valor}**.`, components: [] });
             }
 
             if (interaction.isStringSelectMenu() && interaction.customId.startsWith('panel_sel_quitar:')) {
@@ -1236,11 +1249,12 @@ function setupPanel(client, funciones) {
                     if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                     const valor = parseInt(interaction.fields.getTextInputValue('valor'), 10);
                     if (isNaN(valor) || valor < 0) return interaction.reply({ content: '❌ Cantidad inválida.', ephemeral: true });
+                    await interaction.deferReply({ ephemeral: true });
                     session.item.cantidad = valor;
                     pushHistorial(session, interaction, `Cambió cantidad a ${valor}`);
                     guardarSubastas(subastas);
                     await refrescarTodo(client, funciones);
-                    return interaction.reply({ content: `✅ Cantidad cambiada a **${valor}**.`, ephemeral: true });
+                    return interaction.editReply({ content: `✅ Cantidad cambiada a **${valor}**.` });
                 }
 
                 if (tipo === 'agregar_interesado') {
@@ -1295,13 +1309,17 @@ function setupPanel(client, funciones) {
                     const gNumbered = gOrdered.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
                     const gTitle = gOrdered.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-                    let txt = `✅ **Resultado registrado** (pendiente de confirmar)\n📅 ${utils.formatearFecha(session.item.fecha)} ${utils.etiquetaDias(session.item.fecha)}\n\n· **${cant}**x **${session.item.objeto}** (${session.item.categoria})\n\n${gTitle}\n${gNumbered || 'nadie'}`;
-                    
+                    const fechaPreview = formatearFechaHoraRegistro();
+
+                    let txt = `✅ **Resultado registrado** (pendiente de confirmar)\n📅 ${utils.formatearFecha(session.item.fecha)} ${utils.etiquetaDias(session.item.fecha)} · ${utils.nombreBonitoEvento(session.item.evento)}\n\n· **${cant}**x **${session.item.objeto}** (${session.item.categoria})\n\n${gTitle}\n${gNumbered || 'nadie'}`;
+
                     if (p.length > 0) {
                         const pBase = p.map(pItem => funciones.aplicarCanonico(utils.parsearGanador(pItem).nombre, miembros));
                         const pTitle = p.length === 1 ? '💔 **Non-winner:**' : '💔 **Non-winners:**';
                         txt += `\n\n${pTitle}\n${pBase.join(', ')}`;
                     }
+
+                    txt += `\n\n-# Registered by ${interaction.member?.displayName || interaction.user.username} · ${fechaPreview}`;
                     txt += `\n\n¿Confirmás y guardás en el historial?`;
 
                     const row = new ActionRowBuilder().addComponents(
@@ -1396,13 +1414,17 @@ function setupPanel(client, funciones) {
                     const ganadoresNumerados = ganadoresOrdenados.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
                     const tituloGanadores = ganadoresOrdenados.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-                    let msg = `✅ Resultado registrado: #${entrada.id}\n📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)}\n\n· **${entrada.cantidad}**x **${entrada.objeto}** (${entrada.categoria})\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
-                    
+                    const fechaReg = session.fechaRegistro ? formatearFechaHoraRegistro(new Date(session.fechaRegistro)) : formatearFechaHoraRegistro();
+
+                    let msg = `✅ Resultado registrado: #${entrada.id}\n📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${utils.nombreBonitoEvento(entrada.evento)}\n\n· **${entrada.cantidad}**x **${entrada.objeto}** (${entrada.categoria})\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
+
                     if (entrada.perdedores.length > 0) {
                         const perdedoresBase = entrada.perdedores.map(pItem => funciones.aplicarCanonico(utils.parsearGanador(pItem).nombre, miembros));
                         const tituloPerdedores = entrada.perdedores.length === 1 ? '💔 **Non-winner:**' : '💔 **Non-winners:**';
                         msg += `\n\n${tituloPerdedores}\n${perdedoresBase.join(', ')}`;
                     }
+
+                    msg += `\n\n-# Registered by ${session.registradoPor} · ${fechaReg}`;
 
                     if (!syncRes.ok) msg += `\n\n⚠️ Sync falló: ${syncRes.motivo}`;
 
