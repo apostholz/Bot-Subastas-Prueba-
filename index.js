@@ -1905,9 +1905,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const esAuctionMod = esLider || (interaction.member && interaction.member.roles.cache.has(utils.ROL_HELPER));
             const esOficial = esAuctionMod || (interaction.member && utils.ROL_OFICIAL && interaction.member.roles.cache.has(utils.ROL_OFICIAL));
 
-            const secciones = [];
+            const partes1 = [];
 
-            secciones.push(`# __Comandos generales__\n` +
+            partes1.push(
+                `# __Comandos generales__\n` +
                 "`/historial` · historial privado para no llenar el chat\n" +
                 "`/historial2` · historial visible para todos\n" +
                 "`/dia` · ver todas las compras de cada día\n" +
@@ -1922,20 +1923,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 "`/ayuda` · este mensaje"
             );
 
-            if (esOficial) {
-                let paneles = `# __Paneles__\n` +
-                    "`/panel crear` · crear panel en un thread\n" +
-                    "`/panel ver` · mostrar panel nuevamente\n" +
-                    "`/panel objeto` · cambiar objeto del panel\n" +
-                    "`/panel interesado` · añadir/quitar interesados";
-                if (esAuctionMod) {
-                    paneles += "\n`/panel indice` · crear/actualizar índice de subastas activas";
-                }
-                secciones.push(paneles);
-            }
-
             if (esAuctionMod) {
-                secciones.push(`# __Auction Mod / Líder__\n` +
+                partes1.push(
+                    `# __Auction Mod / Líder__\n` +
                     "`/sub` · registrar compra de hoy\n" +
                     "`/subf` · registrar compra de una fecha específica\n" +
                     "`/control refresh` · refrescar todos los paneles de control e índice\n" +
@@ -1953,8 +1943,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 );
             }
 
+            if (esOficial) {
+                let paneles = `# __Paneles__\n` +
+                    "`/panel crear` · crear panel en un thread\n" +
+                    "`/panel ver` · mostrar panel nuevamente\n" +
+                    "`/panel objeto` · cambiar objeto del panel\n" +
+                    "`/panel interesado` · añadir/quitar interesados";
+                if (esAuctionMod) {
+                    paneles += "\n`/panel indice` · crear/actualizar índice de subastas activas";
+                }
+                partes1.push(paneles);
+            }
+
+            await interaction.reply({ content: partes1.join('\n\n'), ephemeral: true });
+
             if (esLider) {
-                secciones.push(`# __Líder__\n` +
+                const msg2 =
+                    `# __Líder__\n` +
                     "`/catalogo` · añadir objetos nuevos al bot sin registrar una compra\n\n" +
                     "## Control de Invasión\n" +
                     "`/control agregar` · añadir thread al Panel de Control de Invasión\n" +
@@ -1973,11 +1978,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     "`/miembros lista` · listar canónicos registrados\n" +
                     "`/miembros excluir` · excluir nombres del ranking\n" +
                     "`/miembros excluidos` · listar solo los excluidos\n" +
-                    "`/miembros incluir` · reincluir nombres excluidos"
-                );
+                    "`/miembros incluir` · reincluir nombres excluidos";
+                await interaction.followUp({ content: msg2, ephemeral: true });
             }
-
-            return logic.responderLargo(interaction, secciones.join('\n\n'), true);
+            return;
         }
     } catch (err) {
         if (err.code === 10062) {
