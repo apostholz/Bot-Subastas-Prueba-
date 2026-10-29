@@ -1117,8 +1117,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     utils.guardarDB(db);
                     resultado = logic.formatearBloqueCompra(e, miembros, {
                         titulo: 'Compra registrada',
-                        autor: interaction.member?.displayName || interaction.user.username,
-                        fechaAccion: formatearFechaHoraRegistro()
+                        autor: interaction.member?.displayName || interaction.user.username
                     });
                     requiereSync = true;
                 }
@@ -1183,15 +1182,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         }
                         else if (sub === 'set-ganadores') {
                             e.ganadores = valor.ganadores;
-                            if (valor.ganadores.length === 0) {
-                                // limpiar
-                            }
                         }
                         else if (sub === 'set-perdedores') {
                             e.perdedores = valor.perdedores;
-                            if (valor.perdedores.length === 0) {
-                                // limpiar
-                            }
                         }
                         else if (sub === 'set') {
                             if (valor.objeto) { e.objeto = valor.objeto; if (!valor.categoria) e.categoria = logic.inferirCategoria(valor.objeto, db); }
@@ -1206,8 +1199,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         utils.guardarDB(db);
                         resultado = logic.formatearBloqueCompra(e, miembros, {
                             titulo: 'Edición aplicada',
-                            autor: interaction.member?.displayName || interaction.user.username,
-                            fechaAccion: formatearFechaHoraRegistro()
+                            autor: interaction.member?.displayName || interaction.user.username
                         });
                         requiereSync = true;
                     }
@@ -1932,8 +1924,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             const cuerpo = logic.formatearBloqueCompra(entrada, miembros, {
                 titulo: 'Compra registrada',
-                autor: interaction.member?.displayName || interaction.user.username,
-                fechaAccion: formatearFechaHoraRegistro()
+                autor: interaction.member?.displayName || interaction.user.username
             });
 
             return mostrarPreview(interaction, 'Confirmar registro', cuerpo, interaction.commandName, entrada);
