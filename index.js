@@ -145,20 +145,28 @@ client.once(Events.ClientReady, async (c) => {
     await verificarBackupPendiente(client);
 });
 
-function construirBotonesConfirmacion(id) {
-    return new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`pend_confirm_${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
+function construirBotonesConfirmacion(id, opciones = {}) {
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`pend_confirm_${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success)
+    );
+    if (opciones.anunciar === true) {
+        row.addComponents(
+            new ButtonBuilder().setCustomId(`pend_confirm_anunciar_${id}`).setLabel('Sí y anunciar orden').setStyle(ButtonStyle.Primary)
+        );
+    }
+    row.addComponents(
         new ButtonBuilder().setCustomId(`pend_cancel_${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
     );
+    return row;
 }
 
-async function mostrarPreview(interaction, titulo, cuerpo, tipo, payload) {
+async function mostrarPreview(interaction, titulo, cuerpo, tipo, payload, opciones = {}) {
     const id = guardarPendiente(tipo, payload, interaction.user.id);
     let preview = `📋 **${titulo}**\n\n${cuerpo}\n\n¿Confirmás?`;
     if (preview.length > 1900) preview = preview.slice(0, 1890) + '...';
     return interaction.reply({
         content: preview,
-        components: [construirBotonesConfirmacion(id)],
+        components: [construirBotonesConfirmacion(id, opciones)],
         ephemeral: true
     });
 }
@@ -494,13 +502,6 @@ function cargarSubastasActivas() {
     const file = path.join(DATA_DIR, 'subastas_activas.json');
     if (!fs.existsSync(file)) return {};
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
-}
-
-function haySubastaActivaEnThread(threadId) {
-    const subastas = cargarSubastasActivas();
-    return Object.values(subastas).some(s =>
-        s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada')
-    );
 }
 
 function obtenerSessionActiva(threadId) {
@@ -983,12 +984,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
 
             if (cid.startsWith('pend_confirm_') || cid.startsWith('pend_cancel_')) {
-                const esConfirm = cid.startsWith('pend_confirm_');
-                const id = cid.replace('pend_confirm_', '').replace('pend_cancel_', '');
+                const esAnunciar = cid.startsWith('pend_confirm_anunciar_');
+                const esConfirm = cid.startsWith('pend_confirm_') && !esAnunciar;
+                const id = cid.replace('pend_confirm_anunciar_', '').replace('pend_confirm_', '').replace('pend_cancel_', '');
                 const p = pendingActions.get(id);
                 if (!p) return interaction.update({ content: '❌ La sesión expiró.', components: [] });
                 if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien ejecutó el comando puede confirmar.', ephemeral: true });
-                if (!esConfirm) {
+                if (!esConfirm && !esAnunciar) {
                     pendingActions.delete(id);
                     return interaction.update({ content: '❌ Acción cancelada.', components: [] });
                 }
@@ -1110,14 +1112,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
                 let resultado = '';
                 let requiereSync = false;
+                let entradaFinal = null;
 
                 if (p.tipo === 'sub' || p.tipo === 'subf') {
                     const e = { id: db.nextId++, ...p.payload };
                     db.compras.push(e);
                     utils.guardarDB(db);
+                    entradaFinal = e;
                     resultado = logic.formatearBloqueCompra(e, miembros, {
                         titulo: 'Compra registrada',
-                        autor: interaction.member?.displayName || interaction.user.username
+                        autor: interaction.member?.displayName || interaction.user.username,
+                        numerar: false
                     });
                     requiereSync = true;
                 }
@@ -1197,9 +1202,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         else if (sub === 'borrar-nota') e.notas = '';
 
                         utils.guardarDB(db);
+                        entradaFinal = e;
                         resultado = logic.formatearBloqueCompra(e, miembros, {
                             titulo: 'Edición aplicada',
-                            autor: interaction.member?.displayName || interaction.user.username
+                            autor: interaction.member?.displayName || interaction.user.username,
+                            numerar: false
                         });
                         requiereSync = true;
                     }
@@ -1231,7 +1238,48 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
 
                 await interaction.editReply({ content: '✅ Acción completada.', components: [] });
-                await interaction.followUp({ content: resultado, ephemeral: false });
+
+                if (esAnunciar && entradaFinal && entradaFinal.ganadores && entradaFinal.ganadores.length > 0) {
+                    const bloqueConNumeros = logic.formatearBloqueCompra(entradaFinal, miembros, {
+                        titulo: p.tipo === 'editar' ? 'Edición aplicada' : 'Compra registrada',
+                        autor: interaction.member?.displayName || interaction.user.username,
+                        numerar: true
+                    });
+
+                    let members;
+                    try { members = await interaction.guild.members.fetch(); } catch { members = interaction.guild.members.cache; }
+
+                    const expandidos = [];
+                    const multiplos = [];
+                    for (const gItem of entradaFinal.ganadores) {
+                        const parsed = utils.parsearGanador(gItem);
+                        if (parsed.cantidad > 1) {
+                            for (let i = 0; i < parsed.cantidad; i++) multiplos.push(parsed.nombre);
+                        } else {
+                            expandidos.push(parsed.nombre);
+                        }
+                    }
+                    const ordenados = [...expandidos, ...multiplos];
+                    const menciones = [...new Set(ordenados)].map(nombre => {
+                        const norm = utils.normalizar(nombre);
+                        const canon = utils.normalizar(utils.aplicarCanonico(nombre, miembros));
+                        const member = members.find(m => {
+                            if (!m) return false;
+                            const un = utils.normalizar(m.user?.username || '');
+                            const dn = utils.normalizar(m.displayName || '');
+                            const nick = utils.normalizar(m.nickname || '');
+                            const cd = utils.normalizar(utils.aplicarCanonico(m.displayName || '', miembros));
+                            return un === norm || dn === norm || nick === norm || cd === norm ||
+                                   un === canon || dn === canon || nick === canon || cd === canon;
+                        });
+                        return member ? `<@${member.id}>` : `**${nombre}**`;
+                    });
+
+                    const mensajeAnuncio = `${bloqueConNumeros}\n\n🔔 ${menciones.join(' ')}`;
+                    await interaction.followUp({ content: mensajeAnuncio, allowedMentions: { parse: ['users'] } });
+                } else {
+                    await interaction.followUp({ content: resultado, ephemeral: false });
+                }
                 return;
             }
 
@@ -1896,7 +1944,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 cuerpo = `Borrar nota de #${id}.\n\n` + renderEntradaProyectada(proj, miembros);
                 payload = { id, sub };
             }
-            return mostrarPreview(interaction, 'Confirmar edición', cuerpo, 'editar', payload);
+            return mostrarPreview(interaction, 'Confirmar edición', cuerpo, 'editar', payload, { anunciar: true });
         }
 
         if (interaction.commandName === 'sub' || interaction.commandName === 'subf') {
@@ -1927,7 +1975,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 autor: interaction.member?.displayName || interaction.user.username
             });
 
-            return mostrarPreview(interaction, 'Confirmar registro', cuerpo, interaction.commandName, entrada);
+            return mostrarPreview(interaction, 'Confirmar registro', cuerpo, interaction.commandName, entrada, { anunciar: true });
         }
 
         if (interaction.commandName === 'dia') {
