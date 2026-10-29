@@ -249,6 +249,21 @@ async function guardarAdjunto(attachment, slot) {
     return filename;
 }
 
+async function contarMensajesThread(thread) {
+    if (!thread) return 0;
+    try {
+        const msgs = await thread.messages.fetch({ limit: 4 });
+        return msgs.size;
+    } catch { return 0; }
+}
+
+async function debeConservarSubastaBoss(session, thread) {
+    if (!session) return false;
+    if (session.interesados.length >= 2) return true;
+    const cant = await contarMensajesThread(thread);
+    return cant > 3;
+}
+
 async function procesarPendiente(client, pendiente, funciones) {
     if (!pendiente || pendiente.estado !== 'pendiente') return;
     if (enProceso.has(pendiente.id)) return;
@@ -674,6 +689,7 @@ function setupControlBoss(client, funciones) {
                 if (tipo === 'cerrar' || tipo === 'cerrar_todos') {
                     const slotsACerrar = tipo === 'cerrar' ? [p.slot] : p.activos;
                     let cerrados = 0;
+                    let conservados = 0;
                     const detalleCerradas = [];
                     const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
 
@@ -688,54 +704,64 @@ function setupControlBoss(client, funciones) {
                             continue;
                         }
 
+                        let thread = null;
+                        try { thread = await client.channels.fetch(session.threadId); } catch {}
+                        const conservar = thread ? await debeConservarSubastaBoss(session, thread) : false;
+
                         session.estado = 'cancelada';
-                        session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: nombreUsuario, accion: 'Cancelada desde Panel Boss' });
-                        
+                        session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: nombreUsuario, accion: conservar ? 'Cancelada desde Panel Boss (conservada)' : 'Cancelada desde Panel Boss' });
+
                         const archivadas = cargarArchivadas();
                         archivadas[session.id] = session;
                         guardarArchivadas(archivadas);
-                        
-                        delete subastas[session.id];
-                        guardarSubastas(subastas);
+
+                        if (conservar) {
+                            subastas[session.id] = session;
+                            conservados++;
+                        } else {
+                            delete subastas[session.id];
+                            try {
+                                if (thread) {
+                                    const starterMsg = await thread.fetchStarterMessage().catch(() => null);
+                                    await thread.delete().catch(() => null);
+                                    if (starterMsg) await starterMsg.delete().catch(() => null);
+                                }
+                            } catch (e) { console.error('Error al borrar thread/mensaje:', e.message); }
+                        }
 
                         detalleCerradas.push({
                             slot: slotNum,
                             objeto: s.objeto,
                             cantidad: session.item.cantidad,
                             interesados: session.interesados.length,
-                            threadId: session.threadId
+                            threadId: session.threadId,
+                            conservada: conservar
                         });
-
-                        try {
-                            const thread = await client.channels.fetch(session.threadId);
-                            if (thread) {
-                                const starterMsg = await thread.fetchStarterMessage().catch(() => null);
-                                await thread.delete().catch(() => null);
-                                if (starterMsg) await starterMsg.delete().catch(() => null);
-                            }
-                        } catch (e) { console.error('Error al borrar thread/mensaje:', e.message); }
 
                         s.threadId = null;
                         guardarConfig(config);
                         cerrados++;
                     }
-                    
+
+                    guardarSubastas(subastas);
                     await publicarConfig();
                     await actualizarPanelControlBoss(client);
-                    
+
                     try {
                         const { actualizarIndice } = require('./panel');
                         await actualizarIndice(client, funciones);
                     } catch (e) {}
 
                     if (detalleCerradas.length > 0) {
-                        const lista = detalleCerradas.map(d => `• Slot ${d.slot} — **${d.objeto}** · Cantidad: ${d.cantidad} · Interesados: ${d.interesados}`).join('\n');
+                        const lista = detalleCerradas.map(d => `• Slot ${d.slot} — **${d.objeto}** · Cantidad: ${d.cantidad} · Interesados: ${d.interesados}${d.conservada ? ' · Conservada' : ''}`).join('\n');
                         const accionLabel = tipo === 'cerrar_todos' ? 'Cierre de Banquete (TODAS)' : 'Cierre de Banquete';
                         await enviarAuditoria(client, `🔒 **${accionLabel}**\n👤 Cerrada por: **${nombreUsuario}**\n📦 ${detalleCerradas.length} subasta(s):\n${lista}\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
                     }
 
                     try {
-                        await interaction.editReply({ content: `✅ ${cerrados} subasta(s) cerrada(s) y thread(s) eliminado(s).`, components: [] });
+                        let content = `✅ ${cerrados} subasta(s) cerrada(s).`;
+                        if (conservados > 0) content += `\nℹ️ ${conservados} conservada(s) por tener 2+ interesados o thread con más de 3 mensajes.`;
+                        await interaction.editReply({ content, components: [] });
                     } catch(e) {}
                     return;
                 }
