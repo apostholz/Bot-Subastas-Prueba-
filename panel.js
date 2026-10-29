@@ -25,6 +25,8 @@ const THREADS_FILE = path.join(DATA_DIR, 'threads_fijos.json');
 const BOSS_CONFIG_FILE = path.join(DATA_DIR, 'control_boss_config.json');
 const DADOS_PENDIENTES_FILE = path.join(DATA_DIR, 'dados_pendientes.json');
 
+const AUDIT_CHANNEL_ID = process.env.AUDIT_CHANNEL_ID || null;
+
 const CATEGORIAS_PANEL = ['Cajas 20k', 'Emblemas Generales', 'Emblemas Únicos', 'Equipo', 'Accesorios', 'Sin Categoría', 'Azules', 'Box 10k'];
 const EVENTOS_PANEL = ['Invasión diurna', 'Invasión nocturna', 'Banquete'];
 
@@ -68,6 +70,16 @@ function formatearFechaHoraRegistro(date = new Date()) {
         minute: '2-digit',
         hour12: true
     });
+}
+
+async function enviarAuditoria(client, contenido) {
+    if (!AUDIT_CHANNEL_ID) return;
+    try {
+        const canal = await client.channels.fetch(AUDIT_CHANNEL_ID);
+        if (canal) await canal.send({ content: contenido });
+    } catch (e) {
+        console.error('Error enviando auditoría:', e.message);
+    }
 }
 
 function esThreadBoss(threadId) {
@@ -439,15 +451,17 @@ async function actualizarControlPanel(client, funciones) {
     } catch (e) { console.error('Error actualizando control:', e); }
 }
 
-async function refrescarTodo(client, funciones) {
+async function refrescarTodo(client, funciones, soloAbiertas = false) {
     if (procesandoPaneles) return 0;
     procesandoPaneles = true;
     try {
         const subastas = cargarSubastas();
         let actualizadas = 0;
         for (const id in subastas) {
-            if (subastas[id].estado === 'abierta' || subastas[id].estado === 'bloqueada') {
-                await actualizarMensajePanel(client, subastas[id], funciones);
+            const s = subastas[id];
+            const debeActualizar = s.estado === 'abierta' || (!soloAbiertas && s.estado === 'bloqueada');
+            if (debeActualizar) {
+                await actualizarMensajePanel(client, s, funciones);
                 actualizadas++;
             }
         }
@@ -462,7 +476,7 @@ async function refrescarTodo(client, funciones) {
     }
 }
 
-async function moverPanelesAlFinal(client, funciones) {
+async function moverPanelesAlFinal(client, funciones, soloAbiertas = false) {
     if (procesandoPaneles) return 0;
     procesandoPaneles = true;
 
@@ -473,6 +487,7 @@ async function moverPanelesAlFinal(client, funciones) {
         for (const id in subastas) {
             const session = subastas[id];
             if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada') || !session.channelId) continue;
+            if (soloAbiertas && session.estado !== 'abierta') continue;
 
             try {
                 const canal = await client.channels.fetch(session.channelId);
@@ -680,14 +695,14 @@ function setupPanel(client, funciones) {
         if (refrescandoPaneles) return;
         refrescandoPaneles = true;
         try {
-            await refrescarTodo(client, funciones);
+            await refrescarTodo(client, funciones, true);
         } finally {
             refrescandoPaneles = false;
         }
-    }, 60 * 1000);
+    }, 3 * 60 * 1000);
 
     setInterval(async () => {
-        await moverPanelesAlFinal(client, funciones);
+        await moverPanelesAlFinal(client, funciones, true);
     }, 2 * 60 * 1000);
 
     client.on(Events.ThreadDelete, async (thread) => {
@@ -1490,6 +1505,11 @@ function setupPanel(client, funciones) {
                 }
 
                 if (p.tipo === 'cancelar_subasta') {
+                    const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
+                    const objeto = session.item.objeto;
+                    const interesados = session.interesados.length;
+                    const threadId = session.threadId;
+
                     session.estado = 'cancelada';
                     pushHistorial(session, interaction, 'Subasta cancelada y eliminada');
                     guardarSubastas(subastas);
@@ -1517,6 +1537,9 @@ function setupPanel(client, funciones) {
 
                     await refrescarTodo(client, funciones);
                     pendingPanel.delete(id);
+
+                    await enviarAuditoria(client, `🗑️ **Subasta cancelada desde panel**\n👤 Cancelada por: **${nombreUsuario}** (<@${interaction.user.id}>)\n📦 Objeto: **${objeto}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+
                     return interaction.editReply({ content: '🗑️ Subasta cancelada, panel eliminado y archivada sin registrar.', components: [] });
                 }
             }
@@ -1653,6 +1676,11 @@ function setupPanel(client, funciones) {
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) { pendingPanel.delete(id); return interaction.editReply({ content: '❌ El panel ya no está activo.', components: [] }); }
 
                 if (p.tipo === 'control_cancelar_subasta') {
+                    const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
+                    const objeto = session.item.objeto;
+                    const interesados = session.interesados.length;
+                    const threadId = session.threadId;
+
                     session.estado = 'cancelada';
                     pushHistorial(session, interaction, 'Subasta cancelada desde Control');
                     guardarSubastas(subastas);
@@ -1680,6 +1708,9 @@ function setupPanel(client, funciones) {
 
                     await refrescarTodo(client, funciones);
                     pendingPanel.delete(id);
+
+                    await enviarAuditoria(client, `🗑️ **Subasta cancelada desde Control de Invasión**\n👤 Cancelada por: **${nombreUsuario}** (<@${interaction.user.id}>)\n📦 Objeto: **${objeto}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+
                     return interaction.editReply({ content: '🗑️ Subasta cancelada y panel eliminado.', components: [] });
                 }
             }
@@ -1736,9 +1767,18 @@ function setupPanel(client, funciones) {
                     const subastas = cargarSubastas();
                     const archivadas = cargarArchivadas();
                     let cerradas = 0;
+                    const detalleCerradas = [];
+                    const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
+
                     for (const id in subastas) {
                         if (subastas[id].estado === 'abierta' || subastas[id].estado === 'bloqueada') {
                             const bossThreadId = subastas[id].threadId;
+
+                            detalleCerradas.push({
+                                objeto: subastas[id].item.objeto,
+                                interesados: subastas[id].interesados.length,
+                                threadId: subastas[id].threadId
+                            });
 
                             subastas[id].estado = 'cancelada';
                             pushHistorial(subastas[id], interaction, 'Cancelada por Control Global');
@@ -1769,6 +1809,13 @@ function setupPanel(client, funciones) {
                     }
                     guardarSubastas(subastas); guardarArchivadas(archivadas);
                     await refrescarTodo(client, funciones);
+
+                    if (detalleCerradas.length > 0) {
+                        const lista = detalleCerradas.slice(0, 10).map(d => `• **${d.objeto}** (${d.interesados} interesados) — <#${d.threadId}>`).join('\n');
+                        const extra = detalleCerradas.length > 10 ? `\n... y ${detalleCerradas.length - 10} más.` : '';
+                        await enviarAuditoria(client, `🔒 **Cierre de todas las subastas (Control Global)**\n👤 Cerrada por: **${nombreUsuario}** (<@${interaction.user.id}>)\n📦 ${detalleCerradas.length} subasta(s):\n${lista}${extra}\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+                    }
+
                     return interaction.editReply({ content: `✅ Se cancelaron y eliminaron **${cerradas}** subastas.` });
                 }
             }
