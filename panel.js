@@ -24,6 +24,7 @@ const CONTROL_FILE = path.join(DATA_DIR, 'control.json');
 const THREADS_FILE = path.join(DATA_DIR, 'threads_fijos.json');
 const BOSS_CONFIG_FILE = path.join(DATA_DIR, 'control_boss_config.json');
 const DADOS_PENDIENTES_FILE = path.join(DATA_DIR, 'dados_pendientes.json');
+const DADOS_LOCK_FILE = path.join(DATA_DIR, 'dados_lock.json');
 
 const AUDIT_CHANNEL_ID = process.env.AUDIT_CHANNEL_ID || null;
 
@@ -76,10 +77,39 @@ async function enviarAuditoria(client, contenido) {
     if (!AUDIT_CHANNEL_ID) return;
     try {
         const canal = await client.channels.fetch(AUDIT_CHANNEL_ID);
-        if (canal) await canal.send({ content: contenido });
+        if (canal) await canal.send({ content: contenido, allowedMentions: { parse: [] } });
     } catch (e) {
         console.error('Error enviando auditoría:', e.message);
     }
+}
+
+function cargarDadosLock() {
+    return cargarJSON(DADOS_LOCK_FILE, {});
+}
+function guardarDadosLock(d) {
+    guardarJSON(DADOS_LOCK_FILE, d);
+}
+function estaDadosBloqueado(threadId) {
+    const lock = cargarDadosLock();
+    const expiraEn = lock[threadId];
+    if (!expiraEn) return false;
+    if (expiraEn <= Date.now()) {
+        delete lock[threadId];
+        guardarDadosLock(lock);
+        return false;
+    }
+    return true;
+}
+function bloquearDados(threadId, minutos = 60) {
+    const lock = cargarDadosLock();
+    lock[threadId] = Date.now() + minutos * 60 * 1000;
+    guardarDadosLock(lock);
+    return lock[threadId];
+}
+function desbloquearDados(threadId) {
+    const lock = cargarDadosLock();
+    delete lock[threadId];
+    guardarDadosLock(lock);
 }
 
 function esThreadBoss(threadId) {
@@ -321,6 +351,7 @@ function renderPanel(session, funciones) {
 
     const row3 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`panel_btn:editar:${session.id}`).setLabel('Editar').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`panel_btn:dados:${session.id}`).setLabel('Dados').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`panel_btn:logs:${session.id}`).setLabel('Logs').setStyle(ButtonStyle.Secondary)
     );
 
@@ -451,17 +482,15 @@ async function actualizarControlPanel(client, funciones) {
     } catch (e) { console.error('Error actualizando control:', e); }
 }
 
-async function refrescarTodo(client, funciones, soloAbiertas = false) {
+async function refrescarTodo(client, funciones) {
     if (procesandoPaneles) return 0;
     procesandoPaneles = true;
     try {
         const subastas = cargarSubastas();
         let actualizadas = 0;
         for (const id in subastas) {
-            const s = subastas[id];
-            const debeActualizar = s.estado === 'abierta' || (!soloAbiertas && s.estado === 'bloqueada');
-            if (debeActualizar) {
-                await actualizarMensajePanel(client, s, funciones);
+            if (subastas[id].estado === 'abierta' || subastas[id].estado === 'bloqueada') {
+                await actualizarMensajePanel(client, subastas[id], funciones);
                 actualizadas++;
             }
         }
@@ -695,7 +724,7 @@ function setupPanel(client, funciones) {
         if (refrescandoPaneles) return;
         refrescandoPaneles = true;
         try {
-            await refrescarTodo(client, funciones, true);
+            await refrescarTodo(client, funciones);
         } finally {
             refrescandoPaneles = false;
         }
@@ -1016,6 +1045,24 @@ function setupPanel(client, funciones) {
                     return interaction.reply({ embeds: [embed], components: [row1, row2], ephemeral: true });
                 }
 
+                if (accion === 'dados') {
+                    if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
+                    if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
+
+                    const rowA = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`panel_dados:tirar_todos:${sessionId}`).setLabel('Tirar para todos').setStyle(ButtonStyle.Success),
+                        new ButtonBuilder().setCustomId(`panel_dados:tirar_varios:${sessionId}`).setLabel('Tirar para varios').setStyle(ButtonStyle.Primary),
+                        new ButtonBuilder().setCustomId(`panel_dados:limpiar_todos:${sessionId}`).setLabel('Limpiar todos').setStyle(ButtonStyle.Danger),
+                        new ButtonBuilder().setCustomId(`panel_dados:limpiar_jugadores:${sessionId}`).setLabel('Limpiar jugador(es)').setStyle(ButtonStyle.Danger)
+                    );
+                    const rowB = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`panel_dados:borrar_valor:${sessionId}`).setLabel('Borrar valor').setStyle(ButtonStyle.Secondary),
+                        new ButtonBuilder().setCustomId(`panel_dados:bloquear:${sessionId}`).setLabel('Bloquear dados').setStyle(ButtonStyle.Secondary),
+                        new ButtonBuilder().setCustomId(`panel_dados:desbloquear:${sessionId}`).setLabel('Desbloquear dados').setStyle(ButtonStyle.Secondary)
+                    );
+                    return interaction.reply({ content: '🎲 Acciones de dados:', components: [rowA, rowB], ephemeral: true });
+                }
+
                 if (accion === 'registrar') {
                     if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                     if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
@@ -1042,6 +1089,142 @@ function setupPanel(client, funciones) {
                         new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Volver').setStyle(ButtonStyle.Secondary)
                     );
                     return interaction.reply({ content: '⚠️ **¿Estás seguro de cancelar y eliminar esta subasta?**', components: [row], ephemeral: true });
+                }
+            }
+
+            if (interaction.isButton() && interaction.customId.startsWith('panel_dados:')) {
+                if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
+                const [, subaccion, sessionId] = interaction.customId.split(':');
+                const subastas = cargarSubastas();
+                const session = subastas[sessionId];
+                if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado o inexistente.', ephemeral: true });
+                const miembros = funciones.cargarMiembros();
+
+                if (subaccion === 'tirar_todos') {
+                    if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
+                    await interaction.deferReply({ ephemeral: true });
+                    if (!session.dados) session.dados = {};
+                    const resultados = [];
+                    for (const interesado of session.interesados) {
+                        const valor = Math.floor(Math.random() * 25) + 1;
+                        const nombreCanon = funciones.aplicarCanonico(interesado, miembros);
+                        if (!session.dados[interesado]) session.dados[interesado] = { historial: [], propio: false };
+                        session.dados[interesado].historial.push(valor);
+                        resultados.push({ nombre: nombreCanon, valor });
+                    }
+                    pushHistorial(session, interaction, `Tiró dados para todos (${resultados.length} interesados)`);
+                    guardarSubastas(subastas);
+                    await actualizarMensajePanel(client, session, funciones);
+                    return interaction.editReply({ content: '✅ Dados tirados para todos los interesados.' });
+                }
+
+                if (subaccion === 'tirar_varios') {
+                    if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
+                    const opciones = session.interesados.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    const row = new ActionRowBuilder().addComponents(
+                        new StringSelectMenuBuilder().setCustomId(`panel_dados_sel:tirar_varios:${sessionId}`).setPlaceholder('Elegí jugadores').setMinValues(1).setMaxValues(Math.min(opciones.length, 25)).addOptions(opciones)
+                    );
+                    return interaction.reply({ content: 'Elegí los jugadores:', components: [row], ephemeral: true });
+                }
+
+                if (subaccion === 'limpiar_todos') {
+                    const id = guardarPendientePanel('dados_limpiar_todos', { sessionId: session.id }, interaction.user.id);
+                    const row = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, limpiar todos').setStyle(ButtonStyle.Danger),
+                        new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Secondary)
+                    );
+                    return interaction.reply({ content: '⚠️ **¿Borrar todos los dados de este thread?**', components: [row], ephemeral: true });
+                }
+
+                if (subaccion === 'limpiar_jugadores') {
+                    if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
+                    const opciones = session.interesados.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    const row = new ActionRowBuilder().addComponents(
+                        new StringSelectMenuBuilder().setCustomId(`panel_dados_sel:limpiar_jugadores:${sessionId}`).setPlaceholder('Elegí jugadores').setMinValues(1).setMaxValues(Math.min(opciones.length, 25)).addOptions(opciones)
+                    );
+                    return interaction.reply({ content: 'Elegí los jugadores a limpiar:', components: [row], ephemeral: true });
+                }
+
+                if (subaccion === 'borrar_valor') {
+                    if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
+                    const opciones = session.interesados.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    const row = new ActionRowBuilder().addComponents(
+                        new StringSelectMenuBuilder().setCustomId(`panel_dados_sel:borrar_valor_jugador:${sessionId}`).setPlaceholder('Elegí jugador').addOptions(opciones)
+                    );
+                    return interaction.reply({ content: 'Elegí el jugador:', components: [row], ephemeral: true });
+                }
+
+                if (subaccion === 'bloquear') {
+                    const expiraEn = bloquearDados(session.threadId, 60);
+                    return interaction.reply({ content: `🔒 Dados bloqueados por 60 min. Expira <t:${Math.floor(expiraEn / 1000)}:R>.`, ephemeral: true });
+                }
+
+                if (subaccion === 'desbloquear') {
+                    desbloquearDados(session.threadId);
+                    return interaction.reply({ content: '🔓 Dados desbloqueados.', ephemeral: true });
+                }
+            }
+
+            if (interaction.isStringSelectMenu() && interaction.customId.startsWith('panel_dados_sel:')) {
+                if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
+                const partes = interaction.customId.split(':');
+                const subaccion = partes[1];
+                const sessionId = partes[2];
+                const subastas = cargarSubastas();
+                const session = subastas[sessionId];
+                if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado o inexistente.', ephemeral: true });
+                const miembros = funciones.cargarMiembros();
+
+                if (subaccion === 'tirar_varios') {
+                    const jugadores = interaction.values;
+                    const id = guardarPendientePanel('dados_tirar_varios', { sessionId: session.id, jugadores }, interaction.user.id);
+                    const row = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
+                        new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
+                    );
+                    return interaction.reply({ content: `⚠️ **¿Tirar dados para: ${jugadores.map(j => funciones.aplicarCanonico(j, miembros)).join(', ')}?**`, components: [row], ephemeral: true });
+                }
+
+                if (subaccion === 'limpiar_jugadores') {
+                    const jugadores = interaction.values;
+                    const id = guardarPendientePanel('dados_limpiar_jugadores', { sessionId: session.id, jugadores }, interaction.user.id);
+                    const row = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, limpiar').setStyle(ButtonStyle.Danger),
+                        new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Secondary)
+                    );
+                    return interaction.reply({ content: `⚠️ **¿Borrar los dados de: ${jugadores.map(j => funciones.aplicarCanonico(j, miembros)).join(', ')}?**`, components: [row], ephemeral: true });
+                }
+
+                if (subaccion === 'borrar_valor_jugador') {
+                    const jugador = interaction.values[0];
+                    const keyJugador = utils.claveJugador(jugador, miembros);
+                    let historial = [];
+                    if (session.dados) {
+                        for (const nombre in session.dados) {
+                            if (utils.claveJugador(nombre, miembros) === keyJugador) {
+                                historial = session.dados[nombre].historial || [];
+                                break;
+                            }
+                        }
+                    }
+                    if (historial.length === 0) return interaction.reply({ content: 'ℹ️ Ese jugador no tiene dados registrados.', ephemeral: true });
+                    const opciones = historial.map(v => ({ label: String(v), value: String(v) }));
+                    const row = new ActionRowBuilder().addComponents(
+                        new StringSelectMenuBuilder().setCustomId(`panel_dados_sel:borrar_valor_valores:${sessionId}:${encodeURIComponent(jugador)}`).setPlaceholder('Elegí valores').setMinValues(1).setMaxValues(opciones.length).addOptions(opciones)
+                    );
+                    return interaction.reply({ content: 'Elegí los valores a borrar:', components: [row], ephemeral: true });
+                }
+
+                if (subaccion === 'borrar_valor_valores') {
+                    const jugador = decodeURIComponent(partes[3] || '');
+                    const valores = interaction.values.map(v => parseInt(v, 10)).filter(n => !isNaN(n));
+                    if (valores.length === 0) return interaction.reply({ content: '❌ Valores inválidos.', ephemeral: true });
+                    const id = guardarPendientePanel('dados_borrar_valor', { sessionId: session.id, jugador, valores }, interaction.user.id);
+                    const row = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, borrar').setStyle(ButtonStyle.Danger),
+                        new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Secondary)
+                    );
+                    return interaction.reply({ content: `⚠️ **¿Borrar los valores ${valores.join(', ')} de ${funciones.aplicarCanonico(jugador, miembros)}?**`, components: [row], ephemeral: true });
                 }
             }
 
@@ -1372,6 +1555,69 @@ function setupPanel(client, funciones) {
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) { pendingPanel.delete(id); return interaction.editReply({ content: '❌ El panel ya no está activo.', components: [] }); }
                 const miembros = funciones.cargarMiembros();
 
+                if (p.tipo === 'dados_tirar_varios') {
+                    if (!session.dados) session.dados = {};
+                    const jugadores = p.payload.jugadores;
+                    const resultados = [];
+                    for (const jugador of jugadores) {
+                        const valor = Math.floor(Math.random() * 25) + 1;
+                        const nombreCanon = funciones.aplicarCanonico(jugador, miembros);
+                        const keyJugador = utils.claveJugador(nombreCanon, miembros);
+                        let targetKey = nombreCanon;
+                        const match = session.interesados.find(i => utils.claveJugador(i, miembros) === keyJugador);
+                        if (match) targetKey = match;
+                        if (!session.dados[targetKey]) session.dados[targetKey] = { historial: [], propio: false };
+                        session.dados[targetKey].historial.push(valor);
+                        resultados.push({ nombre: nombreCanon, valor });
+                    }
+                    pushHistorial(session, interaction, `Tiró dados para: ${resultados.map(r => `${r.nombre} (${r.valor})`).join(', ')}`);
+                    guardarSubastas(subastas);
+                    await actualizarMensajePanel(client, session, funciones);
+                    pendingPanel.delete(id);
+                    return interaction.editReply({ content: '✅ Dados tirados.', components: [] });
+                }
+
+                if (p.tipo === 'dados_limpiar_todos') {
+                    session.dados = {};
+                    pushHistorial(session, interaction, 'Limpió todos los dados del thread');
+                    guardarSubastas(subastas);
+                    await actualizarMensajePanel(client, session, funciones);
+                    pendingPanel.delete(id);
+                    return interaction.editReply({ content: '🧹 Se borraron todos los dados.', components: [] });
+                }
+
+                if (p.tipo === 'dados_limpiar_jugadores') {
+                    const jugadores = p.payload.jugadores;
+                    const keys = jugadores.map(j => utils.claveJugador(j, miembros));
+                    for (const nombre in session.dados) {
+                        if (keys.includes(utils.claveJugador(nombre, miembros))) delete session.dados[nombre];
+                    }
+                    pushHistorial(session, interaction, `Limpió dados de: ${jugadores.join(', ')}`);
+                    guardarSubastas(subastas);
+                    await actualizarMensajePanel(client, session, funciones);
+                    pendingPanel.delete(id);
+                    return interaction.editReply({ content: '🧹 Dados borrados.', components: [] });
+                }
+
+                if (p.tipo === 'dados_borrar_valor') {
+                    const { jugador, valores } = p.payload;
+                    const keyJugador = utils.claveJugador(jugador, miembros);
+                    let eliminados = 0;
+                    for (const nombre in session.dados) {
+                        if (utils.claveJugador(nombre, miembros) === keyJugador) {
+                            const antes = session.dados[nombre].historial.length;
+                            session.dados[nombre].historial = session.dados[nombre].historial.filter(v => !valores.includes(v));
+                            eliminados += antes - session.dados[nombre].historial.length;
+                            if (session.dados[nombre].historial.length === 0) delete session.dados[nombre];
+                        }
+                    }
+                    pushHistorial(session, interaction, `Borró valores ${valores.join(', ')} de ${jugador}`);
+                    guardarSubastas(subastas);
+                    await actualizarMensajePanel(client, session, funciones);
+                    pendingPanel.delete(id);
+                    return interaction.editReply({ content: `🧹 Se borraron ${eliminados} valores.`, components: [] });
+                }
+
                 if (p.tipo === 'agregar_interesados') {
                     const ag = [];
                     for (const n of p.payload.nuevos) {
@@ -1507,6 +1753,7 @@ function setupPanel(client, funciones) {
                 if (p.tipo === 'cancelar_subasta') {
                     const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
                     const objeto = session.item.objeto;
+                    const cantidad = session.item.cantidad;
                     const interesados = session.interesados.length;
                     const threadId = session.threadId;
 
@@ -1538,7 +1785,7 @@ function setupPanel(client, funciones) {
                     await refrescarTodo(client, funciones);
                     pendingPanel.delete(id);
 
-                    await enviarAuditoria(client, `🗑️ **Subasta cancelada desde panel**\n👤 Cancelada por: **${nombreUsuario}** (<@${interaction.user.id}>)\n📦 Objeto: **${objeto}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+                    await enviarAuditoria(client, `🗑️ **Subasta cancelada desde panel**\n👤 Cancelada por: **${nombreUsuario}**\n📦 Objeto: **${objeto}**\n🔢 Cantidad: **${cantidad}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
 
                     return interaction.editReply({ content: '🗑️ Subasta cancelada, panel eliminado y archivada sin registrar.', components: [] });
                 }
@@ -1678,6 +1925,7 @@ function setupPanel(client, funciones) {
                 if (p.tipo === 'control_cancelar_subasta') {
                     const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
                     const objeto = session.item.objeto;
+                    const cantidad = session.item.cantidad;
                     const interesados = session.interesados.length;
                     const threadId = session.threadId;
 
@@ -1709,7 +1957,7 @@ function setupPanel(client, funciones) {
                     await refrescarTodo(client, funciones);
                     pendingPanel.delete(id);
 
-                    await enviarAuditoria(client, `🗑️ **Subasta cancelada desde Control de Invasión**\n👤 Cancelada por: **${nombreUsuario}** (<@${interaction.user.id}>)\n📦 Objeto: **${objeto}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+                    await enviarAuditoria(client, `🗑️ **Subasta cancelada desde Control de Invasión**\n👤 Cancelada por: **${nombreUsuario}**\n📦 Objeto: **${objeto}**\n🔢 Cantidad: **${cantidad}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
 
                     return interaction.editReply({ content: '🗑️ Subasta cancelada y panel eliminado.', components: [] });
                 }
@@ -1776,6 +2024,7 @@ function setupPanel(client, funciones) {
 
                             detalleCerradas.push({
                                 objeto: subastas[id].item.objeto,
+                                cantidad: subastas[id].item.cantidad,
                                 interesados: subastas[id].interesados.length,
                                 threadId: subastas[id].threadId
                             });
@@ -1811,9 +2060,9 @@ function setupPanel(client, funciones) {
                     await refrescarTodo(client, funciones);
 
                     if (detalleCerradas.length > 0) {
-                        const lista = detalleCerradas.slice(0, 10).map(d => `• **${d.objeto}** (${d.interesados} interesados) — <#${d.threadId}>`).join('\n');
+                        const lista = detalleCerradas.slice(0, 10).map(d => `• **${d.objeto}** · Cantidad: ${d.cantidad} · Interesados: ${d.interesados} — <#${d.threadId}>`).join('\n');
                         const extra = detalleCerradas.length > 10 ? `\n... y ${detalleCerradas.length - 10} más.` : '';
-                        await enviarAuditoria(client, `🔒 **Cierre de todas las subastas (Control Global)**\n👤 Cerrada por: **${nombreUsuario}** (<@${interaction.user.id}>)\n📦 ${detalleCerradas.length} subasta(s):\n${lista}${extra}\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+                        await enviarAuditoria(client, `🔒 **Cierre de todas las subastas (Control Global)**\n👤 Cerrada por: **${nombreUsuario}**\n📦 ${detalleCerradas.length} subasta(s):\n${lista}${extra}\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
                     }
 
                     return interaction.editReply({ content: `✅ Se cancelaron y eliminaron **${cerradas}** subastas.` });
