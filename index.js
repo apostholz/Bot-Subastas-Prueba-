@@ -37,6 +37,8 @@ const BACKUP_CONFIG_FILE = path.join(DATA_DIR, 'backup_config.json');
 const ULTIMO_BACKUP_FILE = path.join(DATA_DIR, 'ultimo_backup.json');
 const BACKUP_DIR_LOCAL = path.join(DATA_DIR, 'backups');
 
+const AUDIT_CHANNEL_ID = process.env.AUDIT_CHANNEL_ID || null;
+
 const DADOS_LISTA_DURACION = 30 * 60 * 1000;
 const DADOS_LISTA_REFRESCO = 2 * 60 * 1000;
 
@@ -62,6 +64,16 @@ function guardarPendiente(tipo, payload, userId) {
         if (v.expira < Date.now()) pendingActions.delete(k);
     }
     return id;
+}
+
+async function enviarAuditoria(client, contenido) {
+    if (!AUDIT_CHANNEL_ID) return;
+    try {
+        const canal = await client.channels.fetch(AUDIT_CHANNEL_ID);
+        if (canal) await canal.send({ content: contenido, allowedMentions: { parse: [] } });
+    } catch (e) {
+        console.error('Error enviando auditoría:', e.message);
+    }
 }
 
 function cargarDadosLock() {
@@ -491,6 +503,27 @@ function haySubastaActivaEnThread(threadId) {
     );
 }
 
+function obtenerSessionActiva(threadId) {
+    const subastas = cargarSubastasActivas();
+    return Object.values(subastas).find(s =>
+        s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada')
+    );
+}
+
+function registrarHistorialDados(session, interaction, accion) {
+    if (!session) return;
+    session.historial.push({
+        timestamp: Date.now(),
+        userId: interaction.user.id,
+        userName: interaction.member?.displayName || interaction.user.username,
+        accion
+    });
+    if (session.historial.length > 100) session.historial = session.historial.slice(-100);
+    const subastas = cargarSubastasActivas();
+    subastas[session.id] = session;
+    fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+}
+
 setInterval(() => {
     const pendientes = cargarDadosPendientes();
     const ahora = Date.now();
@@ -566,13 +599,25 @@ function generarEmbedListaDados(threadId, miembros) {
     return embed;
 }
 
-function construirBotonCancelarLista() {
-    return new ActionRowBuilder().addComponents(
+function construirBotonesListaDados(threadId) {
+    const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId('dados_lista_cancelar')
             .setLabel('⏸️ Pausar refresh')
             .setStyle(ButtonStyle.Danger)
     );
+
+    const session = obtenerSessionActiva(threadId);
+    if (session) {
+        row.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`panel_btn:dados:${session.id}`)
+                .setLabel('Dados')
+                .setStyle(ButtonStyle.Secondary)
+        );
+    }
+
+    return row;
 }
 
 async function actualizarMensajeListaDados(client, threadId) {
@@ -583,7 +628,7 @@ async function actualizarMensajeListaDados(client, threadId) {
 
     const miembros = utils.cargarMiembros();
     const embed = generarEmbedListaDados(threadId, miembros);
-    const row = construirBotonCancelarLista();
+    const row = construirBotonesListaDados(threadId);
 
     try {
         const canal = await client.channels.fetch(threadId);
@@ -703,7 +748,7 @@ setInterval(async () => {
                 } catch {}
 
                 const embed = generarEmbedListaDados(threadId, miembros);
-                const row = construirBotonCancelarLista();
+                const row = construirBotonesListaDados(threadId);
                 const nuevo = await canal.send({ embeds: [embed], components: [row] });
                 entry.messageId = nuevo.id;
                 cambios = true;
@@ -971,9 +1016,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                             if (!session.dados[targetKey]) session.dados[targetKey] = { historial: [], propio: false };
                             session.dados[targetKey].historial.push(valor);
                         }
-                        session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: `Tiró dados para: ${jugadores.map(j => utils.aplicarCanonico(j, miembros)).join(', ')}` });
-                        if (session.historial.length > 50) session.historial = session.historial.slice(-50);
-                        fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+                        registrarHistorialDados(session, interaction, `Tiró dados para: ${jugadores.map(j => utils.aplicarCanonico(j, miembros)).join(', ')}`);
                         await actualizarMensajePanel(client, session, funciones);
                     } else {
                         const pendientes = cargarDadosPendientes();
@@ -1017,15 +1060,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     if (session) {
                         if (tipo === 'todos') {
                             session.dados = {};
-                            session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: 'Limpió todos los dados del thread' });
+                            registrarHistorialDados(session, interaction, 'Limpió todos los dados del thread');
                         } else {
                             for (const nombre in session.dados) {
                                 if (keys.includes(utils.claveJugador(nombre, miembros))) delete session.dados[nombre];
                             }
-                            session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: `Limpió dados de: ${jugadores.map(j => utils.aplicarCanonico(j, miembros)).join(', ')}` });
+                            registrarHistorialDados(session, interaction, `Limpió dados de: ${jugadores.map(j => utils.aplicarCanonico(j, miembros)).join(', ')}`);
                         }
-                        if (session.historial.length > 50) session.historial = session.historial.slice(-50);
-                        fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
                         await actualizarMensajePanel(client, session, funciones);
                     }
 
@@ -1052,9 +1093,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                                 if (session.dados[nombre].historial.length === 0) delete session.dados[nombre];
                             }
                         }
-                        session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: `Borró valores ${valores.join(', ')} de ${utils.aplicarCanonico(jugador, miembros)}` });
-                        if (session.historial.length > 50) session.historial = session.historial.slice(-50);
-                        fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+                        registrarHistorialDados(session, interaction, `Borró valores ${valores.join(', ')} de ${utils.aplicarCanonico(jugador, miembros)}`);
                         await actualizarMensajePanel(client, session, funciones);
                     } else {
                         let pendientes = cargarDadosPendientes();
@@ -1099,8 +1138,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         return true;
                     });
                     utils.guardarDB(db);
+
+                    const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
+                    const ahora = new Date();
+                    const fechaStr = formatearFechaHoraRegistro(ahora);
+
                     resultado = `🗑️ Se borraron **${borradas.length}** entradas:\n` + borradas.map(c => `#${c.id} · ${c.cantidad}x ${c.objeto}`).join('\n');
+                    resultado += `\n\n-# Deleted by ${nombreUsuario} · ${fechaStr}`;
                     requiereSync = true;
+
+                    if (borradas.length > 0) {
+                        const lista = borradas.slice(0, 10).map(c => `• #${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})`).join('\n');
+                        const extra = borradas.length > 10 ? `\n... y ${borradas.length - 10} más.` : '';
+                        await enviarAuditoria(client, `🗑️ **Compras borradas**\n👤 Borrada por: **${nombreUsuario}**\n📦 ${borradas.length} entrada(s):\n${lista}${extra}\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+                    }
                 }
                 else if (p.tipo === 'editar') {
                     const idx = db.compras.findIndex(c => c.id === p.payload.id);
@@ -1129,6 +1180,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
                             if (pos !== -1) e.perdedores.splice(pos, 1, valor.poner);
                             const posGan = utils.buscarJugadorEnLista(e.ganadores, valor.poner, miembros);
                             if (posGan !== -1) e.ganadores.splice(posGan, 1);
+                        }
+                        else if (sub === 'set-ganadores') {
+                            e.ganadores = valor.ganadores;
+                            if (valor.ganadores.length === 0) {
+                                // limpiar
+                            }
+                        }
+                        else if (sub === 'set-perdedores') {
+                            e.perdedores = valor.perdedores;
+                            if (valor.perdedores.length === 0) {
+                                // limpiar
+                            }
                         }
                         else if (sub === 'set') {
                             if (valor.objeto) { e.objeto = valor.objeto; if (!valor.categoria) e.categoria = logic.inferirCategoria(valor.objeto, db); }
@@ -1250,7 +1313,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
 
                 const embed = generarEmbedListaDados(threadId, miembros);
-                const row = construirBotonCancelarLista();
+                const row = construirBotonesListaDados(threadId);
                 const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
 
                 mensajes[threadId] = { messageId: msg.id, expiraEn };
@@ -1312,10 +1375,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     resultados.push({ nombre: nombreCanon, valor });
                 }
 
-                session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: `Tiró dados para todos (${resultados.length} interesados)` });
-                if (session.historial.length > 50) session.historial = session.historial.slice(-50);
-
-                fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+                registrarHistorialDados(session, interaction, `Tiró dados para todos (${resultados.length} interesados)`);
                 await actualizarMensajePanel(client, session, funciones);
                 await actualizarMensajeListaDados(client, interaction.channelId);
 
@@ -1376,15 +1436,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const minutos = interaction.options.getInteger('minutos') || 60;
                 const expiraEn = bloquearDados(interaction.channelId, minutos);
 
-                const subastas = cargarSubastasActivas();
-                const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+                const session = obtenerSessionActiva(interaction.channelId);
                 if (session) {
-                    session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: `Bloqueó /dado por ${minutos} min` });
-                    if (session.historial.length > 50) session.historial = session.historial.slice(-50);
-                    fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+                    registrarHistorialDados(session, interaction, `Bloqueó /dado por ${minutos} min`);
                 }
 
-                return interaction.reply({ content: `🔒 Dados bloqueados por ${minutos} min. Expira <t:${Math.floor(expiraEn / 1000)}:R>.`, ephemeral: true });
+                return interaction.reply({ content: `🔒 Dados bloqueados por ${minutos} min. Expira <t:${Math.floor(expiraEn / 1000)}:R>.` });
             }
 
             if (sub === 'desbloquear') {
@@ -1392,15 +1449,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (!esModDados(interaction.member, interaction.guild)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                 desbloquearDados(interaction.channelId);
 
-                const subastas = cargarSubastasActivas();
-                const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+                const session = obtenerSessionActiva(interaction.channelId);
                 if (session) {
-                    session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: 'Desbloqueó /dado' });
-                    if (session.historial.length > 50) session.historial = session.historial.slice(-50);
-                    fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+                    registrarHistorialDados(session, interaction, 'Desbloqueó /dado');
                 }
 
-                return interaction.reply({ content: '🔓 Dados desbloqueados.', ephemeral: true });
+                return interaction.reply({ content: '🔓 Dados desbloqueados.' });
             }
         }
 
@@ -1758,6 +1812,53 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 cuerpo = `Reemplazar a **${utils.aplicarCanonico(q, miembros)}** por **${utils.aplicarCanonico(p, miembros)}** en ${listaNombre} de #${id}.\n\n` + renderEntradaProyectada(proj, miembros);
                 payload = { id, sub, valor: { quitar: q, poner: p } };
             }
+            else if (sub === 'set-ganadores' || sub === 'set-perdedores') {
+                const esGanadores = sub === 'set-ganadores';
+                const str = (interaction.options.getString('jugadores') || '').trim();
+                const nuevosRaw = str.split(',').map(s => s.trim()).filter(Boolean);
+                const nuevos = nuevosRaw.map(n => utils.aplicarCanonico(n, miembros));
+
+                const vistos = new Set();
+                const finales = [];
+                for (const n of nuevos) {
+                    const key = utils.claveJugador(n, miembros);
+                    if (vistos.has(key)) continue;
+                    vistos.add(key);
+                    finales.push(n);
+                }
+
+                const proj = { ...e, ganadores: [...e.ganadores], perdedores: [...e.perdedores] };
+                if (esGanadores) {
+                    proj.ganadores = finales;
+                    proj.perdedores = proj.perdedores.filter(p => !finales.some(g => utils.claveJugador(g, miembros) === utils.claveJugador(p, miembros)));
+                } else {
+                    proj.perdedores = finales;
+                    proj.ganadores = proj.ganadores.filter(g => !finales.some(p => utils.claveJugador(g, miembros) === utils.claveJugador(p, miembros)));
+                }
+
+                cuerpo = `⚠️ **Reemplazo completo de ${esGanadores ? 'ganadores' : 'perdedores'} en #${id}**\n\n`;
+                cuerpo += `**${esGanadores ? 'Ganadores' : 'Perdedores'} actuales:**\n`;
+                cuerpo += (esGanadores ? e.ganadores : e.perdedores).map(x => `• ${utils.formatearNombreConCantidad(x, miembros)}`).join('\n') || '• (ninguno)';
+                cuerpo += `\n\n**Nuevos ${esGanadores ? 'ganadores' : 'perdedores'}:**\n`;
+                cuerpo += finales.map(x => `• ${x}`).join('\n') || '• (vacío, se limpia la lista)';
+                cuerpo += `\n\nSe reemplazará la lista completa.`;
+
+                if (esGanadores && finales.length > 0 && e.perdedores.length > 0) {
+                    const conflictos = finales.filter(g => e.perdedores.some(p => utils.claveJugador(g, miembros) === utils.claveJugador(p, miembros)));
+                    if (conflictos.length > 0) {
+                        cuerpo += `\n\n⚠️ Se quitará de perdedores a: ${conflictos.join(', ')}.`;
+                    }
+                }
+                if (!esGanadores && finales.length > 0 && e.ganadores.length > 0) {
+                    const conflictos = finales.filter(p => e.ganadores.some(g => utils.claveJugador(g, miembros) === utils.claveJugador(p, miembros)));
+                    if (conflictos.length > 0) {
+                        cuerpo += `\n\n⚠️ Se quitará de ganadores a: ${conflictos.join(', ')}.`;
+                    }
+                }
+
+                cuerpo += `\n\n` + renderEntradaProyectada(proj, miembros);
+                payload = { id, sub, valor: esGanadores ? { ganadores: finales } : { perdedores: finales } };
+            }
             else if (sub === 'set') {
                 const obj = interaction.options.getString('objeto');
                 const cant = interaction.options.getInteger('cantidad');
@@ -2071,6 +2172,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     "`/editar reemplazar-ganador` · reemplazar un ganador por otro\n" +
                     "`/editar perdedor` · agregar/quitar perdedores\n" +
                     "`/editar reemplazar-perdedor` · reemplazar un perdedor por otro\n" +
+                    "`/editar set-ganadores` · reemplazar toda la lista de ganadores\n" +
+                    "`/editar set-perdedores` · reemplazar toda la lista de perdedores\n" +
                     "`/editar set` · cambiar objeto, cantidad, categoría, evento o fecha\n" +
                     "`/borrar` · borrar una compra completa por ID"
                 );
