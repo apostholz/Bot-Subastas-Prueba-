@@ -170,14 +170,20 @@ const commandsData = [
         .addSubcommand(sub => sub.setName('panel').setDescription('Crear/actualizar Panel de Control de Anuncios en este canal'))
         .addSubcommand(sub => sub.setName('estado').setDescription('Ver estado de anuncios pendientes')),
 
-    new SlashCommandBuilder().setName('dado').setDescription('Tirar un dado de 50 caras en la subasta actual')
+    new SlashCommandBuilder().setName('dado').setDescription('Tirar un dado de 25 caras en la subasta actual')
         .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador (opcional)').setRequired(false).setAutocomplete(true)),
 
-    new SlashCommandBuilder().setName('dados').setDescription('Ver la lista de dados tirados en este thread')
+    new SlashCommandBuilder().setName('dados').setDescription('Ver y gestionar la lista de dados tirados en este thread')
         .addSubcommand(sub => sub.setName('lista').setDescription('Mostrar la lista de dados actualizada'))
-        .addSubcommand(sub => sub.setName('limpiar-lista').setDescription('Limpiar dados de este thread')
-            .addStringOption(o => o.setName('tipo').setDescription('Limpiar todos o un jugador').setRequired(true).addChoices({ name: 'Todos', value: 'todos' }, { name: 'Jugador', value: 'jugador' }))
-            .addStringOption(o => o.setName('jugador').setDescription('Jugador a limpiar (requerido si tipo=jugador)').setRequired(false).setAutocomplete(true)))
+        .addSubcommand(sub => sub.setName('limpiar-lista').setDescription('Limpiar dados de uno o varios jugadores de este thread')
+            .addStringOption(o => o.setName('tipo').setDescription('Limpiar todos o uno/varios jugadores').setRequired(true).addChoices({ name: 'Todos', value: 'todos' }, { name: 'Jugador', value: 'jugador' }))
+            .addStringOption(o => o.setName('jugador').setDescription('Jugador(es) separados por coma (requerido si tipo=jugador)').setRequired(false).setAutocomplete(true)))
+        .addSubcommand(sub => sub.setName('tirar-todos').setDescription('Tirar dados por todos los interesados anotados en el panel'))
+        .addSubcommand(sub => sub.setName('tirar-varios').setDescription('Tirar dados por varios jugadores')
+            .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true)))
+        .addSubcommand(sub => sub.setName('borrar-valor').setDescription('Borrar números específicos de un jugador')
+            .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true))
+            .addStringOption(o => o.setName('valores').setDescription('Números separados por coma (ej: 5,17)').setRequired(true)))
 ];
 
 module.exports = { commandsData };
