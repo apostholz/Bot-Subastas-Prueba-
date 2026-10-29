@@ -147,6 +147,7 @@ const commandsData = [
         .addSubcommand(sub => sub.setName('indice').setDescription('Crear/actualizar índice privado en este canal')),
 
     new SlashCommandBuilder().setName('control').setDescription('Gestionar el Panel de Control de Subastas')
+        .addSubcommand(sub => sub.setName('refresh').setDescription('Refrescar todos los paneles de control e índice'))
         .addSubcommand(sub => sub.setName('agregar').setDescription('Añadir un thread a la lista fija')
             .addStringOption(o => o.setName('objeto').setDescription('Objeto por defecto para este thread').setRequired(false).setAutocomplete(true))
             .addStringOption(o => o.setName('categoria').setDescription('Categoría por defecto para este thread').setRequired(false).addChoices(...catChoices))
