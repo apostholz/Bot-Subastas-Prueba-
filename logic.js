@@ -384,8 +384,7 @@ function formatearLineaFechaEvento(fecha, evento) {
 function formatearBloqueCompra(entrada, miembros, opciones = {}) {
     const {
         titulo = 'Compra registrada',
-        autor = null,
-        fechaAccion = null
+        autor = null
     } = opciones;
 
     const cantidad = entrada.cantidad || 1;
@@ -415,9 +414,9 @@ function formatearBloqueCompra(entrada, miembros, opciones = {}) {
         out += `\n\n${pTitle}\n${pBase.join(', ')}`;
     }
 
-    if (autor && fechaAccion) {
+    if (autor) {
         const label = titulo === 'Edición aplicada' ? 'Edited by' : 'Registered by';
-        out += `\n\n-# ${label} ${autor} · ${fechaAccion}`;
+        out += `\n\n-# ${label} ${autor}`;
     }
 
     return out;
