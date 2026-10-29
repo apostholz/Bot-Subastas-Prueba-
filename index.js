@@ -32,6 +32,7 @@ const { setupPanel, actualizarMensajePanel } = require('./panel');
 const DATA_DIR = path.join(__dirname, 'data');
 const DADOS_PENDIENTES_FILE = path.join(DATA_DIR, 'dados_pendientes.json');
 const DADOS_MENSAJES_FILE = path.join(DATA_DIR, 'dados_mensajes.json');
+const DADOS_LOCK_FILE = path.join(DATA_DIR, 'dados_lock.json');
 const BACKUP_CONFIG_FILE = path.join(DATA_DIR, 'backup_config.json');
 const ULTIMO_BACKUP_FILE = path.join(DATA_DIR, 'ultimo_backup.json');
 const BACKUP_DIR_LOCAL = path.join(DATA_DIR, 'backups');
@@ -61,6 +62,44 @@ function guardarPendiente(tipo, payload, userId) {
         if (v.expira < Date.now()) pendingActions.delete(k);
     }
     return id;
+}
+
+function cargarDadosLock() {
+    if (!fs.existsSync(DADOS_LOCK_FILE)) return {};
+    try { return JSON.parse(fs.readFileSync(DADOS_LOCK_FILE, 'utf8')); }
+    catch { return {}; }
+}
+function guardarDadosLock(d) {
+    fs.writeFileSync(DADOS_LOCK_FILE, JSON.stringify(d, null, 2));
+}
+function estaDadosBloqueado(threadId) {
+    const lock = cargarDadosLock();
+    const expiraEn = lock[threadId];
+    if (!expiraEn) return false;
+    if (expiraEn <= Date.now()) {
+        delete lock[threadId];
+        guardarDadosLock(lock);
+        return false;
+    }
+    return true;
+}
+function bloquearDados(threadId, minutos = 60) {
+    const lock = cargarDadosLock();
+    lock[threadId] = Date.now() + minutos * 60 * 1000;
+    guardarDadosLock(lock);
+    return lock[threadId];
+}
+function desbloquearDados(threadId) {
+    const lock = cargarDadosLock();
+    delete lock[threadId];
+    guardarDadosLock(lock);
+}
+
+function esModDados(member, guild) {
+    if (!member || !guild) return false;
+    if (member.id === guild.ownerId) return true;
+    if (member.permissions && member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+    return member.roles.cache.has(utils.ROL_LIDER) || member.roles.cache.has(utils.ROL_HELPER);
 }
 
 const client = new Client({
@@ -541,7 +580,6 @@ async function actualizarMensajeListaDados(client, threadId) {
     const entry = mensajes[threadId];
     if (!entry || !entry.messageId) return;
     if (entry.expiraEn <= Date.now()) return;
-    if (haySubastaActivaEnThread(threadId)) return;
 
     const miembros = utils.cargarMiembros();
     const embed = generarEmbedListaDados(threadId, miembros);
@@ -656,8 +694,6 @@ setInterval(async () => {
                 cambios = true;
                 continue;
             }
-
-            if (haySubastaActivaEnThread(threadId)) continue;
 
             try {
                 const canal = await client.channels.fetch(threadId);
@@ -916,6 +952,123 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
                 const db = utils.cargarDB();
                 const miembros = utils.cargarMiembros();
+
+                if (p.tipo === 'dados_tirar_varios') {
+                    const threadId = p.payload.threadId;
+                    const jugadores = p.payload.jugadores;
+                    const subastas = cargarSubastasActivas();
+                    const session = Object.values(subastas).find(s => s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+
+                    if (session) {
+                        if (!session.dados) session.dados = {};
+                        for (const jugador of jugadores) {
+                            const valor = randomInt(1, 26);
+                            const nombreCanon = utils.aplicarCanonico(jugador, miembros);
+                            const keyJugador = utils.claveJugador(nombreCanon, miembros);
+                            let targetKey = nombreCanon;
+                            const match = session.interesados.find(i => utils.claveJugador(i, miembros) === keyJugador);
+                            if (match) targetKey = match;
+                            if (!session.dados[targetKey]) session.dados[targetKey] = { historial: [], propio: false };
+                            session.dados[targetKey].historial.push(valor);
+                        }
+                        session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: `Tiró dados para: ${jugadores.map(j => utils.aplicarCanonico(j, miembros)).join(', ')}` });
+                        if (session.historial.length > 50) session.historial = session.historial.slice(-50);
+                        fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+                        await actualizarMensajePanel(client, session, funciones);
+                    } else {
+                        const pendientes = cargarDadosPendientes();
+                        for (const jugador of jugadores) {
+                            const valor = randomInt(1, 26);
+                            const nombreCanon = utils.aplicarCanonico(jugador, miembros);
+                            pendientes.push({
+                                threadId,
+                                targetKey: nombreCanon,
+                                nombre: nombreCanon,
+                                valor,
+                                propio: false,
+                                creadoEn: Date.now(),
+                                expiraEn: Date.now() + 60 * 60 * 1000
+                            });
+                        }
+                        guardarDadosPendientes(pendientes);
+                    }
+
+                    await actualizarMensajeListaDados(client, threadId);
+                    pendingActions.delete(id);
+                    return interaction.editReply({ content: '✅ Dados tirados.', components: [] });
+                }
+
+                if (p.tipo === 'dados_limpiar') {
+                    const threadId = p.payload.threadId;
+                    const tipo = p.payload.tipo;
+                    const jugadores = p.payload.jugadores || [];
+                    const keys = jugadores.map(j => utils.claveJugador(j, miembros));
+
+                    let pendientes = cargarDadosPendientes();
+                    if (tipo === 'todos') {
+                        pendientes = pendientes.filter(p => p.threadId !== threadId);
+                    } else {
+                        pendientes = pendientes.filter(p => !(p.threadId === threadId && keys.includes(utils.claveJugador(p.nombre, miembros))));
+                    }
+                    guardarDadosPendientes(pendientes);
+
+                    const subastas = cargarSubastasActivas();
+                    const session = Object.values(subastas).find(s => s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+                    if (session) {
+                        if (tipo === 'todos') {
+                            session.dados = {};
+                            session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: 'Limpió todos los dados del thread' });
+                        } else {
+                            for (const nombre in session.dados) {
+                                if (keys.includes(utils.claveJugador(nombre, miembros))) delete session.dados[nombre];
+                            }
+                            session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: `Limpió dados de: ${jugadores.map(j => utils.aplicarCanonico(j, miembros)).join(', ')}` });
+                        }
+                        if (session.historial.length > 50) session.historial = session.historial.slice(-50);
+                        fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+                        await actualizarMensajePanel(client, session, funciones);
+                    }
+
+                    await actualizarMensajeListaDados(client, threadId);
+                    pendingActions.delete(id);
+                    return interaction.editReply({ content: '🧹 Lista limpiada.', components: [] });
+                }
+
+                if (p.tipo === 'dados_borrar_valor') {
+                    const threadId = p.payload.threadId;
+                    const jugador = p.payload.jugador;
+                    const valores = p.payload.valores;
+                    const keyJugador = utils.claveJugador(jugador, miembros);
+                    let eliminados = 0;
+
+                    const subastas = cargarSubastasActivas();
+                    const session = Object.values(subastas).find(s => s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+                    if (session && session.dados) {
+                        for (const nombre in session.dados) {
+                            if (utils.claveJugador(nombre, miembros) === keyJugador) {
+                                const antes = session.dados[nombre].historial.length;
+                                session.dados[nombre].historial = session.dados[nombre].historial.filter(v => !valores.includes(v));
+                                eliminados += antes - session.dados[nombre].historial.length;
+                                if (session.dados[nombre].historial.length === 0) delete session.dados[nombre];
+                            }
+                        }
+                        session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: `Borró valores ${valores.join(', ')} de ${utils.aplicarCanonico(jugador, miembros)}` });
+                        if (session.historial.length > 50) session.historial = session.historial.slice(-50);
+                        fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+                        await actualizarMensajePanel(client, session, funciones);
+                    } else {
+                        let pendientes = cargarDadosPendientes();
+                        const antes = pendientes.length;
+                        pendientes = pendientes.filter(p => !(p.threadId === threadId && utils.claveJugador(p.nombre, miembros) === keyJugador && valores.includes(p.valor)));
+                        eliminados = antes - pendientes.length;
+                        guardarDadosPendientes(pendientes);
+                    }
+
+                    await actualizarMensajeListaDados(client, threadId);
+                    pendingActions.delete(id);
+                    return interaction.editReply({ content: `🧹 Se borraron ${eliminados} valores.`, components: [] });
+                }
+
                 let resultado = '';
                 let requiereSync = false;
 
@@ -1119,50 +1272,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const listaJugadores = jugadoresRaw.split(',').map(s => s.trim()).filter(Boolean);
                 if (tipo === 'jugador' && listaJugadores.length === 0) return interaction.reply({ content: '❌ Debés indicar al menos un jugador.', ephemeral: true });
 
-                await interaction.deferReply({ ephemeral: true });
+                const id = guardarPendiente('dados_limpiar', { threadId: interaction.channelId, tipo, jugadores: listaJugadores }, interaction.user.id);
+                const cuerpo = tipo === 'todos'
+                    ? '¿Borrar todos los dados de este thread?'
+                    : `¿Borrar los dados de: ${listaJugadores.map(j => utils.aplicarCanonico(j, miembros)).join(', ')}?`;
 
-                const threadId = interaction.channelId;
-                const keys = listaJugadores.map(j => utils.claveJugador(j, miembros));
-
-                let pendientes = cargarDadosPendientes();
-                if (tipo === 'todos') {
-                    pendientes = pendientes.filter(p => p.threadId !== threadId);
-                } else {
-                    pendientes = pendientes.filter(p => !(p.threadId === threadId && keys.includes(utils.claveJugador(p.nombre, miembros))));
-                }
-                guardarDadosPendientes(pendientes);
-
-                const subastas = cargarSubastasActivas();
-                const session = Object.values(subastas).find(s => s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
-                if (session) {
-                    if (tipo === 'todos') {
-                        session.dados = {};
-                    } else {
-                        for (const nombre in session.dados) {
-                            if (keys.includes(utils.claveJugador(nombre, miembros))) delete session.dados[nombre];
-                        }
-                    }
-                    fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
-                    await actualizarMensajePanel(client, session, funciones);
-                }
-
-                const mensajes = cargarMensajesDados();
-                if (mensajes[threadId]) {
-                    try {
-                        const canal = await client.channels.fetch(threadId);
-                        try {
-                            const viejo = await canal.messages.fetch(mensajes[threadId].messageId);
-                            await viejo.delete();
-                        } catch {}
-                        const embed = generarEmbedListaDados(threadId, miembros);
-                        const row = construirBotonCancelarLista();
-                        const nuevo = await canal.send({ embeds: [embed], components: [row] });
-                        mensajes[threadId].messageId = nuevo.id;
-                        guardarMensajesDados(mensajes);
-                    } catch (e) { /* ignorar */ }
-                }
-
-                return interaction.editReply({ content: `✅ Lista limpiada (${tipo === 'todos' ? 'todos' : listaJugadores.join(', ')}).` });
+                return interaction.reply({
+                    content: `⚠️ **${cuerpo}**`,
+                    components: [new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`pend_confirm_${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
+                        new ButtonBuilder().setCustomId(`pend_cancel_${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
+                    )],
+                    ephemeral: true
+                });
             }
 
             if (sub === 'tirar-todos') {
@@ -1190,12 +1312,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     resultados.push({ nombre: nombreCanon, valor });
                 }
 
+                session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: `Tiró dados para todos (${resultados.length} interesados)` });
+                if (session.historial.length > 50) session.historial = session.historial.slice(-50);
+
                 fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
                 await actualizarMensajePanel(client, session, funciones);
                 await actualizarMensajeListaDados(client, interaction.channelId);
 
-                const lista = resultados.map(r => `• ${r.nombre}: 🎲 ${r.valor}`).join('\n');
-                return interaction.editReply({ content: `🎲 **Dados tirados para ${resultados.length} interesados:**\n\n${lista}` });
+                await interaction.deleteReply().catch(() => {});
+                return;
             }
 
             if (sub === 'tirar-varios') {
@@ -1210,50 +1335,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const nombres = jugadoresRaw.split(',').map(s => s.trim()).filter(Boolean);
                 if (nombres.length === 0) return interaction.reply({ content: '❌ Debés indicar al menos un jugador.', ephemeral: true });
 
-                await interaction.deferReply({ ephemeral: true });
-
-                const subastas = cargarSubastasActivas();
-                const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
-                const resultados = [];
-
-                if (session) {
-                    if (!session.dados) session.dados = {};
-                    for (const nombre of nombres) {
-                        const valor = randomInt(1, 26);
-                        const nombreCanon = utils.aplicarCanonico(nombre, miembros);
-                        const keyJugador = utils.claveJugador(nombreCanon, miembros);
-                        let targetKey = nombreCanon;
-                        const match = session.interesados.find(i => utils.claveJugador(i, miembros) === keyJugador);
-                        if (match) targetKey = match;
-                        if (!session.dados[targetKey]) session.dados[targetKey] = { historial: [], propio: false };
-                        session.dados[targetKey].historial.push(valor);
-                        resultados.push({ nombre: nombreCanon, valor });
-                    }
-                    fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
-                    await actualizarMensajePanel(client, session, funciones);
-                } else {
-                    const pendientes = cargarDadosPendientes();
-                    for (const nombre of nombres) {
-                        const valor = randomInt(1, 26);
-                        const nombreCanon = utils.aplicarCanonico(nombre, miembros);
-                        pendientes.push({
-                            threadId: interaction.channelId,
-                            targetKey: nombreCanon,
-                            nombre: nombreCanon,
-                            valor,
-                            propio: false,
-                            creadoEn: Date.now(),
-                            expiraEn: Date.now() + 60 * 60 * 1000
-                        });
-                        resultados.push({ nombre: nombreCanon, valor });
-                    }
-                    guardarDadosPendientes(pendientes);
-                }
-
-                await actualizarMensajeListaDados(client, interaction.channelId);
-
-                const lista = resultados.map(r => `• ${r.nombre}: 🎲 ${r.valor}`).join('\n');
-                return interaction.editReply({ content: `🎲 **Dados tirados:**\n\n${lista}` });
+                const id = guardarPendiente('dados_tirar_varios', { threadId: interaction.channelId, jugadores: nombres }, interaction.user.id);
+                return interaction.reply({
+                    content: `⚠️ **¿Tirar dados para: ${nombres.map(j => utils.aplicarCanonico(j, miembros)).join(', ')}?**`,
+                    components: [new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`pend_confirm_${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
+                        new ButtonBuilder().setCustomId(`pend_cancel_${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
+                    )],
+                    ephemeral: true
+                });
             }
 
             if (sub === 'borrar-valor') {
@@ -1269,40 +1359,57 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const valores = valoresStr.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
                 if (valores.length === 0) return interaction.reply({ content: '❌ Debés indicar al menos un número válido.', ephemeral: true });
 
-                await interaction.deferReply({ ephemeral: true });
+                const id = guardarPendiente('dados_borrar_valor', { threadId: interaction.channelId, jugador, valores }, interaction.user.id);
+                return interaction.reply({
+                    content: `⚠️ **¿Borrar los valores ${valores.join(', ')} de ${utils.aplicarCanonico(jugador, miembros)}?**`,
+                    components: [new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`pend_confirm_${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
+                        new ButtonBuilder().setCustomId(`pend_cancel_${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
+                    )],
+                    ephemeral: true
+                });
+            }
+
+            if (sub === 'bloquear') {
+                if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Solo funciona en threads.', ephemeral: true });
+                if (!esModDados(interaction.member, interaction.guild)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
+                const minutos = interaction.options.getInteger('minutos') || 60;
+                const expiraEn = bloquearDados(interaction.channelId, minutos);
 
                 const subastas = cargarSubastasActivas();
                 const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
-                const keyJugador = utils.claveJugador(jugador, miembros);
-                let eliminados = 0;
-
-                if (session && session.dados) {
-                    for (const nombre in session.dados) {
-                        if (utils.claveJugador(nombre, miembros) === keyJugador) {
-                            const antes = session.dados[nombre].historial.length;
-                            session.dados[nombre].historial = session.dados[nombre].historial.filter(v => !valores.includes(v));
-                            eliminados += antes - session.dados[nombre].historial.length;
-                            if (session.dados[nombre].historial.length === 0) delete session.dados[nombre];
-                        }
-                    }
+                if (session) {
+                    session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: `Bloqueó /dado por ${minutos} min` });
+                    if (session.historial.length > 50) session.historial = session.historial.slice(-50);
                     fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
-                    await actualizarMensajePanel(client, session, funciones);
-                } else {
-                    let pendientes = cargarDadosPendientes();
-                    const antes = pendientes.length;
-                    pendientes = pendientes.filter(p => !(p.threadId === interaction.channelId && utils.claveJugador(p.nombre, miembros) === keyJugador && valores.includes(p.valor)));
-                    eliminados = antes - pendientes.length;
-                    guardarDadosPendientes(pendientes);
                 }
 
-                await actualizarMensajeListaDados(client, interaction.channelId);
+                return interaction.reply({ content: `🔒 Dados bloqueados por ${minutos} min. Expira <t:${Math.floor(expiraEn / 1000)}:R>.`, ephemeral: true });
+            }
 
-                return interaction.editReply({ content: `✅ Se borraron ${eliminados} número(s) de ${utils.aplicarCanonico(jugador, miembros)}.` });
+            if (sub === 'desbloquear') {
+                if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Solo funciona en threads.', ephemeral: true });
+                if (!esModDados(interaction.member, interaction.guild)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
+                desbloquearDados(interaction.channelId);
+
+                const subastas = cargarSubastasActivas();
+                const session = Object.values(subastas).find(s => s.threadId === interaction.channelId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+                if (session) {
+                    session.historial.push({ timestamp: Date.now(), userId: interaction.user.id, userName: interaction.member?.displayName || interaction.user.username, accion: 'Desbloqueó /dado' });
+                    if (session.historial.length > 50) session.historial = session.historial.slice(-50);
+                    fs.writeFileSync(path.join(DATA_DIR, 'subastas_activas.json'), JSON.stringify(subastas, null, 2));
+                }
+
+                return interaction.reply({ content: '🔓 Dados desbloqueados.', ephemeral: true });
             }
         }
 
         if (interaction.commandName === 'dado') {
             if (!interaction.channel.isThread()) return interaction.reply({ content: '❌ Only works in threads.', ephemeral: true });
+
+            if (estaDadosBloqueado(interaction.channelId) && !esModDados(interaction.member, interaction.guild)) {
+                return interaction.reply({ content: '🔒 Los dados están bloqueados en este thread. Pedile a un encargado que los desbloquee.', ephemeral: true });
+            }
 
             const esLider = interaction.member.id === interaction.guild.ownerId ||
                 interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
@@ -1774,6 +1881,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.reply({ content: out, components: [row], ephemeral });
         }
 
+        if (interaction.commandName === 'compra') {
+            const idsStr = interaction.options.getString('ids') || '';
+            const ids = idsStr.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+            if (ids.length === 0) return interaction.reply({ content: '❌ No se encontraron IDs válidos.', ephemeral: true });
+
+            const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
+            const ephemeral = visibilidad === 'Privado';
+            const validos = db.compras.filter(c => ids.includes(c.id)).sort((a, b) => a.id - b.id);
+
+            if (validos.length === 0) return interaction.reply({ content: '❌ No existe ninguna entrada con esos IDs.', ephemeral: true });
+
+            let out = `🧾 **Compras seleccionadas**\n\n`;
+            for (const c of validos) {
+                out += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${utils.nombreBonitoEvento(c.evento)} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n`;
+                out += `   ${lineaGanadores(c.ganadores, miembros)}\n`;
+                if (c.perdedores && c.perdedores.length > 0) out += `   ${lineaPerdedores(c.perdedores, miembros)}\n`;
+                if (c.notas) out += `   📝 ${c.notas}\n`;
+                out += '\n';
+            }
+
+            return logic.responderLargo(interaction, out.trimEnd(), ephemeral);
+        }
+
         if (interaction.commandName === 'historial' || interaction.commandName === 'historial2') {
             const ephemeral = interaction.commandName === 'historial';
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
@@ -1912,6 +2042,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 "`/historial` · historial privado para no llenar el chat\n" +
                 "`/historial2` · historial visible para todos\n" +
                 "`/dia` · ver todas las compras de cada día\n" +
+                "`/compra` · ver compras por ID\n" +
                 "`/total` · unidades compradas totales de un jugador por categoría\n" +
                 "`/ranking` · tabla general de clasificación\n" +
                 "`/prioridad` · calcular prioridad entre jugadores\n" +
@@ -1932,7 +2063,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     "`/dados limpiar-lista` · borrar los dados de uno o varios jugadores o de todos\n" +
                     "`/dados tirar-todos` · tirar dados por todos los interesados del panel\n" +
                     "`/dados tirar-varios` · tirar dados por varios jugadores\n" +
-                    "`/dados borrar-valor` · borrar números específicos de un jugador\n\n" +
+                    "`/dados borrar-valor` · borrar números específicos de un jugador\n" +
+                    "`/dados bloquear` · bloquear /dado en el thread (solo mods)\n" +
+                    "`/dados desbloquear` · desbloquear /dado en el thread (solo mods)\n\n" +
                     "## Editar compras registradas\n" +
                     "`/editar ganador` · agregar/quitar ganadores\n" +
                     "`/editar reemplazar-ganador` · reemplazar un ganador por otro\n" +
