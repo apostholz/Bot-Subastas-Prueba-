@@ -1938,6 +1938,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 secciones.push(`# __Auction Mod / Líder__\n` +
                     "`/sub` · registrar compra de hoy\n" +
                     "`/subf` · registrar compra de una fecha específica\n" +
+                    "`/control refresh` · refrescar todos los paneles de control e índice\n" +
                     "`/dados limpiar-lista` · borrar los dados de uno o varios jugadores o de todos\n" +
                     "`/dados tirar-todos` · tirar dados por todos los interesados del panel\n" +
                     "`/dados tirar-varios` · tirar dados por varios jugadores\n" +
@@ -1948,12 +1949,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     "`/editar perdedor` · agregar/quitar perdedores\n" +
                     "`/editar reemplazar-perdedor` · reemplazar un perdedor por otro\n" +
                     "`/editar set` · cambiar objeto, cantidad, categoría, evento o fecha\n" +
-                    "`/borrar` · borrar una compra completa por ID\n\n" +
-                    "## Control\n" +
-                    "`/control panel` · crear/actualizar Panel de Control de Invasión\n" +
-                    "`/control-boss panel` · crear/actualizar Panel de Control de Banquete\n" +
-                    "`/control-boss objeto lista` · listar slots configurados\n" +
-                    "`/control-boss estado` · ver estado de anuncios pendientes"
+                    "`/borrar` · borrar una compra completa por ID"
                 );
             }
 
@@ -1962,11 +1958,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     "`/catalogo` · añadir objetos nuevos al bot sin registrar una compra\n\n" +
                     "## Control de Invasión\n" +
                     "`/control agregar` · añadir thread al Panel de Control de Invasión\n" +
-                    "`/control quitar` · quitar thread fijo\n\n" +
+                    "`/control quitar` · quitar thread fijo\n" +
+                    "`/control panel` · crear/actualizar Panel de Control de Invasión\n\n" +
                     "## Control de Banquete\n" +
                     "`/control-boss canal` · configurar canal para enviar imagen y crear subasta\n" +
                     "`/control-boss objeto set` · configurar un objeto en un slot\n" +
-                    "`/control-boss objeto quitar` · liberar un slot\n\n" +
+                    "`/control-boss objeto quitar` · liberar un slot\n" +
+                    "`/control-boss objeto lista` · listar slots configurados\n" +
+                    "`/control-boss panel` · crear/actualizar Panel de Control de Banquete\n" +
+                    "`/control-boss estado` · ver estado de anuncios pendientes\n\n" +
                     "## Definir nombres\n" +
                     "`/miembros canonico` · definir la forma correcta de un nombre\n" +
                     "`/miembros quitar-canonico` · eliminar un canónico\n" +
