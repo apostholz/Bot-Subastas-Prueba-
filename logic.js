@@ -335,7 +335,7 @@ function calcularPerdedores7d(jugadores, categoria, db, miembros) {
 // ====== INFERIR CATEGORÍA ======
 function inferirCategoria(objeto, db) {
     const key = utils.normalizar(objeto);
-    
+
     const catalogo = utils.cargarCatalogo();
     const catEncontrada = Object.keys(catalogo).find(k => utils.normalizar(k) === key);
     if (catEncontrada) return catalogo[catEncontrada];
@@ -375,6 +375,52 @@ function construirBotonesPaginacion(prefijo, id, paginaActual, totalPaginas) {
         new ButtonBuilder().setCustomId(`${prefijo}_next_${id}`).setLabel('▶').setStyle(ButtonStyle.Primary).setDisabled(alFinal),
         new ButtonBuilder().setCustomId(`${prefijo}_last_${id}`).setLabel('⏭').setStyle(ButtonStyle.Secondary).setDisabled(alFinal)
     );
+}
+
+function formatearLineaFechaEvento(fecha, evento) {
+    return `📅 ${utils.formatearFecha(fecha)} ${utils.etiquetaDias(fecha)} · ${utils.nombreBonitoEvento(evento)}`;
+}
+
+function formatearBloqueCompra(entrada, miembros, opciones = {}) {
+    const {
+        titulo = 'Compra registrada',
+        autor = null,
+        fechaAccion = null
+    } = opciones;
+
+    const cantidad = entrada.cantidad || 1;
+    const g = entrada.ganadores || [];
+    const p = entrada.perdedores || [];
+
+    const gExpanded = [];
+    const gMultiples = [];
+    for (const gItem of g) {
+        const parsed = utils.parsearGanador(gItem);
+        if (parsed.cantidad > 1) {
+            for (let i = 0; i < parsed.cantidad; i++) gMultiples.push(parsed.nombre);
+        } else {
+            gExpanded.push(parsed.nombre);
+        }
+    }
+
+    const gOrdered = [...gExpanded, ...gMultiples];
+    const gNumbered = gOrdered.map((nombre, i) => `${i + 1}. ${utils.aplicarCanonico(nombre, miembros)}`).join('\n');
+    const gTitle = gOrdered.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
+
+    let out = `✅ ${titulo}: #${entrada.id}\n${formatearLineaFechaEvento(entrada.fecha, entrada.evento)}\n\n· **${cantidad}**x **${entrada.objeto}** (${entrada.categoria})\n\n${gTitle}\n${gNumbered || 'nadie'}`;
+
+    if (p.length > 0) {
+        const pBase = p.map(pItem => utils.aplicarCanonico(utils.parsearGanador(pItem).nombre, miembros));
+        const pTitle = p.length === 1 ? '💔 **Non-winner:**' : '💔 **Non-winners:**';
+        out += `\n\n${pTitle}\n${pBase.join(', ')}`;
+    }
+
+    if (autor && fechaAccion) {
+        const label = titulo === 'Edición aplicada' ? 'Edited by' : 'Registered by';
+        out += `\n\n-# ${label} ${autor} · ${fechaAccion}`;
+    }
+
+    return out;
 }
 
 function renderPrioridad(payload, miembros) {
@@ -536,7 +582,7 @@ function obtenerNombresUnicos(db, miembros) {
 
 function obtenerObjetosUnicos(db) {
     const map = new Map();
-    
+
     const catalogo = utils.cargarCatalogo();
     for (const obj of Object.keys(catalogo)) {
         const key = utils.normalizar(obj);
@@ -573,7 +619,7 @@ function formatearPingGanadores(ganadores, resultados, miembros, guild, membersO
         return a.localeCompare(b);
     });
     let list = expanded.map((name, i) => `${i + 1}. ${utils.aplicarCanonico(name, miembros)}`).join('\n');
-    
+
     const members = membersOverride || (guild && guild.members ? guild.members.cache : new Map());
     let mentions = [...new Set(expanded)].map(name => {
         const norm = utils.normalizar(name);
@@ -601,5 +647,6 @@ module.exports = {
     construirBotonesPaginacion, renderPrioridad, renderPerdedores,
     renderRankingPagina, renderObjetoPagina, renderCategoriaPagina,
     responderLargo, obtenerNombresUnicos, obtenerObjetosUnicos, sugerirNombresMultiples,
-    formatearPingGanadores, huella, obtenerUltimosPorCategoria
+    formatearPingGanadores, huella, obtenerUltimosPorCategoria,
+    formatearLineaFechaEvento, formatearBloqueCompra
 };
