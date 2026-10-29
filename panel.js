@@ -120,6 +120,57 @@ function esThreadBoss(threadId) {
     } catch { return false; }
 }
 
+async function contarMensajesThread(thread) {
+    if (!thread) return 0;
+    try {
+        const msgs = await thread.messages.fetch({ limit: 4 });
+        return msgs.size;
+    } catch { return 0; }
+}
+
+async function debeConservarCancelacion(session, client) {
+    if (!session) return false;
+    if (session.interesados.length >= 2) return true;
+    let thread = null;
+    try { thread = await client.channels.fetch(session.threadId); } catch {}
+    const cant = await contarMensajesThread(thread);
+    return cant > 3;
+}
+
+function construirLogsPayload(session, page) {
+    const hist = session.historial || [];
+    const porPagina = 10;
+    const totalPaginas = Math.max(1, Math.ceil(hist.length / porPagina));
+    const paginaActual = Math.min(Math.max(1, page || totalPaginas), totalPaginas);
+    const inicio = (paginaActual - 1) * porPagina;
+    const slice = hist.slice(inicio, inicio + porPagina);
+
+    let out = `**Últimas modificaciones** (Página ${paginaActual}/${totalPaginas})\n\n`;
+    if (slice.length === 0) {
+        out += 'Sin registros.';
+    } else {
+        for (const h of slice) {
+            out += `- ${new Date(h.timestamp).toLocaleTimeString('es-AR')} - ${h.userName}: ${h.accion}\n`;
+        }
+    }
+    if (out.length > 1900) out = out.slice(0, 1890) + '...';
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`panel_logs:${session.id}:${paginaActual - 1}`)
+            .setLabel('◀')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(paginaActual <= 1),
+        new ButtonBuilder()
+            .setCustomId(`panel_logs:${session.id}:${paginaActual + 1}`)
+            .setLabel('▶')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(paginaActual >= totalPaginas)
+    );
+
+    return { content: out.trimEnd(), components: [row] };
+}
+
 async function publicarBossConfig(config) {
     const token = process.env.GITHUB_TOKEN;
     const repo = process.env.GITHUB_REPO;
@@ -228,7 +279,7 @@ function pushHistorial(session, interaction, accion) {
         timestamp: Date.now(), userId: interaction.user.id,
         userName: interaction.member?.displayName || interaction.user.username, accion
     });
-    if (session.historial.length > 50) session.historial = session.historial.slice(-50);
+    if (session.historial.length > 100) session.historial = session.historial.slice(-100);
 }
 
 function aplicarDadosPendientes(session) {
@@ -307,6 +358,14 @@ function renderPanel(session, funciones) {
             name: `Interested (${session.interesados.length})`,
             value: interesadosOrdenados.length ? interesadosOrdenados.join('\n') : 'No one yet'
         });
+
+    const cancelada = session.estado === 'cancelada';
+    if (cancelada) {
+        embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} ( ❌ Cancelled )`);
+        embed.setColor(0x95A5A6);
+        embed.setFooter({ text: 'Cancelled' });
+        return { embeds: [embed], components: [] };
+    }
 
     const cerrada = session.estado === 'cerrada';
     const bloqueada = session.estado === 'bloqueada';
@@ -739,25 +798,27 @@ function setupPanel(client, funciones) {
             await limpiarSlotBossPorThread(thread.id, client);
 
             const subastas = cargarSubastas();
+            const archivadas = cargarArchivadas();
             let cambios = false;
             for (const id in subastas) {
-                if (subastas[id].threadId === thread.id && (subastas[id].estado === 'abierta' || subastas[id].estado === 'bloqueada')) {
-                    subastas[id].estado = 'cancelada';
-                    subastas[id].historial.push({
-                        timestamp: Date.now(),
-                        userId: 'sistema',
-                        userName: 'Sistema',
-                        accion: 'Thread eliminado, subasta cancelada automáticamente'
-                    });
-                    const archivadas = cargarArchivadas();
-                    archivadas[id] = subastas[id];
-                    guardarArchivadas(archivadas);
+                if (subastas[id].threadId === thread.id && ['abierta', 'bloqueada', 'cancelada'].includes(subastas[id].estado)) {
+                    if (subastas[id].estado !== 'cancelada') {
+                        subastas[id].estado = 'cancelada';
+                        subastas[id].historial.push({
+                            timestamp: Date.now(),
+                            userId: 'sistema',
+                            userName: 'Sistema',
+                            accion: 'Thread eliminado, subasta cancelada automáticamente'
+                        });
+                        archivadas[id] = subastas[id];
+                    }
                     delete subastas[id];
                     cambios = true;
                 }
             }
             if (cambios) {
                 guardarSubastas(subastas);
+                guardarArchivadas(archivadas);
                 await actualizarIndice(client, funciones);
                 await actualizarControlPanel(client, funciones);
                 try {
@@ -1014,8 +1075,8 @@ function setupPanel(client, funciones) {
                 }
 
                 if (accion === 'logs') {
-                    const hist = session.historial.slice(-10).map(h => `- ${new Date(h.timestamp).toLocaleTimeString('es-AR')} - ${h.userName}: ${h.accion}`).join('\n');
-                    return interaction.reply({ content: `**Últimas modificaciones:**\n${hist || 'Sin registros.'}`, ephemeral: true });
+                    const payload = construirLogsPayload(session, null);
+                    return interaction.reply({ ...payload, ephemeral: true });
                 }
 
                 if (accion === 'historial') {
@@ -1058,7 +1119,8 @@ function setupPanel(client, funciones) {
                     const rowB = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_dados:borrar_valor:${sessionId}`).setLabel('Borrar valor').setStyle(ButtonStyle.Secondary),
                         new ButtonBuilder().setCustomId(`panel_dados:bloquear:${sessionId}`).setLabel('Bloquear dados').setStyle(ButtonStyle.Secondary),
-                        new ButtonBuilder().setCustomId(`panel_dados:desbloquear:${sessionId}`).setLabel('Desbloquear dados').setStyle(ButtonStyle.Secondary)
+                        new ButtonBuilder().setCustomId(`panel_dados:desbloquear:${sessionId}`).setLabel('Desbloquear dados').setStyle(ButtonStyle.Secondary),
+                        new ButtonBuilder().setCustomId(`panel_dados:logs:${sessionId}`).setLabel('Logs').setStyle(ButtonStyle.Secondary)
                     );
                     return interaction.reply({ content: '🎲 Acciones de dados:', components: [rowA, rowB], ephemeral: true });
                 }
@@ -1092,6 +1154,16 @@ function setupPanel(client, funciones) {
                 }
             }
 
+            if (interaction.isButton() && interaction.customId.startsWith('panel_logs:')) {
+                const [, sessionId, pageStr] = interaction.customId.split(':');
+                const subastas = cargarSubastas();
+                const session = subastas[sessionId];
+                if (!session) return interaction.reply({ content: '❌ Panel inexistente.', ephemeral: true });
+                const page = parseInt(pageStr, 10);
+                const payload = construirLogsPayload(session, page);
+                return interaction.update(payload);
+            }
+
             if (interaction.isButton() && interaction.customId.startsWith('panel_dados:')) {
                 if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                 const [, subaccion, sessionId] = interaction.customId.split(':');
@@ -1099,6 +1171,11 @@ function setupPanel(client, funciones) {
                 const session = subastas[sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado o inexistente.', ephemeral: true });
                 const miembros = funciones.cargarMiembros();
+
+                if (subaccion === 'logs') {
+                    const payload = construirLogsPayload(session, null);
+                    return interaction.reply({ ...payload, ephemeral: true });
+                }
 
                 if (subaccion === 'tirar_todos') {
                     if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
@@ -1115,7 +1192,8 @@ function setupPanel(client, funciones) {
                     pushHistorial(session, interaction, `Tiró dados para todos (${resultados.length} interesados)`);
                     guardarSubastas(subastas);
                     await actualizarMensajePanel(client, session, funciones);
-                    return interaction.editReply({ content: '✅ Dados tirados para todos los interesados.' });
+                    await interaction.deleteReply().catch(() => {});
+                    return;
                 }
 
                 if (subaccion === 'tirar_varios') {
@@ -1156,12 +1234,16 @@ function setupPanel(client, funciones) {
 
                 if (subaccion === 'bloquear') {
                     const expiraEn = bloquearDados(session.threadId, 60);
-                    return interaction.reply({ content: `🔒 Dados bloqueados por 60 min. Expira <t:${Math.floor(expiraEn / 1000)}:R>.`, ephemeral: true });
+                    pushHistorial(session, interaction, 'Bloqueó /dado por 60 min');
+                    guardarSubastas(subastas);
+                    return interaction.reply({ content: `🔒 Dados bloqueados por 60 min. Expira <t:${Math.floor(expiraEn / 1000)}:R>.` });
                 }
 
                 if (subaccion === 'desbloquear') {
                     desbloquearDados(session.threadId);
-                    return interaction.reply({ content: '🔓 Dados desbloqueados.', ephemeral: true });
+                    pushHistorial(session, interaction, 'Desbloqueó /dado');
+                    guardarSubastas(subastas);
+                    return interaction.reply({ content: '🔓 Dados desbloqueados.' });
                 }
             }
 
@@ -1756,38 +1838,48 @@ function setupPanel(client, funciones) {
                     const cantidad = session.item.cantidad;
                     const interesados = session.interesados.length;
                     const threadId = session.threadId;
+                    const conservar = await debeConservarCancelacion(session, client);
 
                     session.estado = 'cancelada';
-                    pushHistorial(session, interaction, 'Subasta cancelada y eliminada');
-                    guardarSubastas(subastas);
-                    const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
-                    delete subastas[session.id]; guardarSubastas(subastas);
+                    pushHistorial(session, interaction, conservar ? 'Subasta cancelada (conservada)' : 'Subasta cancelada y eliminada');
 
-                    if (esThreadBoss(session.threadId)) {
-                        try {
-                            const thread = await client.channels.fetch(session.threadId);
-                            if (thread) {
-                                const starterMsg = await thread.fetchStarterMessage().catch(() => null);
-                                await thread.delete().catch(() => null);
-                                if (starterMsg) await starterMsg.delete().catch(() => null);
-                            }
-                        } catch {}
+                    const archivadas = cargarArchivadas();
+                    archivadas[session.id] = session;
+                    guardarArchivadas(archivadas);
+
+                    if (conservar) {
+                        subastas[session.id] = session;
+                        guardarSubastas(subastas);
+                        await actualizarMensajePanel(client, session, funciones);
                     } else {
-                        try {
-                            const canal = await client.channels.fetch(session.channelId);
-                            const msg = await canal.messages.fetch(session.messageId);
-                            await msg.delete();
-                        } catch {}
+                        delete subastas[session.id];
+                        guardarSubastas(subastas);
+
+                        if (esThreadBoss(session.threadId)) {
+                            try {
+                                const thread = await client.channels.fetch(session.threadId);
+                                if (thread) {
+                                    const starterMsg = await thread.fetchStarterMessage().catch(() => null);
+                                    await thread.delete().catch(() => null);
+                                    if (starterMsg) await starterMsg.delete().catch(() => null);
+                                }
+                            } catch {}
+                        } else {
+                            try {
+                                const canal = await client.channels.fetch(session.channelId);
+                                const msg = await canal.messages.fetch(session.messageId);
+                                await msg.delete();
+                            } catch {}
+                        }
                     }
 
                     await limpiarSlotBossPorThread(session.threadId, client);
-
                     await refrescarTodo(client, funciones);
                     pendingPanel.delete(id);
 
-                    await enviarAuditoria(client, `🗑️ **Subasta cancelada desde panel**\n👤 Cancelada por: **${nombreUsuario}**\n📦 Objeto: **${objeto}**\n🔢 Cantidad: **${cantidad}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+                    await enviarAuditoria(client, `🗑️ **Subasta cancelada desde panel**\n👤 Cancelada por: **${nombreUsuario}**\n📦 Objeto: **${objeto}**\n🔢 Cantidad: **${cantidad}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n♻️ Conservada: **${conservar ? 'Sí' : 'No'}**\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
 
-                    return interaction.editReply({ content: '🗑️ Subasta cancelada, panel eliminado y archivada sin registrar.', components: [] });
+                    return interaction.editReply({ content: conservar ? '🗑️ Subasta cancelada y conservada como ( ❌ Cancelled ).' : '🗑️ Subasta cancelada, panel eliminado y archivada sin registrar.', components: [] });
                 }
             }
 
@@ -1928,38 +2020,48 @@ function setupPanel(client, funciones) {
                     const cantidad = session.item.cantidad;
                     const interesados = session.interesados.length;
                     const threadId = session.threadId;
+                    const conservar = await debeConservarCancelacion(session, client);
 
                     session.estado = 'cancelada';
-                    pushHistorial(session, interaction, 'Subasta cancelada desde Control');
-                    guardarSubastas(subastas);
-                    const archivadas = cargarArchivadas(); archivadas[session.id] = session; guardarArchivadas(archivadas);
-                    delete subastas[session.id]; guardarSubastas(subastas);
+                    pushHistorial(session, interaction, conservar ? 'Subasta cancelada desde Control (conservada)' : 'Subasta cancelada desde Control');
 
-                    if (esThreadBoss(session.threadId)) {
-                        try {
-                            const thread = await client.channels.fetch(session.threadId);
-                            if (thread) {
-                                const starterMsg = await thread.fetchStarterMessage().catch(() => null);
-                                await thread.delete().catch(() => null);
-                                if (starterMsg) await starterMsg.delete().catch(() => null);
-                            }
-                        } catch {}
+                    const archivadas = cargarArchivadas();
+                    archivadas[session.id] = session;
+                    guardarArchivadas(archivadas);
+
+                    if (conservar) {
+                        subastas[session.id] = session;
+                        guardarSubastas(subastas);
+                        await actualizarMensajePanel(client, session, funciones);
                     } else {
-                        try {
-                            const canal = await client.channels.fetch(session.channelId);
-                            const msg = await canal.messages.fetch(session.messageId);
-                            await msg.delete();
-                        } catch {}
+                        delete subastas[session.id];
+                        guardarSubastas(subastas);
+
+                        if (esThreadBoss(session.threadId)) {
+                            try {
+                                const thread = await client.channels.fetch(session.threadId);
+                                if (thread) {
+                                    const starterMsg = await thread.fetchStarterMessage().catch(() => null);
+                                    await thread.delete().catch(() => null);
+                                    if (starterMsg) await starterMsg.delete().catch(() => null);
+                                }
+                            } catch {}
+                        } else {
+                            try {
+                                const canal = await client.channels.fetch(session.channelId);
+                                const msg = await canal.messages.fetch(session.messageId);
+                                await msg.delete();
+                            } catch {}
+                        }
                     }
 
                     await limpiarSlotBossPorThread(session.threadId, client);
-
                     await refrescarTodo(client, funciones);
                     pendingPanel.delete(id);
 
-                    await enviarAuditoria(client, `🗑️ **Subasta cancelada desde Control de Invasión**\n👤 Cancelada por: **${nombreUsuario}**\n📦 Objeto: **${objeto}**\n🔢 Cantidad: **${cantidad}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
+                    await enviarAuditoria(client, `🗑️ **Subasta cancelada desde Control de Invasión**\n👤 Cancelada por: **${nombreUsuario}**\n📦 Objeto: **${objeto}**\n🔢 Cantidad: **${cantidad}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n♻️ Conservada: **${conservar ? 'Sí' : 'No'}**\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
 
-                    return interaction.editReply({ content: '🗑️ Subasta cancelada y panel eliminado.', components: [] });
+                    return interaction.editReply({ content: conservar ? '🗑️ Subasta cancelada y conservada como ( ❌ Cancelled ).' : '🗑️ Subasta cancelada y panel eliminado.', components: [] });
                 }
             }
 
@@ -2015,27 +2117,38 @@ function setupPanel(client, funciones) {
                     const subastas = cargarSubastas();
                     const archivadas = cargarArchivadas();
                     let cerradas = 0;
+                    let conservadas = 0;
                     const detalleCerradas = [];
                     const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
 
                     for (const id in subastas) {
-                        if (subastas[id].estado === 'abierta' || subastas[id].estado === 'bloqueada') {
-                            const bossThreadId = subastas[id].threadId;
+                        const session = subastas[id];
+                        if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) continue;
 
-                            detalleCerradas.push({
-                                objeto: subastas[id].item.objeto,
-                                cantidad: subastas[id].item.cantidad,
-                                interesados: subastas[id].interesados.length,
-                                threadId: subastas[id].threadId
-                            });
+                        const conservar = await debeConservarCancelacion(session, client);
+                        detalleCerradas.push({
+                            objeto: session.item.objeto,
+                            cantidad: session.item.cantidad,
+                            interesados: session.interesados.length,
+                            threadId: session.threadId,
+                            conservada: conservar
+                        });
 
-                            subastas[id].estado = 'cancelada';
-                            pushHistorial(subastas[id], interaction, 'Cancelada por Control Global');
-                            archivadas[id] = subastas[id];
+                        session.estado = 'cancelada';
+                        pushHistorial(session, interaction, conservar ? 'Cancelada por Control Global (conservada)' : 'Cancelada por Control Global');
+                        archivadas[id] = session;
 
-                            if (esThreadBoss(bossThreadId)) {
+                        if (conservar) {
+                            subastas[id] = session;
+                            conservadas++;
+                            await actualizarMensajePanel(client, session, funciones);
+                        } else {
+                            delete subastas[id];
+                            cerradas++;
+
+                            if (esThreadBoss(session.threadId)) {
                                 try {
-                                    const thread = await client.channels.fetch(bossThreadId);
+                                    const thread = await client.channels.fetch(session.threadId);
                                     if (thread) {
                                         const starterMsg = await thread.fetchStarterMessage().catch(() => null);
                                         await thread.delete().catch(() => null);
@@ -2044,28 +2157,27 @@ function setupPanel(client, funciones) {
                                 } catch {}
                             } else {
                                 try {
-                                    const canal = await client.channels.fetch(subastas[id].channelId);
-                                    const msg = await canal.messages.fetch(subastas[id].messageId);
+                                    const canal = await client.channels.fetch(session.channelId);
+                                    const msg = await canal.messages.fetch(session.messageId);
                                     await msg.delete();
                                 } catch {}
                             }
-
-                            await limpiarSlotBossPorThread(bossThreadId, client);
-
-                            delete subastas[id];
-                            cerradas++;
                         }
+
+                        await limpiarSlotBossPorThread(session.threadId, client);
                     }
-                    guardarSubastas(subastas); guardarArchivadas(archivadas);
+
+                    guardarSubastas(subastas);
+                    guardarArchivadas(archivadas);
                     await refrescarTodo(client, funciones);
 
                     if (detalleCerradas.length > 0) {
-                        const lista = detalleCerradas.slice(0, 10).map(d => `• **${d.objeto}** · Cantidad: ${d.cantidad} · Interesados: ${d.interesados} — <#${d.threadId}>`).join('\n');
+                        const lista = detalleCerradas.slice(0, 10).map(d => `• **${d.objeto}** · Cantidad: ${d.cantidad} · Interesados: ${d.interesados}${d.conservada ? ' · Conservada' : ''} — <#${d.threadId}>`).join('\n');
                         const extra = detalleCerradas.length > 10 ? `\n... y ${detalleCerradas.length - 10} más.` : '';
                         await enviarAuditoria(client, `🔒 **Cierre de todas las subastas (Control Global)**\n👤 Cerrada por: **${nombreUsuario}**\n📦 ${detalleCerradas.length} subasta(s):\n${lista}${extra}\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
                     }
 
-                    return interaction.editReply({ content: `✅ Se cancelaron y eliminaron **${cerradas}** subastas.` });
+                    return interaction.editReply({ content: `✅ Se cancelaron **${cerradas + conservadas}** subastas. Conservadas: **${conservadas}**.` });
                 }
             }
         } catch (err) {
