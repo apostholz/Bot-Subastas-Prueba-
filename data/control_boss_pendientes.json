@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "id": "8zskahgy",
+    "messageId": "1565875395025440968",
+    "channelId": "1547595718343000135",
+    "slot": 3,
+    "objeto": "Señor de la Caverna Sombría",
+    "categoria": "Emblemas Generales",
+    "cantidad": 2,
+    "texto": "Shadow Cryptlord",
+    "imagen": "slot3_1792882967410.png",
+    "creadoPor": "1505271681034485893",
+    "creadoEn": 1793404187043,
+    "expiraEn": 1793404367043,
+    "estado": "pendiente"
+  }
+]
