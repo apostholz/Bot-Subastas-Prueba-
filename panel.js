@@ -1491,9 +1491,12 @@ function setupPanel(client, funciones) {
                 }
                 if (campo === 'quitar_interesado') {
                     if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados para quitar.', ephemeral: true });
+                    // PUNTO 7: Selector múltiple
                     const opciones = session.interesados.slice(0, 25).map(j => ({ label: funciones.aplicarCanonico(j, funciones.cargarMiembros()), value: j }));
-                    const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`panel_sel_quitar:${sessionId}`).setPlaceholder('Elegí a quién quitar').addOptions(opciones));
-                    return interaction.reply({ content: 'Elegí a quién quitar:', components: [row], ephemeral: true });
+                    const row = new ActionRowBuilder().addComponents(
+                        new StringSelectMenuBuilder().setCustomId(`panel_sel_quitar:${sessionId}`).setPlaceholder('Elegí a quién(es) quitar').setMinValues(1).setMaxValues(Math.min(opciones.length, 25)).addOptions(opciones)
+                    );
+                    return interaction.reply({ content: 'Elegí a quién(es) quitar:', components: [row], ephemeral: true });
                 }
             }
 
@@ -1517,18 +1520,20 @@ function setupPanel(client, funciones) {
             if (interaction.isStringSelectMenu() && interaction.customId.startsWith('panel_sel_quitar:')) {
                 if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                 const sessionId = interaction.customId.split(':')[1];
-                const valor = interaction.values[0];
+                // PUNTO 7: Recibimos múltiples valores
+                const valores = interaction.values;
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado.', ephemeral: true });
 
-                const canon = funciones.aplicarCanonico(valor, funciones.cargarMiembros());
-                const id = guardarPendientePanel('quitar_interesado', { sessionId: session.id, jugador: valor }, interaction.user.id);
+                const miembros = funciones.cargarMiembros();
+                const canones = valores.map(v => funciones.aplicarCanonico(v, miembros));
+                const id = guardarPendientePanel('quitar_interesado', { sessionId: session.id, jugadores: valores }, interaction.user.id);
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, quitar').setStyle(ButtonStyle.Danger),
                     new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Volver').setStyle(ButtonStyle.Secondary)
                 );
-                return interaction.reply({ content: `⚠️ **¿Quitar a ${canon}?**`, components: [row], ephemeral: true });
+                return interaction.reply({ content: `⚠️ **¿Quitar a: ${canones.join(', ')}?**`, components: [row], ephemeral: true });
             }
 
             if (interaction.isModalSubmit() && interaction.customId.startsWith('panel_modal:')) {
@@ -1720,15 +1725,22 @@ function setupPanel(client, funciones) {
                 }
 
                 if (p.tipo === 'quitar_interesado') {
-                    const idx = session.interesados.findIndex(i => utils.claveJugador(i, miembros) === utils.claveJugador(p.payload.jugador, miembros));
-                    if (idx !== -1) {
-                        session.interesados.splice(idx, 1);
-                        pushHistorial(session, interaction, `Quitó a ${p.payload.jugador}`);
+                    // PUNTO 7: Manejo de múltiples jugadores a quitar
+                    const quitados = [];
+                    for (const jug of p.payload.jugadores) {
+                        const idx = session.interesados.findIndex(i => utils.claveJugador(i, miembros) === utils.claveJugador(jug, miembros));
+                        if (idx !== -1) {
+                            session.interesados.splice(idx, 1);
+                            quitados.push(jug);
+                        }
+                    }
+                    if (quitados.length > 0) {
+                        pushHistorial(session, interaction, `Quitó a ${quitados.map(j => funciones.aplicarCanonico(j, miembros)).join(', ')}`);
                         guardarSubastas(subastas);
                         await refrescarTodo(client, funciones);
                     }
                     pendingPanel.delete(id);
-                    return interaction.editReply({ content: `✅ **${funciones.aplicarCanonico(p.payload.jugador, miembros)}** quitado.`, components: [] });
+                    return interaction.editReply({ content: `✅ **Quitados:** ${quitados.map(j => funciones.aplicarCanonico(j, miembros)).join(', ')}`, components: [] });
                 }
 
                 if (p.tipo === 'registrar_resultado') {
@@ -1769,8 +1781,7 @@ function setupPanel(client, funciones) {
                     const ganadoresNumerados = ganadoresOrdenados.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
                     const tituloGanadores = ganadoresOrdenados.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-                    const fechaReg = session.fechaRegistro ? formatearFechaHoraRegistro(new Date(session.fechaRegistro)) : formatearFechaHoraRegistro();
-
+                    // PUNTO 6: Sin fecha/hora al final
                     let msg = `✅ Resultado registrado: #${entrada.id}\n📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${utils.nombreBonitoEvento(entrada.evento)}\n\n· **${entrada.cantidad}**x **${entrada.objeto}** (${entrada.categoria})\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
 
                     if (entrada.perdedores.length > 0) {
@@ -1779,7 +1790,7 @@ function setupPanel(client, funciones) {
                         msg += `\n\n${tituloPerdedores}\n${perdedoresBase.join(', ')}`;
                     }
 
-                    msg += `\n\n-# Registered by ${session.registradoPor} · ${fechaReg}`;
+                    msg += `\n\n-# Registered by ${session.registradoPor}`;
 
                     if (!syncRes.ok) msg += `\n\n⚠️ Sync falló: ${syncRes.motivo}`;
 
