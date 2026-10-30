@@ -37,6 +37,18 @@ function ordenarCategoriasVisual(cats) {
     });
 }
 
+// NUEVO: Define qué categorías mostrar según lo que se esté subastando
+function obtenerCategoriasParaMostrar(categoriaElegida) {
+    const base = ['Emblemas Únicos', 'Cajas 20k', 'Emblemas Generales', 'Equipo', 'Accesorios'];
+    
+    if (categoriaElegida === 'Cajas 20k') return [...base, 'Box 10k']; // Sin Azules
+    if (categoriaElegida === 'Emblemas Generales') return [...base, 'Box 10k'];
+    if (categoriaElegida === 'Box 10k') return [...base, 'Box 10k', 'Azules'];
+    if (categoriaElegida === 'Azules') return [...base, 'Box 10k', 'Azules']; // Muestra todo
+    
+    return base;
+}
+
 // ====== CSV Y GITHUB ======
 function huella(c) {
     return [c.fecha || '', c.evento || '', c.categoria || '', c.objeto || '', c.cantidad || 0, (c.ganadores || []).join(','), (c.perdedores || []).join(',')].join('|');
@@ -209,8 +221,8 @@ function obtenerUltimosPorCategoria(jugador, compras, miembros) {
         const n = utils.contarGanador(c.ganadores, jugador, miembros);
         if (n === 0) continue;
         if (!c.categoria) continue;
-        if (!ultimos[c.categoria] || c.fecha > ultimos[c.categoria]) {
-            ultimos[c.categoria] = c.fecha;
+        if (!ultimos[c.categoria] || c.fecha > ultimos[c.categoria].fecha) {
+            ultimos[c.categoria] = { fecha: c.fecha, evento: c.evento }; // <-- Guardamos evento
         }
     }
     return ultimos;
@@ -220,6 +232,8 @@ function calcularPrioridad(jugador, categoria, compras, miembros) {
     const pesosCategoria = utils.PESOS[categoria] || {};
     let impacto = 0, unidades7d = 0, historico = 0;
     const desglose = {};
+
+    const catsMostrar = obtenerCategoriasParaMostrar(categoria);
 
     for (const c of compras) {
         const n = utils.contarGanador(c.ganadores, jugador, miembros);
@@ -253,10 +267,8 @@ function calcularPrioridad(jugador, categoria, compras, miembros) {
         historico += utils.contarGanador(c.ganadores, jugador, miembros);
     }
 
-    const esCategoriaNueva = categoria === 'Azules' || categoria === 'Box 10k';
     const historicoTotal = {};
-    for (const cat of utils.CATEGORIAS) {
-        if (!esCategoriaNueva && (cat === 'Azules' || cat === 'Box 10k')) continue;
+    for (const cat of catsMostrar) {
         historicoTotal[cat] = 0;
     }
     for (const c of compras) {
@@ -264,7 +276,7 @@ function calcularPrioridad(jugador, categoria, compras, miembros) {
         if (n > 0 && historicoTotal[c.categoria] !== undefined) historicoTotal[c.categoria] += n;
     }
 
-    const afectantes = ordenarCategoriasVisual(obtenerCategoriasAfectantes(categoria));
+    const afectantes = ordenarCategoriasVisual(obtenerCategoriasParaMostrar(categoria));
     const todosUltimos = obtenerUltimosPorCategoria(jugador, compras, miembros);
     const ultimos = {};
     for (const cat of afectantes) {
@@ -303,33 +315,7 @@ function construirRanking(comprasFiltradas, categoriaFiltro, miembros) {
 }
 
 function obtenerCategoriasAfectantes(categoria) {
-    const orden = {
-        'Emblemas Únicos': ['Emblemas Únicos', 'Cajas 20k', 'Emblemas Generales'],
-        'Cajas 20k': ['Cajas 20k', 'Emblemas Únicos', 'Emblemas Generales'],
-        'Emblemas Generales': ['Emblemas Generales', 'Emblemas Únicos', 'Cajas 20k'],
-        'Equipo': ['Equipo', 'Accesorios', 'Emblemas Únicos'],
-        'Accesorios': ['Accesorios', 'Equipo', 'Emblemas Únicos'],
-        'Azules': ['Azules', 'Box 10k'],
-        'Box 10k': ['Box 10k', 'Azules']
-    };
-    return orden[categoria] || [categoria];
-}
-
-function calcularPerdedores7d(jugadores, categoria, db, miembros) {
-    const cats = obtenerCategoriasAfectantes(categoria);
-    const res = {};
-    cats.forEach(c => res[c] = {});
-    const jks = jugadores.map(j => ({ nombre: j, key: utils.claveJugador(j, miembros) }));
-    const recientes = utils.filtrarPorPeriodo(db.compras, '7d');
-    for (const c of recientes) {
-        if (!cats.includes(c.categoria)) continue;
-        for (const p of c.perdedores) {
-            const pk = utils.claveJugador(p, miembros);
-            const match = jks.find(j => j.key === pk);
-            if (match) res[c.categoria][match.nombre] = (res[c.categoria][match.nombre] || 0) + 1;
-        }
-    }
-    return res;
+    return obtenerCategoriasParaMostrar(categoria);
 }
 
 // ====== INFERIR CATEGORÍA ======
@@ -404,9 +390,12 @@ function formatearBloqueCompra(entrada, miembros, opciones = {}) {
     }
 
     const gOrdered = [...gExpanded, ...gMultiples];
+    
+    // FIX: Si no se numera, usar la lista original para respetar el "x2"
     const gBloque = numerar
         ? gOrdered.map((nombre, i) => `${i + 1}. ${utils.aplicarCanonico(nombre, miembros)}`).join('\n')
-        : gOrdered.map(nombre => utils.aplicarCanonico(nombre, miembros)).join(', ');
+        : g.map(nombre => utils.formatearNombreConCantidad(nombre, miembros)).join(', ');
+
     const gTitle = gOrdered.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
     let out = `✅ ${titulo}: #${entrada.id}\n${formatearLineaFechaEvento(entrada.fecha, entrada.evento)}\n\n· **${cantidad}**x **${entrada.objeto}** (${entrada.categoria})\n\n${gTitle}\n${gBloque || 'nadie'}`;
@@ -446,10 +435,22 @@ function renderPrioridad(payload, miembros) {
 
         if (r.ultimos) {
             for (const cat of Object.keys(r.ultimos)) {
-                const fecha = r.ultimos[cat];
-                if (!fecha) continue;
+                const info = r.ultimos[cat];
+                if (!info || !info.fecha) continue;
                 const label = ETIQUETAS_ULTIMO[cat] || cat;
-                out += `   ${label}: ${utils.etiquetaDias(fecha)}\n`;
+                
+                // FIX: Agregar el evento si es hoy, ayer o hace 2 días
+                let textoDias = utils.etiquetaDias(info.fecha); // ej: "(hoy)"
+                const dias = utils.diasDesde(info.fecha);
+                
+                if (dias <= 2 && info.evento) {
+                    const diasSinParen = textoDias.replace(/[()]/g, ''); // "hoy"
+                    const diasCap = diasSinParen.charAt(0).toUpperCase() + diasSinParen.slice(1); // "Hoy"
+                    const ev = info.evento.toLowerCase(); // "diurna"
+                    textoDias = `(${diasCap} - ${ev})`;
+                }
+                
+                out += `   ${label}: ${textoDias}\n`;
             }
         }
 
@@ -457,30 +458,8 @@ function renderPrioridad(payload, miembros) {
         out += `   ${histTotalStr}\n`;
     });
 
-    const components = [];
-    components.push(new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`prio_perdedores_${payload.id}`).setLabel('💔 Ver perdedores 7d').setStyle(ButtonStyle.Danger)
-    ));
-
-    return { content: out, components };
-}
-
-function renderPerdedores(payload, db, miembros) {
-    const { categoria, jugadores, id } = payload;
-    const catsAfectantes = obtenerCategoriasAfectantes(categoria);
-    const conteos = calcularPerdedores7d(jugadores, categoria, db, miembros);
-    let out = `💔 **Perdedores — ${categoria} (últimos 7d)**\n\n`;
-    catsAfectantes.forEach((cat, idx) => {
-        out += idx === 0 ? `**${cat}** (categoría pedida)\n` : `\n**${cat}**\n`;
-        const mapa = conteos[cat] || {};
-        const arr = Object.entries(mapa).filter(([_, count]) => count > 0).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-        if (arr.length === 0) out += `Sin registros.\n`;
-        else arr.forEach(([jug, count]) => { out += `- ${utils.aplicarCanonico(jug, miembros)}: ${count} ${count === 1 ? 'vez' : 'veces'}\n`; });
-    });
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`prio_volver_${id}`).setLabel('🔙 Volver a prioridad').setStyle(ButtonStyle.Primary)
-    );
-    return { content: out, components: [row] };
+    // Se eliminó el botón de Perdedores 7d (Punto 9)
+    return { content: out, components: [] };
 }
 
 function renderRankingPagina(payload) {
@@ -645,8 +624,8 @@ function formatearPingGanadores(ganadores, resultados, miembros, guild, membersO
 module.exports = {
     generarCSV, sincronizarConGitHub, sincronizarArchivosJSON, leerCSVInicial,
     calcularPrioridad, compararPrioridad, construirRanking,
-    obtenerCategoriasAfectantes, calcularPerdedores7d, inferirCategoria,
-    construirBotonesPaginacion, renderPrioridad, renderPerdedores,
+    obtenerCategoriasAfectantes, inferirCategoria,
+    construirBotonesPaginacion, renderPrioridad,
     renderRankingPagina, renderObjetoPagina, renderCategoriaPagina,
     responderLargo, obtenerNombresUnicos, obtenerObjetosUnicos, sugerirNombresMultiples,
     formatearPingGanadores, huella, obtenerUltimosPorCategoria,
