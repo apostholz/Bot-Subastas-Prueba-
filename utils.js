@@ -204,13 +204,41 @@ const ICONOS = {
 const OBJETOS_PROHIBIDOS = ['Combatiente', 'Arquero gnoll'];
 
 const PESOS = {
-    'Emblemas Únicos': { 'Emblemas Únicos': 3, 'Cajas 20k': 0.3, 'Emblemas Generales': 0.1 },
-    'Cajas 20k': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 0.4 },
-    'Emblemas Generales': { 'Emblemas Únicos': 3, 'Cajas 20k': 2, 'Emblemas Generales': 1 },
-    'Equipo': { 'Equipo': 1.0, 'Accesorios': 1.5, 'Emblemas Únicos': 1.5 },
-    'Accesorios': { 'Accesorios': 1.5, 'Equipo': 0.5, 'Emblemas Únicos': 1.5 },
-    'Azules': { 'Azules': 1, 'Box 10k': 1 },
-    'Box 10k': { 'Box 10k': 1, 'Azules': 1 }
+    'Emblemas Únicos': { 
+        'Emblemas Únicos': 3, 
+        'Cajas 20k': 0.3, 
+        'Emblemas Generales': 0.1 
+    },
+    'Cajas 20k': { 
+        'Emblemas Únicos': 3, 
+        'Cajas 20k': 2, 
+        'Emblemas Generales': 0.4,
+        'Box 10k': 0.2 
+    },
+    'Emblemas Generales': { 
+        'Emblemas Únicos': 3, 
+        'Cajas 20k': 2, 
+        'Emblemas Generales': 1 
+    },
+    'Equipo': { 
+        'Equipo': 1.0, 
+        'Accesorios': 1.5, 
+        'Emblemas Únicos': 1.5 
+    },
+    'Accesorios': { 
+        'Accesorios': 1.5, 
+        'Equipo': 0.5, 
+        'Emblemas Únicos': 1.5 
+    },
+    'Azules': { 
+        'Azules': 1, 
+        'Box 10k': 1 
+    },
+    'Box 10k': { 
+        'Box 10k': 1, 
+        'Azules': 1,
+        'Cajas 20k': 2.0 
+    }
 };
 
 function getFactorTemporal(dias) {
