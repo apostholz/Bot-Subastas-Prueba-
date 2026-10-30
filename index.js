@@ -840,9 +840,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
             }
 
-            if (focused.name === 'jugador' || (cmd === 'miembros' && focused.name === 'nombre')) {
+            // NUEVO PUNTO 5: Autocompletado para quitar canónicos
+            if (cmd === 'miembros' && focused.name === 'nombre') {
+                const sub = interaction.options.getSubcommand();
+                if (sub === 'quitar-canonico') {
+                    const keys = Object.keys(miembros.canonicos || {});
+                    const q = utils.normalizar(focused.value);
+                    return interaction.respond(keys.filter(k => utils.normalizar(k).includes(q) || utils.normalizar(miembros.canonicos[k]).includes(q)).slice(0, 25).map(k => ({ name: k, value: k })));
+                } else {
+                    const nombres = logic.obtenerNombresUnicos(db, miembros);
+                    return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+                }
+            }
+
+            if (focused.name === 'jugador' || (cmd === 'editar')) {
                 const nombres = logic.obtenerNombresUnicos(db, miembros);
-                if (cmd === 'editar' || cmd === 'miembros') return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+                if (cmd === 'editar') return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
                 const q = utils.normalizar(focused.value);
                 return interaction.respond(nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
             }
@@ -880,8 +893,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const db = utils.cargarDB();
                 const miembros = utils.cargarMiembros();
                 if (esPerdedores) {
-                    const { content, components } = logic.renderPerdedores(p.payload, db, miembros);
-                    return interaction.update({ content, components });
+                    // Eliminado el renderPerdedores por petición (Punto 9)
+                    return interaction.update({ content: '❌ Función no disponible.', components: [] });
                 } else {
                     const { content, components } = logic.renderPrioridad(p.payload, miembros);
                     return interaction.update({ content, components });
@@ -2105,7 +2118,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     const totalCat = totales[cat] || 0;
                     let extra = '';
                     if (totalCat > 0 && ultimos[cat]) {
-                        extra = ` *(${formatearUltimoDias(ultimos[cat])})*`;
+                        extra = ` *(${formatearUltimoDias(ultimos[cat].fecha)})*`;
                     }
                     return `${cat}: **${totalCat}**${extra}`;
                 }).join('\n');
