@@ -1,9 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { parse } = require('csv-parse/sync');
-const {
-    ActionRowBuilder, ButtonBuilder, ButtonStyle
-} = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 const utils = require('./utils');
 
@@ -103,7 +101,11 @@ function mergeCSVEnDB(contenidoCSV, db) {
     return { agregadas };
 }
 
-async function sincronizarConGitHub(conMerge = true) {
+// Mutex para evitar condiciones de carrera en GitHub
+let sincronizandoGitHub = false;
+const colaSincronizacion = [];
+
+async function _sincronizarConGitHub(conMerge = true) {
     const token = process.env.GITHUB_TOKEN;
     const repo = process.env.GITHUB_REPO;
     const branch = process.env.GITHUB_BRANCH || 'main';
@@ -151,6 +153,30 @@ async function sincronizarConGitHub(conMerge = true) {
         }
         return { ok: true, agregadas, total: db.compras.length };
     } catch (err) { return { ok: false, motivo: err.message }; }
+}
+
+async function sincronizarConGitHub(conMerge = true) {
+    if (sincronizandoGitHub) {
+        return new Promise((resolve) => {
+            colaSincronizacion.push({ conMerge, resolve });
+        });
+    }
+    sincronizandoGitHub = true;
+    try {
+        let res = await _sincronizarConGitHub(conMerge);
+        while (colaSincronizacion.length > 0) {
+            const { conMerge: cm, resolve } = colaSincronizacion.shift();
+            try {
+                const r = await _sincronizarConGitHub(cm);
+                resolve(r);
+            } catch (e) {
+                resolve({ ok: false, motivo: e.message });
+            }
+        }
+        return res;
+    } finally {
+        sincronizandoGitHub = false;
+    }
 }
 
 async function sincronizarArchivosJSON() {
@@ -264,10 +290,9 @@ function calcularPrioridad(jugador, categoria, compras, miembros) {
         historico += utils.contarGanador(c.ganadores, jugador, miembros);
     }
 
-    // 10a: Total histórico muestra absolutamente todas las categorías
     const historicoTotal = {};
     for (const cat of utils.CATEGORIAS) {
-        if (cat === 'Sin Categoría') continue; // Ocultar
+        if (cat === 'Sin Categoría') continue;
         historicoTotal[cat] = 0;
     }
     for (const c of compras) {
@@ -406,7 +431,7 @@ function formatearBloqueCompra(entrada, miembros, opciones = {}) {
 
     if (autor) {
         const label = titulo === 'Edición aplicada' ? 'Edited by' : 'Registered by';
-        out += `\n\n-# ${label} ${autor}`; // PUNTO 1 y 5: Sin fecha
+        out += `\n\n-# ${label} ${autor}`;
     }
 
     return out;
@@ -443,8 +468,8 @@ function renderPrioridad(payload, miembros) {
                 if (dias <= 2 && info.evento) {
                     const diasSinParen = textoDias.replace(/[()]/g, '');
                     const diasCap = diasSinParen.charAt(0).toUpperCase() + diasSinParen.slice(1);
-                    const ev = info.evento.toLowerCase();
-                    textoDias = `(${diasCap} - ${ev})`;
+                    const evCorto = utils.nombreCortoEvento(info.evento);
+                    textoDias = `(${diasCap} - ${evCorto})`;
                 }
                 
                 out += `   ${label}: ${textoDias}\n`;
@@ -521,21 +546,38 @@ function renderCategoriaPagina(payload, miembros) {
     return { content: out.trimEnd(), totalPaginas, paginaActual };
 }
 
+// PUNTO 5: responderLargo mejorado (divide por bloques y maneja deferred/replied)
 async function responderLargo(interaction, texto, ephemeral = false) {
+    const bloques = texto.split(/\n\n+/).filter(b => b.trim());
     const chunks = [];
     let current = '';
-    for (const linea of texto.split('\n')) {
-        if (current.length + linea.length + 1 > 1900) {
-            chunks.push(current);
-            current = linea;
+    for (const bloque of bloques) {
+        if (current.length + bloque.length + 2 > 1900) {
+            if (current) chunks.push(current);
+            current = bloque;
         } else {
-            current += (current ? '\n' : '') + linea;
+            current += (current ? '\n\n' : '') + bloque;
         }
     }
     if (current) chunks.push(current);
     if (chunks.length === 0) chunks.push(' ');
-    await interaction.reply({ content: chunks[0], ephemeral });
-    for (let i = 1; i < chunks.length; i++) await interaction.followUp({ content: chunks[i], ephemeral });
+
+    const payload0 = { content: chunks[0] };
+    if (ephemeral) payload0.flags = 64;
+
+    if (interaction.deferred) {
+        await interaction.editReply(payload0);
+    } else if (interaction.replied) {
+        await interaction.followUp(payload0);
+    } else {
+        await interaction.reply(payload0);
+    }
+
+    for (let i = 1; i < chunks.length; i++) {
+        const payload = { content: chunks[i] };
+        if (ephemeral) payload.flags = 64;
+        await interaction.followUp(payload);
+    }
 }
 
 // ====== AUTOCOMPLETADO ======
