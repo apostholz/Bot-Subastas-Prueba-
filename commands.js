@@ -63,6 +63,9 @@ const commandsData = [
         .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
+    new SlashCommandBuilder().setName('pesos').setDescription('Ver los pesos de impacto entre categorías')
+        .addStringOption(o => o.setName('categoria').setDescription('Ver afectaciones de una categoría específica (opcional)').setRequired(false).addChoices(...catChoices)),
+
     new SlashCommandBuilder().setName('perdedores').setDescription('Ver los perdedores de todas las categorías en los últimos 7 días')
         .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
