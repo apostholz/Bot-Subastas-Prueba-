@@ -108,7 +108,6 @@ function parsearGanador(g) {
     return { nombre: match[1].trim(), cantidad: match[2] ? parseInt(match[2]) : 1 };
 }
 
-// Arreglo para que buscar "Vhaelyr x2" o "Vhaelyr" encuentre lo mismo en la lista
 function buscarJugadorEnLista(lista, nombre, miembros) {
     const matchQuery = nombre.match(/^(.+?)(?:\s+[xX](\d+))?$/);
     const nombreLimpio = matchQuery ? matchQuery[1].trim() : nombre.trim();
@@ -191,7 +190,7 @@ const ABREVIATURAS = {
     'Accesorios': 'Acc',
     'Sin Categoría': '?',
     'Azules': 'Az',
-    'Box 10k': 'B10k' // <-- Prefijo cambiado
+    'Box 10k': 'B10k'
 };
 
 const ICONOS = {
@@ -207,7 +206,6 @@ const ICONOS = {
 
 const OBJETOS_PROHIBIDOS = ['Combatiente', 'Arquero gnoll'];
 
-// Matriz de pesos ajustada (Punto 10f)
 const PESOS = {
     'Emblemas Únicos': { 
         'Emblemas Únicos': 3, 
@@ -266,6 +264,17 @@ function nombreBonitoEvento(evento) {
     if (n.includes('banquete')) return 'Banquete';
     return evento;
 }
+
+// NUEVO PUNTO 3: Nombre corto del evento
+function nombreCortoEvento(evento) {
+    const n = normalizar(evento);
+    if (!evento || n === 'manual' || n === 'hoy') return 'Sin evento';
+    if (n.includes('diurna')) return 'Diurna';
+    if (n.includes('nocturna')) return 'Nocturna';
+    if (n.includes('banquete')) return 'Banquete';
+    return evento;
+}
+
 function ordenEvento(evento) {
     const idx = ORDEN_EVENTOS.indexOf(normalizar(evento));
     return idx === -1 ? 999 : idx;
@@ -303,6 +312,6 @@ module.exports = {
     contarGanador, parsearGanador, buscarJugadorEnLista,
     fechaHoyArgentina, convertirFecha, convertirFechaDia, formatearFecha, diasDesde, etiquetaDias, filtrarPorPeriodo,
     CATEGORIAS, CATEGORIAS_TOTAL, ABREVIATURAS, ICONOS, OBJETOS_PROHIBIDOS, PESOS, getFactorTemporal,
-    nombreBonitoEvento, ordenEvento, ordenCategoria, bloqueDeCategoria, ordenarComprasDesc,
+    nombreBonitoEvento, nombreCortoEvento, ordenEvento, ordenCategoria, bloqueDeCategoria, ordenarComprasDesc,
     ROL_LIDER, ROL_HELPER, ROL_OFICIAL, DB_FILE, CSV_FILE, BACKUP_FILE, DATA_DIR
 };
