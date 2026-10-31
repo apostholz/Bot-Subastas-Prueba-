@@ -613,7 +613,6 @@ function construirBotonesListaDados(threadId) {
     if (session) {
         row.addComponents(
             new ButtonBuilder()
-                // Punto extra: :lista indica que viene de “Dados lista”
                 .setCustomId(`panel_btn:dados:${session.id}:lista`)
                 .setLabel('Dados')
                 .setStyle(ButtonStyle.Secondary)
@@ -1184,7 +1183,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
                     const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
                     
-                    // PUNTO 8 y 5: Formato simple horizontal, sin fecha
                     resultado = `🗑️ Se borraron **${borradas.length}** entradas:\n\n`;
                     borradas.forEach(c => {
                         resultado += `**${c.cantidad}x ${c.objeto}**\n${c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n\n`;
@@ -1218,7 +1216,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         else if (sub === 'perdedor') {
                             if (valor.accion === 'agregar') {
                                 for (const j of valor.nombres) e.perdedores.push(j);
-                                // Punto 6: Si agregas a perdedor y ya era ganador, se quita de ganador
                                 const pKeys = new Set(e.perdedores.map(p => utils.claveJugador(utils.parsearGanador(p).nombre, miembros)));
                                 e.ganadores = e.ganadores.filter(g => !pKeys.has(utils.claveJugador(utils.parsearGanador(g).nombre, miembros)));
                             } else {
@@ -1226,7 +1223,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                             }
                         }
                         else if (sub === 'reemplazar-ganador') {
-                            // Punto 2: Corrección de la lógica
                             const qKey = utils.claveJugador(utils.parsearGanador(valor.quitar).nombre, miembros);
                             const pKey = utils.claveJugador(utils.parsearGanador(valor.poner).nombre, miembros);
                             const pos = utils.buscarJugadorEnLista(e.ganadores, valor.quitar, miembros);
@@ -1238,7 +1234,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                             }
                         }
                         else if (sub === 'reemplazar-perdedor') {
-                            // Punto 2: Corrección de la lógica
                             const qKey = utils.claveJugador(utils.parsearGanador(valor.quitar).nombre, miembros);
                             const pKey = utils.claveJugador(utils.parsearGanador(valor.poner).nombre, miembros);
                             const pos = utils.buscarJugadorEnLista(e.perdedores, valor.quitar, miembros);
@@ -1470,7 +1465,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (!session) return interaction.reply({ content: '❌ No hay subasta activa en este thread.', ephemeral: true });
                 if (session.interesados.length === 0) return interaction.reply({ content: '❌ No hay interesados.', ephemeral: true });
 
-                // PUNTO 3: Confirmación
                 const id = guardarPendiente('dados_tirar_todos', { threadId: interaction.channelId }, interaction.user.id);
                 return interaction.reply({
                     content: `⚠️ **¿Tirar dados para los ${session.interesados.length} interesados?**`,
@@ -1826,9 +1820,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
         }
 
+        if (interaction.commandName === 'pesos') {
+            const catFiltro = interaction.options.getString('categoria');
+            await interaction.deferReply({ ephemeral: true });
+            let out = '⚖️ **Tabla de Pesos de Impacto**\n\n';
+            const cats = catFiltro ? [catFiltro] : Object.keys(utils.PESOS);
+            
+            for (const cat of cats) {
+                if (!utils.PESOS[cat]) continue;
+                out += `**${cat}** afecta a:\n`;
+                const entries = Object.entries(utils.PESOS[cat]);
+                for (const [target, weight] of entries) {
+                    out += `- ${target}: **${weight}**\n`;
+                }
+                out += '\n';
+            }
+            return logic.responderLargo(interaction, out.trimEnd(), true);
+        }
+
         if (interaction.commandName === 'alertas') {
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
             const ephemeral = visibilidad === 'Privado';
+            await interaction.deferReply({ ephemeral });
             const recientes = utils.filtrarPorPeriodo(db.compras, '7d');
             const conteos = {};
             for (const c of recientes) for (const g of c.ganadores) {
@@ -1962,7 +1975,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
                 if (utils.buscarJugadorEnLista(lista, q, miembros) === -1) return interaction.reply({ content: `❌ **${q}** no está en ${listaNombre}.`, ephemeral: true });
                 
-                // PUNTO 2: Evitar conflicto si es el mismo jugador pero cambia cantidad
                 const qKey = utils.claveJugador(utils.parsearGanador(q).nombre, miembros);
                 const pKey = utils.claveJugador(utils.parsearGanador(p).nombre, miembros);
                 
@@ -2093,7 +2105,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const gList = gStr.split(',').map(s => s.trim()).filter(Boolean);
             let pList = pStr.split(',').map(s => s.trim()).filter(Boolean);
             
-            // PUNTO 6: Auto limpiar perdedores que también son ganadores
             pList = limpiarListasCruzadas(gList, pList, miembros);
 
             const entrada = {
@@ -2183,7 +2194,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const categoria = interaction.options.getString('categoria') || 'Todas';
             const formato = interaction.options.getString('formato') || 'Resumido';
 
-            if (formato === 'Detallado' && categoria !== 'Todas') return interaction.reply({ content: '❌ Detallado solo con Categoría = Todas.', ephemeral });
+            await interaction.deferReply({ ephemeral });
+
+            if (formato === 'Detallado' && categoria !== 'Todas') return interaction.editReply({ content: '❌ Detallado solo con Categoría = Todas.' });
 
             let out = '';
             if (formato === 'Resumido') {
@@ -2196,7 +2209,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     let bloque = `📜 **${utils.aplicarCanonico(j, miembros)}** (últimas ${ultimas.length})\n`;
                     for (const c of ultimas) {
                         const n = utils.contarGanador(c.ganadores, j, miembros);
-                        bloque += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${n}x ${c.objeto} (${c.categoria})\n`;
+                        bloque += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${utils.nombreBonitoEvento(c.evento)} · ${n}x ${c.objeto} (${c.categoria})\n`;
                     }
                     bloques.push(bloque);
                 }
@@ -2212,7 +2225,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         bloque += `\n**${cat}** (últimas ${filtradas.length}):\n`;
                         for (const c of filtradas) {
                             const n = utils.contarGanador(c.ganadores, j, miembros);
-                            bloque += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${n}x ${c.objeto}\n`;
+                            bloque += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${utils.nombreBonitoEvento(c.evento)} · ${n}x ${c.objeto}\n`;
                         }
                     }
                     bloques.push(bloque);
@@ -2226,6 +2239,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
             const visibilidad = interaction.options.getString('visibilidad') || 'Visible';
             const periodo = interaction.options.getString('periodo') || 'Total';
+            const ephemeral = visibilidad === 'Privado';
+
+            await interaction.deferReply({ ephemeral });
+
             const comprasFiltradas = utils.filtrarPorPeriodo(db.compras, periodo);
 
             let out = '';
@@ -2244,20 +2261,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }).join('\n');
                 out += `📊 **Total de ${utils.aplicarCanonico(j, miembros)}** (${periodo})\n${lineas}\n────────────\n**TOTAL:** ${total}\n\n`;
             }
-            return logic.responderLargo(interaction, out.trimEnd(), visibilidad === 'Privado');
+            return logic.responderLargo(interaction, out.trimEnd(), ephemeral);
         }
 
         if (interaction.commandName === 'ranking') {
             const visibilidad = interaction.options.getString('visibilidad') || 'Visible';
             const periodo = interaction.options.getString('periodo') || 'Total';
             const catFiltro = interaction.options.getString('categoria') || 'Todas';
+            const ephemeral = visibilidad === 'Privado';
+
+            await interaction.deferReply({ ephemeral });
+
             const comprasFiltradas = utils.filtrarPorPeriodo(db.compras, periodo);
             const jugadores = logic.construirRanking(comprasFiltradas, catFiltro, miembros);
             const payload = { jugadores, periodo, categoria: catFiltro, pagina: 1 };
             const id = guardarPendiente('ranking', payload, interaction.user.id);
             const render = logic.renderRankingPagina(payload);
             const row = logic.construirBotonesPaginacion('rank', id, render.paginaActual, render.totalPaginas);
-            return interaction.reply({ content: render.content, components: [row], ephemeral: visibilidad === 'Privado' });
+            return interaction.editReply({ content: render.content, components: [row] });
         }
 
         if (interaction.commandName === 'prioridad') {
@@ -2265,6 +2286,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const jugadores = interaction.options.getString('jugadores').split(',').map(s => s.trim()).filter(Boolean);
             const visibilidad = interaction.options.getString('visibilidad') || 'Visible';
             const ephemeral = visibilidad === 'Privado';
+
+            await interaction.deferReply({ ephemeral });
 
             const resultados = jugadores.map(j => ({ jugador: j, ...logic.calcularPrioridad(j, categoria, db.compras, miembros) }));
             resultados.sort(logic.compararPrioridad);
@@ -2308,6 +2331,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const esAuctionMod = esLider || (interaction.member && interaction.member.roles.cache.has(utils.ROL_HELPER));
             const esOficial = esAuctionMod || (interaction.member && utils.ROL_OFICIAL && interaction.member.roles.cache.has(utils.ROL_OFICIAL));
 
+            await interaction.deferReply({ ephemeral: true });
+
             const partes1 = [];
 
             partes1.push(
@@ -2319,6 +2344,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 "`/total` · unidades compradas totales de un jugador por categoría\n" +
                 "`/ranking` · tabla general de clasificación\n" +
                 "`/prioridad` · calcular prioridad entre jugadores\n" +
+                "`/pesos` · ver pesos de impacto entre categorías\n" +
                 "`/perdedores` · ver los no ganadores de los últimos 7 días\n" +
                 "`/alertas` · alertas por acaparamiento de ítems\n" +
                 "`/objeto` · ver lista de apariciones de un objeto\n" +
@@ -2364,7 +2390,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 partes1.push(paneles);
             }
 
-            await interaction.reply({ content: partes1.join('\n\n'), ephemeral: true });
+            await logic.responderLargo(interaction, partes1.join('\n\n'), true);
 
             if (esLider) {
                 const msg2 =
