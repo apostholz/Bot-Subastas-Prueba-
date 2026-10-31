@@ -46,17 +46,6 @@ const pendingActions = new Map();
 const dadosCooldowns = new Map();
 let actualizandoListasDados = false;
 
-function formatearFechaHoraRegistro(date = new Date()) {
-    return date.toLocaleString('en-US', {
-        month: '2-digit',
-        day: '2-digit',
-        year: '2-digit',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-    });
-}
-
 function guardarPendiente(tipo, payload, userId) {
     const id = Math.random().toString(36).slice(2, 10);
     pendingActions.set(id, { tipo, payload, userId, expira: Date.now() + 5 * 60 * 1000 });
@@ -200,6 +189,18 @@ function formatearUltimoDias(fecha) {
     if (d <= 0) return 'hoy';
     if (d === 1) return 'ayer';
     return `hace ${d} días`;
+}
+
+// Helpers para Punto 2 y Punto 6
+function mismoJugador(a, b, miembros) {
+    const ka = utils.claveJugador(utils.parsearGanador(a).nombre, miembros);
+    const kb = utils.claveJugador(utils.parsearGanador(b).nombre, miembros);
+    return ka === kb;
+}
+
+function limpiarListasCruzadas(ganadores, perdedores, miembros) {
+    const gKeys = new Set((ganadores || []).map(g => utils.claveJugador(utils.parsearGanador(g).nombre, miembros)));
+    return (perdedores || []).filter(p => !gKeys.has(utils.claveJugador(utils.parsearGanador(p).nombre, miembros)));
 }
 
 function renderEntradaProyectada(e, miembros) {
@@ -612,7 +613,8 @@ function construirBotonesListaDados(threadId) {
     if (session) {
         row.addComponents(
             new ButtonBuilder()
-                .setCustomId(`panel_btn:dados:${session.id}`)
+                // Punto extra: :lista indica que viene de “Dados lista”
+                .setCustomId(`panel_btn:dados:${session.id}:lista`)
                 .setLabel('Dados')
                 .setStyle(ButtonStyle.Secondary)
         );
@@ -840,7 +842,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
             }
 
-            // NUEVO PUNTO 5: Autocompletado para quitar canónicos
             if (cmd === 'miembros' && focused.name === 'nombre') {
                 const sub = interaction.options.getSubcommand();
                 if (sub === 'quitar-canonico') {
@@ -890,10 +891,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const id = cid.replace('prio_perdedores_', '').replace('prio_volver_', '');
                 const p = pendingActions.get(id);
                 if (!p || p.tipo !== 'prioridad-page' || p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Sesión expirada.', ephemeral: true });
-                const db = utils.cargarDB();
                 const miembros = utils.cargarMiembros();
                 if (esPerdedores) {
-                    // Eliminado el renderPerdedores por petición (Punto 9)
                     return interaction.update({ content: '❌ Función no disponible.', components: [] });
                 } else {
                     const { content, components } = logic.renderPrioridad(p.payload, miembros);
@@ -1012,6 +1011,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
                 const db = utils.cargarDB();
                 const miembros = utils.cargarMiembros();
+
+                if (p.tipo === 'dados_tirar_todos') {
+                    const threadId = p.payload.threadId;
+                    const subastas = cargarSubastasActivas();
+                    const session = Object.values(subastas).find(s => s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
+
+                    if (!session) {
+                        pendingActions.delete(id);
+                        return interaction.editReply({ content: '❌ No hay subasta activa en este thread.', components: [] });
+                    }
+
+                    if (!session.dados) session.dados = {};
+                    const resultados = [];
+                    for (const interesado of session.interesados) {
+                        const valor = randomInt(1, 26);
+                        const nombreCanon = utils.aplicarCanonico(interesado, miembros);
+                        if (!session.dados[interesado]) session.dados[interesado] = { historial: [], propio: false };
+                        session.dados[interesado].historial.push(valor);
+                        resultados.push({ nombre: nombreCanon, valor });
+                    }
+                    registrarHistorialDados(session, interaction, `Tiró dados para todos (${resultados.length} interesados)`);
+                    await actualizarMensajePanel(client, session, funciones);
+                    await actualizarMensajeListaDados(client, threadId);
+                    
+                    pendingActions.delete(id);
+                    return interaction.editReply({ content: '✅ Dados tirados para todos.', components: [] });
+                }
 
                 if (p.tipo === 'dados_tirar_varios') {
                     const threadId = p.payload.threadId;
@@ -1157,11 +1183,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     utils.guardarDB(db);
 
                     const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
-                    const ahora = new Date();
-                    const fechaStr = formatearFechaHoraRegistro(ahora);
-
-                    resultado = `🗑️ Se borraron **${borradas.length}** entradas:\n` + borradas.map(c => `#${c.id} · ${c.cantidad}x ${c.objeto}`).join('\n');
-                    resultado += `\n\n-# Deleted by ${nombreUsuario} · ${fechaStr}`;
+                    
+                    // PUNTO 8 y 5: Formato simple horizontal, sin fecha
+                    resultado = `🗑️ Se borraron **${borradas.length}** entradas:\n\n`;
+                    borradas.forEach(c => {
+                        resultado += `**${c.cantidad}x ${c.objeto}**\n${c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n\n`;
+                    });
+                    resultado += `-# Deleted by ${nombreUsuario}`;
+                    
                     requiereSync = true;
 
                     if (borradas.length > 0) {
@@ -1179,30 +1208,55 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         const miembros = utils.cargarMiembros();
 
                         if (sub === 'ganador') {
-                            if (valor.accion === 'agregar') for (const j of valor.nombres) e.ganadores.push(j);
-                            else for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.ganadores, j, miembros); if (pos !== -1) e.ganadores.splice(pos, 1); }
+                            if (valor.accion === 'agregar') {
+                                for (const j of valor.nombres) e.ganadores.push(j);
+                                e.perdedores = limpiarListasCruzadas(e.ganadores, e.perdedores, miembros);
+                            } else {
+                                for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.ganadores, j, miembros); if (pos !== -1) e.ganadores.splice(pos, 1); }
+                            }
                         }
                         else if (sub === 'perdedor') {
-                            if (valor.accion === 'agregar') for (const j of valor.nombres) e.perdedores.push(j);
-                            else for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.perdedores, j, miembros); if (pos !== -1) e.perdedores.splice(pos, 1); }
+                            if (valor.accion === 'agregar') {
+                                for (const j of valor.nombres) e.perdedores.push(j);
+                                // Punto 6: Si agregas a perdedor y ya era ganador, se quita de ganador
+                                const pKeys = new Set(e.perdedores.map(p => utils.claveJugador(utils.parsearGanador(p).nombre, miembros)));
+                                e.ganadores = e.ganadores.filter(g => !pKeys.has(utils.claveJugador(utils.parsearGanador(g).nombre, miembros)));
+                            } else {
+                                for (const j of valor.nombres) { const pos = utils.buscarJugadorEnLista(e.perdedores, j, miembros); if (pos !== -1) e.perdedores.splice(pos, 1); }
+                            }
                         }
                         else if (sub === 'reemplazar-ganador') {
+                            // Punto 2: Corrección de la lógica
+                            const qKey = utils.claveJugador(utils.parsearGanador(valor.quitar).nombre, miembros);
+                            const pKey = utils.claveJugador(utils.parsearGanador(valor.poner).nombre, miembros);
                             const pos = utils.buscarJugadorEnLista(e.ganadores, valor.quitar, miembros);
                             if (pos !== -1) e.ganadores.splice(pos, 1, valor.poner);
-                            const posPerd = utils.buscarJugadorEnLista(e.perdedores, valor.poner, miembros);
-                            if (posPerd !== -1) e.perdedores.splice(posPerd, 1);
+                            
+                            if (qKey !== pKey) {
+                                const posPerd = utils.buscarJugadorEnLista(e.perdedores, valor.poner, miembros);
+                                if (posPerd !== -1) e.perdedores.splice(posPerd, 1);
+                            }
                         }
                         else if (sub === 'reemplazar-perdedor') {
+                            // Punto 2: Corrección de la lógica
+                            const qKey = utils.claveJugador(utils.parsearGanador(valor.quitar).nombre, miembros);
+                            const pKey = utils.claveJugador(utils.parsearGanador(valor.poner).nombre, miembros);
                             const pos = utils.buscarJugadorEnLista(e.perdedores, valor.quitar, miembros);
                             if (pos !== -1) e.perdedores.splice(pos, 1, valor.poner);
-                            const posGan = utils.buscarJugadorEnLista(e.ganadores, valor.poner, miembros);
-                            if (posGan !== -1) e.ganadores.splice(posGan, 1);
+                            
+                            if (qKey !== pKey) {
+                                const posGan = utils.buscarJugadorEnLista(e.ganadores, valor.poner, miembros);
+                                if (posGan !== -1) e.ganadores.splice(posGan, 1);
+                            }
                         }
                         else if (sub === 'set-ganadores') {
                             e.ganadores = valor.ganadores;
+                            e.perdedores = limpiarListasCruzadas(e.ganadores, e.perdedores, miembros);
                         }
                         else if (sub === 'set-perdedores') {
                             e.perdedores = valor.perdedores;
+                            const pKeys = new Set(e.perdedores.map(p => utils.claveJugador(utils.parsearGanador(p).nombre, miembros)));
+                            e.ganadores = e.ganadores.filter(g => !pKeys.has(utils.claveJugador(utils.parsearGanador(g).nombre, miembros)));
                         }
                         else if (sub === 'set') {
                             if (valor.objeto) { e.objeto = valor.objeto; if (!valor.categoria) e.categoria = logic.inferirCategoria(valor.objeto, db); }
@@ -1416,24 +1470,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (!session) return interaction.reply({ content: '❌ No hay subasta activa en este thread.', ephemeral: true });
                 if (session.interesados.length === 0) return interaction.reply({ content: '❌ No hay interesados.', ephemeral: true });
 
-                await interaction.deferReply({ ephemeral: true });
-
-                if (!session.dados) session.dados = {};
-                const resultados = [];
-                for (const interesado of session.interesados) {
-                    const valor = randomInt(1, 26);
-                    const nombreCanon = utils.aplicarCanonico(interesado, miembros);
-                    if (!session.dados[interesado]) session.dados[interesado] = { historial: [], propio: false };
-                    session.dados[interesado].historial.push(valor);
-                    resultados.push({ nombre: nombreCanon, valor });
-                }
-
-                registrarHistorialDados(session, interaction, `Tiró dados para todos (${resultados.length} interesados)`);
-                await actualizarMensajePanel(client, session, funciones);
-                await actualizarMensajeListaDados(client, interaction.channelId);
-
-                await interaction.deleteReply().catch(() => {});
-                return;
+                // PUNTO 3: Confirmación
+                const id = guardarPendiente('dados_tirar_todos', { threadId: interaction.channelId }, interaction.user.id);
+                return interaction.reply({
+                    content: `⚠️ **¿Tirar dados para los ${session.interesados.length} interesados?**`,
+                    components: [new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`pend_confirm_${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
+                        new ButtonBuilder().setCustomId(`pend_cancel_${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
+                    )],
+                    ephemeral: true
+                });
             }
 
             if (sub === 'tirar-varios') {
@@ -1598,11 +1644,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (fila.categoria && !utils.CATEGORIAS.includes(fila.categoria)) { errores.push(`Fila ${i+2}: categoría inválida`); continue; }
                 if (fila.objeto && utils.OBJETOS_PROHIBIDOS.some(o => utils.normalizar(o) === utils.normalizar(fila.objeto))) { errores.push(`Fila ${i+2}: objeto prohibido`); continue; }
 
+                let gList = fila.ganadores ? fila.ganadores.split(',').map(s => s.trim()).filter(Boolean) : [];
+                let pList = fila.perdedores ? fila.perdedores.split(',').map(s => s.trim()).filter(Boolean) : [];
+                pList = limpiarListasCruzadas(gList, pList, miembros);
+
                 validas.push({
                     fecha: fechaConv, evento: fila.evento || '', categoria: fila.categoria || '', objeto: fila.objeto || '',
                     cantidad: parseInt(fila.cantidad) || 1,
-                    ganadores: fila.ganadores ? fila.ganadores.split(',').map(s => s.trim()).filter(Boolean) : [],
-                    perdedores: fila.perdedores ? fila.perdedores.split(',').map(s => s.trim()).filter(Boolean) : [],
+                    ganadores: gList,
+                    perdedores: pList,
                     notas: fila.notas || ''
                 });
             }
@@ -1718,6 +1768,62 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const render = logic.renderCategoriaPagina(payload, miembros);
             const row = logic.construirBotonesPaginacion('cat', id, render.paginaActual, render.totalPaginas);
             return interaction.reply({ content: render.content, components: [row], ephemeral });
+        }
+
+        if (interaction.commandName === 'perdedores') {
+            const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
+            const ephemeral = visibilidad === 'Privado';
+            const recientes = utils.filtrarPorPeriodo(db.compras, '7d');
+
+            const conteos = {};
+            for (const cat of utils.CATEGORIAS) {
+                if (cat === 'Sin Categoría') continue;
+                conteos[cat] = {};
+            }
+
+            for (const c of recientes) {
+                if (!c.categoria || !conteos[c.categoria]) continue;
+                for (const p of c.perdedores) {
+                    if (utils.esExcluido(p, miembros)) continue;
+                    const nombre = utils.aplicarCanonico(utils.parsearGanador(p).nombre, miembros);
+                    const key = utils.claveJugador(nombre, miembros);
+                    if (!conteos[c.categoria][key]) conteos[c.categoria][key] = { nombre, count: 0 };
+                    conteos[c.categoria][key].count++;
+                }
+            }
+
+            const bloques = [];
+            for (const cat of utils.CATEGORIAS) {
+                if (cat === 'Sin Categoría' || !conteos[cat]) continue;
+                const arr = Object.values(conteos[cat]).sort((a, b) => b.count - a.count || a.nombre.localeCompare(b.nombre));
+                if (arr.length === 0) continue;
+
+                let bloque = `**${cat}**\n`;
+                for (const item of arr) {
+                    bloque += `- ${item.nombre}: ${item.count} ${item.count === 1 ? 'vez' : 'veces'}\n`;
+                }
+                bloques.push(bloque);
+            }
+
+            const maxLength = 1900;
+            const chunks = [];
+            let current = `💔 **Perdedores (últimos 7d)**\n\n`;
+
+            for (const b of bloques) {
+                if (current.length + b.length + 2 > maxLength) {
+                    chunks.push(current);
+                    current = '';
+                }
+                current += b + '\n';
+            }
+            if (current.trim()) chunks.push(current);
+            if (chunks.length === 0) chunks.push('No hay perdedores registrados en los últimos 7 días.');
+
+            await interaction.reply({ content: chunks[0], ephemeral });
+            for (let i = 1; i < chunks.length; i++) {
+                await interaction.followUp({ content: chunks[i], ephemeral });
+            }
+            return;
         }
 
         if (interaction.commandName === 'alertas') {
@@ -1855,7 +1961,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const listaNombre = sub === 'reemplazar-ganador' ? 'ganadores' : 'perdedores';
 
                 if (utils.buscarJugadorEnLista(lista, q, miembros) === -1) return interaction.reply({ content: `❌ **${q}** no está en ${listaNombre}.`, ephemeral: true });
-                if (utils.buscarJugadorEnLista(lista, p, miembros) !== -1) return interaction.reply({ content: `❌ **${p}** ya está en ${listaNombre}.`, ephemeral: true });
+                
+                // PUNTO 2: Evitar conflicto si es el mismo jugador pero cambia cantidad
+                const qKey = utils.claveJugador(utils.parsearGanador(q).nombre, miembros);
+                const pKey = utils.claveJugador(utils.parsearGanador(p).nombre, miembros);
+                
+                if (qKey !== pKey && utils.buscarJugadorEnLista(lista, p, miembros) !== -1) {
+                    return interaction.reply({ content: `❌ **${p}** ya está en ${listaNombre}.`, ephemeral: true });
+                }
 
                 const proj = { ...e, ganadores: [...e.ganadores], perdedores: [...e.perdedores] };
                 const listaProj = sub === 'reemplazar-ganador' ? proj.ganadores : proj.perdedores;
@@ -1883,10 +1996,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const proj = { ...e, ganadores: [...e.ganadores], perdedores: [...e.perdedores] };
                 if (esGanadores) {
                     proj.ganadores = finales;
-                    proj.perdedores = proj.perdedores.filter(p => !finales.some(g => utils.claveJugador(g, miembros) === utils.claveJugador(p, miembros)));
+                    proj.perdedores = limpiarListasCruzadas(proj.ganadores, proj.perdedores, miembros);
                 } else {
                     proj.perdedores = finales;
-                    proj.ganadores = proj.ganadores.filter(g => !finales.some(p => utils.claveJugador(g, miembros) === utils.claveJugador(p, miembros)));
+                    const pKeys = new Set(proj.perdedores.map(p => utils.claveJugador(utils.parsearGanador(p).nombre, miembros)));
+                    proj.ganadores = proj.ganadores.filter(g => !pKeys.has(utils.claveJugador(utils.parsearGanador(g).nombre, miembros)));
                 }
 
                 cuerpo = `⚠️ **Reemplazo completo de ${esGanadores ? 'ganadores' : 'perdedores'} en #${id}**\n\n`;
@@ -1976,10 +2090,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             if (utils.OBJETOS_PROHIBIDOS.some(o => utils.normalizar(o) === utils.normalizar(objeto))) return interaction.reply({ content: `❌ Objeto prohibido.`, ephemeral: true });
 
+            const gList = gStr.split(',').map(s => s.trim()).filter(Boolean);
+            let pList = pStr.split(',').map(s => s.trim()).filter(Boolean);
+            
+            // PUNTO 6: Auto limpiar perdedores que también son ganadores
+            pList = limpiarListasCruzadas(gList, pList, miembros);
+
             const entrada = {
                 fecha, evento, categoria, objeto, cantidad,
-                ganadores: gStr.split(',').map(s => s.trim()).filter(Boolean),
-                perdedores: pStr.split(',').map(s => s.trim()).filter(Boolean),
+                ganadores: gList,
+                perdedores: pList,
                 notas: ''
             };
 
@@ -2199,6 +2319,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 "`/total` · unidades compradas totales de un jugador por categoría\n" +
                 "`/ranking` · tabla general de clasificación\n" +
                 "`/prioridad` · calcular prioridad entre jugadores\n" +
+                "`/perdedores` · ver los no ganadores de los últimos 7 días\n" +
                 "`/alertas` · alertas por acaparamiento de ítems\n" +
                 "`/objeto` · ver lista de apariciones de un objeto\n" +
                 "`/categoria` · ver apariciones de todos los objetos de una categoría\n" +
