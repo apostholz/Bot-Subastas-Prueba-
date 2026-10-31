@@ -63,6 +63,9 @@ const commandsData = [
         .addStringOption(o => o.setName('jugadores').setDescription('Nombres separados por coma').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
+    new SlashCommandBuilder().setName('perdedores').setDescription('Ver los perdedores de todas las categorías en los últimos 7 días')
+        .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
+
     new SlashCommandBuilder().setName('alertas').setDescription('Jugadores que superan umbrales de acaparamiento en 7 días')
         .addStringOption(o => o.setName('visibilidad').setDescription('Visibilidad del mensaje').setRequired(false).addChoices(...visibilidadChoices)),
 
