@@ -14,8 +14,7 @@ const ORDEN_VISUAL_CATEGORIAS = [
     'Equipo',
     'Accesorios',
     'Azules',
-    'Box 10k',
-    'Sin Categoría'
+    'Box 10k'
 ];
 
 const ETIQUETAS_ULTIMO = {
@@ -25,8 +24,7 @@ const ETIQUETAS_ULTIMO = {
     'Equipo': 'Equipo',
     'Accesorios': 'Accesorio',
     'Azules': 'Azules',
-    'Box 10k': 'Box 10k',
-    'Sin Categoría': 'Sin Categoría'
+    'Box 10k': 'Box 10k'
 };
 
 function ordenarCategoriasVisual(cats) {
@@ -37,16 +35,17 @@ function ordenarCategoriasVisual(cats) {
     });
 }
 
-// NUEVO: Define qué categorías mostrar según lo que se esté subastando
+// PUNTO 10: Matriz de visualización
 function obtenerCategoriasParaMostrar(categoriaElegida) {
-    const base = ['Emblemas Únicos', 'Cajas 20k', 'Emblemas Generales', 'Equipo', 'Accesorios'];
+    const todas = ['Emblemas Únicos', 'Cajas 20k', 'Emblemas Generales', 'Equipo', 'Accesorios', 'Azules', 'Box 10k'];
     
-    if (categoriaElegida === 'Cajas 20k') return [...base, 'Box 10k']; // Sin Azules
-    if (categoriaElegida === 'Emblemas Generales') return [...base, 'Box 10k'];
-    if (categoriaElegida === 'Box 10k') return [...base, 'Box 10k', 'Azules'];
-    if (categoriaElegida === 'Azules') return [...base, 'Box 10k', 'Azules']; // Muestra todo
+    if (categoriaElegida === 'Equipo' || categoriaElegida === 'Accesorios') return ['Emblemas Únicos', 'Equipo', 'Accesorios'];
+    if (categoriaElegida === 'Emblemas Únicos') return ['Emblemas Únicos', 'Cajas 20k', 'Emblemas Generales'];
+    if (categoriaElegida === 'Cajas 20k') return ['Emblemas Únicos', 'Cajas 20k', 'Emblemas Generales', 'Box 10k'];
+    if (categoriaElegida === 'Emblemas Generales') return todas.filter(c => c !== 'Azules' && c !== 'Equipo' && c !== 'Accesorios');
+    if (categoriaElegida === 'Box 10k' || categoriaElegida === 'Azules') return todas.filter(c => c !== 'Equipo' && c !== 'Accesorios');
     
-    return base;
+    return todas;
 }
 
 // ====== CSV Y GITHUB ======
@@ -222,7 +221,7 @@ function obtenerUltimosPorCategoria(jugador, compras, miembros) {
         if (n === 0) continue;
         if (!c.categoria) continue;
         if (!ultimos[c.categoria] || c.fecha > ultimos[c.categoria].fecha) {
-            ultimos[c.categoria] = { fecha: c.fecha, evento: c.evento }; // <-- Guardamos evento
+            ultimos[c.categoria] = { fecha: c.fecha, evento: c.evento };
         }
     }
     return ultimos;
@@ -232,8 +231,6 @@ function calcularPrioridad(jugador, categoria, compras, miembros) {
     const pesosCategoria = utils.PESOS[categoria] || {};
     let impacto = 0, unidades7d = 0, historico = 0;
     const desglose = {};
-
-    const catsMostrar = obtenerCategoriasParaMostrar(categoria);
 
     for (const c of compras) {
         const n = utils.contarGanador(c.ganadores, jugador, miembros);
@@ -267,8 +264,10 @@ function calcularPrioridad(jugador, categoria, compras, miembros) {
         historico += utils.contarGanador(c.ganadores, jugador, miembros);
     }
 
+    // 10a: Total histórico muestra absolutamente todas las categorías
     const historicoTotal = {};
-    for (const cat of catsMostrar) {
+    for (const cat of utils.CATEGORIAS) {
+        if (cat === 'Sin Categoría') continue; // Ocultar
         historicoTotal[cat] = 0;
     }
     for (const c of compras) {
@@ -276,10 +275,10 @@ function calcularPrioridad(jugador, categoria, compras, miembros) {
         if (n > 0 && historicoTotal[c.categoria] !== undefined) historicoTotal[c.categoria] += n;
     }
 
-    const afectantes = ordenarCategoriasVisual(obtenerCategoriasParaMostrar(categoria));
+    const catsMostrar = obtenerCategoriasParaMostrar(categoria);
     const todosUltimos = obtenerUltimosPorCategoria(jugador, compras, miembros);
     const ultimos = {};
-    for (const cat of afectantes) {
+    for (const cat of catsMostrar) {
         if (todosUltimos[cat]) ultimos[cat] = todosUltimos[cat];
     }
 
@@ -391,7 +390,6 @@ function formatearBloqueCompra(entrada, miembros, opciones = {}) {
 
     const gOrdered = [...gExpanded, ...gMultiples];
     
-    // FIX: Si no se numera, usar la lista original para respetar el "x2"
     const gBloque = numerar
         ? gOrdered.map((nombre, i) => `${i + 1}. ${utils.aplicarCanonico(nombre, miembros)}`).join('\n')
         : g.map(nombre => utils.formatearNombreConCantidad(nombre, miembros)).join(', ');
@@ -408,7 +406,7 @@ function formatearBloqueCompra(entrada, miembros, opciones = {}) {
 
     if (autor) {
         const label = titulo === 'Edición aplicada' ? 'Edited by' : 'Registered by';
-        out += `\n\n-# ${label} ${autor}`;
+        out += `\n\n-# ${label} ${autor}`; // PUNTO 1 y 5: Sin fecha
     }
 
     return out;
@@ -420,13 +418,13 @@ function renderPrioridad(payload, miembros) {
     resultados.forEach((r, i) => {
         let desgloseStr = '';
         if (r.unidades7d > 0) {
-            const cats = ordenarCategoriasVisual(Object.keys(r.desglose).filter(cat => (r.desglose[cat] || 0) > 0));
+            const cats = ordenarCategoriasVisual(Object.keys(r.desglose).filter(cat => (r.desglose[cat] || 0) > 0 && cat !== 'Sin Categoría'));
             const partes = cats.map(cat => `${utils.ABREVIATURAS[cat] || cat}: ${r.desglose[cat]}`);
             if (partes.length > 0) desgloseStr = ` (${partes.join(', ')})`;
         }
 
-        const histPartes = Object.entries(r.historicoTotal).filter(([_, n]) => n > 0).map(([cat, n]) => `${utils.ABREVIATURAS[cat] || cat}: ${n}`);
-        const sumaHist = Object.values(r.historicoTotal).reduce((a, b) => a + b, 0);
+        const histPartes = Object.entries(r.historicoTotal).filter(([cat, n]) => n > 0 && cat !== 'Sin Categoría').map(([cat, n]) => `${utils.ABREVIATURAS[cat] || cat}: ${n}`);
+        const sumaHist = Object.entries(r.historicoTotal).filter(([cat, n]) => cat !== 'Sin Categoría').reduce((a, [_, n]) => a + n, 0);
         const histTotalStr = histPartes.length > 0 ? `Total histórico (${sumaHist}): ${histPartes.join(', ')}` : 'Total histórico: —';
 
         out += `**${i + 1}. ${utils.aplicarCanonico(r.jugador, miembros)}**\n`;
@@ -436,17 +434,16 @@ function renderPrioridad(payload, miembros) {
         if (r.ultimos) {
             for (const cat of Object.keys(r.ultimos)) {
                 const info = r.ultimos[cat];
-                if (!info || !info.fecha) continue;
+                if (!info || !info.fecha || cat === 'Sin Categoría') continue;
                 const label = ETIQUETAS_ULTIMO[cat] || cat;
                 
-                // FIX: Agregar el evento si es hoy, ayer o hace 2 días
-                let textoDias = utils.etiquetaDias(info.fecha); // ej: "(hoy)"
+                let textoDias = utils.etiquetaDias(info.fecha);
                 const dias = utils.diasDesde(info.fecha);
                 
                 if (dias <= 2 && info.evento) {
-                    const diasSinParen = textoDias.replace(/[()]/g, ''); // "hoy"
-                    const diasCap = diasSinParen.charAt(0).toUpperCase() + diasSinParen.slice(1); // "Hoy"
-                    const ev = info.evento.toLowerCase(); // "diurna"
+                    const diasSinParen = textoDias.replace(/[()]/g, '');
+                    const diasCap = diasSinParen.charAt(0).toUpperCase() + diasSinParen.slice(1);
+                    const ev = info.evento.toLowerCase();
                     textoDias = `(${diasCap} - ${ev})`;
                 }
                 
@@ -458,7 +455,6 @@ function renderPrioridad(payload, miembros) {
         out += `   ${histTotalStr}\n`;
     });
 
-    // Se eliminó el botón de Perdedores 7d (Punto 9)
     return { content: out, components: [] };
 }
 
@@ -475,7 +471,7 @@ function renderRankingPagina(payload) {
     else {
         slice.forEach((d, i) => {
             const num = inicio + i + 1;
-            if (categoria === 'Todas') out += `${num}. **${d.nombre}** · ${d.total} | 20k: ${d['Cajas 20k']} | Ún: ${d['Emblemas Únicos']} | Gen: ${d['Emblemas Generales']} | Eq: ${d['Equipo']} | Acc: ${d['Accesorios']} | Az: ${d['Azules']} | B10: ${d['Box 10k']}\n`;
+            if (categoria === 'Todas') out += `${num}. **${d.nombre}** · ${d.total} | 20k: ${d['Cajas 20k']} | Ún: ${d['Emblemas Únicos']} | Gen: ${d['Emblemas Generales']} | Eq: ${d['Equipo']} | Acc: ${d['Accesorios']} | Az: ${d['Azules']} | B10k: ${d['Box 10k']}\n`;
             else out += `${num}. **${d.nombre}** · ${d[categoria]}\n`;
         });
     }
