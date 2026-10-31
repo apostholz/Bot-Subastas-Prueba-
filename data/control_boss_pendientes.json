@@ -12,6 +12,21 @@
     "creadoPor": "1505271681034485893",
     "creadoEn": 1793404187043,
     "expiraEn": 1793404367043,
+    "estado": "usado"
+  },
+  {
+    "id": "6zg03fot",
+    "messageId": "1566080364269801612",
+    "channelId": "1547595718343000135",
+    "slot": 4,
+    "objeto": "Matriarca de la prole sombría",
+    "categoria": "Emblemas Generales",
+    "cantidad": 1,
+    "texto": "Shadow Broodmother",
+    "imagen": "slot4_1792883721904.png",
+    "creadoPor": "295365478216368128",
+    "creadoEn": 1793453055948,
+    "expiraEn": 1793453235948,
     "estado": "pendiente"
   }
 ]
