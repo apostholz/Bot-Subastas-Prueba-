@@ -62,17 +62,6 @@ function cargarThreadsFijos() {
 function guardarThreadsFijos(d) { guardarJSON(THREADS_FILE, d); }
 function generarId() { return Math.random().toString(36).slice(2, 10); }
 
-function formatearFechaHoraRegistro(date = new Date()) {
-    return date.toLocaleString('en-US', {
-        month: '2-digit',
-        day: '2-digit',
-        year: '2-digit',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-    });
-}
-
 async function enviarAuditoria(client, contenido) {
     if (!AUDIT_CHANNEL_ID) return;
     try {
@@ -371,11 +360,12 @@ function renderPanel(session, funciones) {
     const bloqueada = session.estado === 'bloqueada';
 
     if (cerrada) {
-        embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} ( ✅ Registered )`);
+        // PUNTO 7 y 5: ID de compra en Registered y sin fecha en el footer
+        const idStr = session.compraId ? ` #${session.compraId}` : '';
+        embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} ( ✅ Registered${idStr} )`);
         embed.setColor(0x95A5A6);
         const regPor = session.registradoPor || 'Leader';
-        const regFecha = session.fechaRegistro ? new Date(session.fechaRegistro).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' }) : 'Recent';
-        embed.setFooter({ text: `Auction registered by ${regPor} on ${regFecha}` });
+        embed.setFooter({ text: `Auction registered by ${regPor}` });
     } else {
         if (bloqueada) {
             embed.setTitle(`${icon} ${item.cantidad}x ${item.objeto} (🔒 Locked )`);
@@ -1119,8 +1109,8 @@ function setupPanel(client, funciones) {
                     const rowB = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_dados:borrar_valor:${sessionId}`).setLabel('Borrar valor').setStyle(ButtonStyle.Secondary),
                         new ButtonBuilder().setCustomId(`panel_dados:bloquear:${sessionId}`).setLabel('Bloquear dados').setStyle(ButtonStyle.Secondary),
-                        new ButtonBuilder().setCustomId(`panel_dados:desbloquear:${sessionId}`).setLabel('Desbloquear dados').setStyle(ButtonStyle.Secondary),
-                        new ButtonBuilder().setCustomId(`panel_dados:logs:${sessionId}`).setLabel('Logs').setStyle(ButtonStyle.Secondary)
+                        new ButtonBuilder().setCustomId(`panel_dados:desbloquear:${sessionId}`).setLabel('Desbloquear dados').setStyle(ButtonStyle.Secondary)
+                        // PUNTO 10: Botón Logs eliminado de aquí.
                     );
                     return interaction.reply({ content: '🎲 Acciones de dados:', components: [rowA, rowB], ephemeral: true });
                 }
@@ -1179,21 +1169,13 @@ function setupPanel(client, funciones) {
 
                 if (subaccion === 'tirar_todos') {
                     if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
-                    await interaction.deferReply({ ephemeral: true });
-                    if (!session.dados) session.dados = {};
-                    const resultados = [];
-                    for (const interesado of session.interesados) {
-                        const valor = Math.floor(Math.random() * 25) + 1;
-                        const nombreCanon = funciones.aplicarCanonico(interesado, miembros);
-                        if (!session.dados[interesado]) session.dados[interesado] = { historial: [], propio: false };
-                        session.dados[interesado].historial.push(valor);
-                        resultados.push({ nombre: nombreCanon, valor });
-                    }
-                    pushHistorial(session, interaction, `Tiró dados para todos (${resultados.length} interesados)`);
-                    guardarSubastas(subastas);
-                    await actualizarMensajePanel(client, session, funciones);
-                    await interaction.deleteReply().catch(() => {});
-                    return;
+                    // PUNTO 3: Confirmación ephemeral en lugar de ejecución directa
+                    const id = guardarPendientePanel('dados_tirar_todos', { sessionId: session.id }, interaction.user.id);
+                    const row = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
+                        new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
+                    );
+                    return interaction.reply({ content: `⚠️ **¿Tirar dados para los ${session.interesados.length} interesados?**`, components: [row], ephemeral: true });
                 }
 
                 if (subaccion === 'tirar_varios') {
@@ -1491,7 +1473,6 @@ function setupPanel(client, funciones) {
                 }
                 if (campo === 'quitar_interesado') {
                     if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados para quitar.', ephemeral: true });
-                    // PUNTO 7: Selector múltiple
                     const opciones = session.interesados.slice(0, 25).map(j => ({ label: funciones.aplicarCanonico(j, funciones.cargarMiembros()), value: j }));
                     const row = new ActionRowBuilder().addComponents(
                         new StringSelectMenuBuilder().setCustomId(`panel_sel_quitar:${sessionId}`).setPlaceholder('Elegí a quién(es) quitar').setMinValues(1).setMaxValues(Math.min(opciones.length, 25)).addOptions(opciones)
@@ -1520,7 +1501,6 @@ function setupPanel(client, funciones) {
             if (interaction.isStringSelectMenu() && interaction.customId.startsWith('panel_sel_quitar:')) {
                 if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                 const sessionId = interaction.customId.split(':')[1];
-                // PUNTO 7: Recibimos múltiples valores
                 const valores = interaction.values;
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
@@ -1576,17 +1556,21 @@ function setupPanel(client, funciones) {
                         return funciones.aplicarCanonico(parsed.nombre, miembros);
                     };
 
-                    const g = interaction.fields.getTextInputValue('ganadores')
+                    let g = interaction.fields.getTextInputValue('ganadores')
                         .split(',')
                         .map(s => s.trim())
                         .filter(Boolean)
                         .map(canonizarGanador);
 
-                    const p = interaction.fields.getTextInputValue('perdedores')
+                    let p = interaction.fields.getTextInputValue('perdedores')
                         .split(',')
                         .map(s => s.trim())
                         .filter(Boolean)
                         .map(canonizarSimple);
+
+                    // PUNTO 6: Auto limpiar perdedores que también son ganadores
+                    const gBaseKeys = new Set(g.map(gItem => utils.claveJugador(utils.parsearGanador(gItem).nombre, miembros)));
+                    p = p.filter(pItem => !gBaseKeys.has(utils.claveJugador(utils.parsearGanador(pItem).nombre, miembros)));
 
                     const cant = parseInt(interaction.fields.getTextInputValue('cantidad'), 10) || session.item.cantidad;
 
@@ -1606,8 +1590,6 @@ function setupPanel(client, funciones) {
                     const gNumbered = gOrdered.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
                     const gTitle = gOrdered.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-                    const fechaPreview = formatearFechaHoraRegistro();
-
                     let txt = `✅ **Resultado registrado** (pendiente de confirmar)\n📅 ${utils.formatearFecha(session.item.fecha)} ${utils.etiquetaDias(session.item.fecha)} · ${utils.nombreBonitoEvento(session.item.evento)}\n\n· **${cant}**x **${session.item.objeto}** (${session.item.categoria})\n\n${gTitle}\n${gNumbered || 'nadie'}`;
 
                     if (p.length > 0) {
@@ -1616,7 +1598,8 @@ function setupPanel(client, funciones) {
                         txt += `\n\n${pTitle}\n${pBase.join(', ')}`;
                     }
 
-                    txt += `\n\n-# Registered by ${interaction.member?.displayName || interaction.user.username} · ${fechaPreview}`;
+                    // PUNTO 5: Sin fecha en Registered by
+                    txt += `\n\n-# Registered by ${interaction.member?.displayName || interaction.user.username}`;
                     txt += `\n\n¿Confirmás y guardás en el historial?`;
 
                     const row = new ActionRowBuilder().addComponents(
@@ -1641,6 +1624,24 @@ function setupPanel(client, funciones) {
                 const session = subastas[p.payload.sessionId];
                 if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) { pendingPanel.delete(id); return interaction.editReply({ content: '❌ El panel ya no está activo.', components: [] }); }
                 const miembros = funciones.cargarMiembros();
+
+                if (p.tipo === 'dados_tirar_todos') {
+                    // PUNTO 3: Confirmación aceptada, ejecutamos "Tirar para todos"
+                    if (!session.dados) session.dados = {};
+                    const resultados = [];
+                    for (const interesado of session.interesados) {
+                        const valor = Math.floor(Math.random() * 25) + 1;
+                        const nombreCanon = funciones.aplicarCanonico(interesado, miembros);
+                        if (!session.dados[interesado]) session.dados[interesado] = { historial: [], propio: false };
+                        session.dados[interesado].historial.push(valor);
+                        resultados.push({ nombre: nombreCanon, valor });
+                    }
+                    pushHistorial(session, interaction, `Tiró dados para todos (${resultados.length} interesados)`);
+                    guardarSubastas(subastas);
+                    await actualizarMensajePanel(client, session, funciones);
+                    pendingPanel.delete(id);
+                    return interaction.editReply({ content: '✅ Dados tirados para todos.', components: [] });
+                }
 
                 if (p.tipo === 'dados_tirar_varios') {
                     if (!session.dados) session.dados = {};
@@ -1725,7 +1726,6 @@ function setupPanel(client, funciones) {
                 }
 
                 if (p.tipo === 'quitar_interesado') {
-                    // PUNTO 7: Manejo de múltiples jugadores a quitar
                     const quitados = [];
                     for (const jug of p.payload.jugadores) {
                         const idx = session.interesados.findIndex(i => utils.claveJugador(i, miembros) === utils.claveJugador(jug, miembros));
@@ -1753,6 +1753,10 @@ function setupPanel(client, funciones) {
                     session.estado = 'cerrada';
                     session.registradoPor = interaction.member?.displayName || interaction.user.username;
                     session.fechaRegistro = new Date().toISOString();
+                    
+                    // PUNTO 7: Guardar el ID de la compra en la sesión
+                    session.compraId = entrada.id;
+                    
                     pushHistorial(session, interaction, 'Registró resultado');
                     guardarSubastas(subastas);
 
@@ -1781,7 +1785,7 @@ function setupPanel(client, funciones) {
                     const ganadoresNumerados = ganadoresOrdenados.map((nombre, i) => `${i + 1}. ${funciones.aplicarCanonico(nombre, miembros)}`).join('\n');
                     const tituloGanadores = ganadoresOrdenados.length === 1 ? '🏆 **Winner:**' : '🏆 **Winners:**';
 
-                    // PUNTO 6: Sin fecha/hora al final
+                    // PUNTO 5: Sin fecha/hora al final
                     let msg = `✅ Resultado registrado: #${entrada.id}\n📅 ${utils.formatearFecha(entrada.fecha)} ${utils.etiquetaDias(entrada.fecha)} · ${utils.nombreBonitoEvento(entrada.evento)}\n\n· **${entrada.cantidad}**x **${entrada.objeto}** (${entrada.categoria})\n\n${tituloGanadores}\n${ganadoresNumerados || 'nadie'}`;
 
                     if (entrada.perdedores.length > 0) {
