@@ -107,8 +107,12 @@ function parsearGanador(g) {
     if (!match) return { nombre: g, cantidad: 1 };
     return { nombre: match[1].trim(), cantidad: match[2] ? parseInt(match[2]) : 1 };
 }
+
+// Arreglo para que buscar "Vhaelyr x2" o "Vhaelyr" encuentre lo mismo en la lista
 function buscarJugadorEnLista(lista, nombre, miembros) {
-    const jk = claveJugador(nombre, miembros);
+    const matchQuery = nombre.match(/^(.+?)(?:\s+[xX](\d+))?$/);
+    const nombreLimpio = matchQuery ? matchQuery[1].trim() : nombre.trim();
+    const jk = claveJugador(nombreLimpio, miembros);
     return lista.findIndex(g => {
         const match = g.match(/^(.+?)(?:\s+[xX](\d+))?$/);
         return match && claveJugador(match[1], miembros) === jk;
@@ -187,7 +191,7 @@ const ABREVIATURAS = {
     'Accesorios': 'Acc',
     'Sin Categoría': '?',
     'Azules': 'Az',
-    'Box 10k': 'B10'
+    'Box 10k': 'B10k' // <-- Prefijo cambiado
 };
 
 const ICONOS = {
@@ -203,6 +207,7 @@ const ICONOS = {
 
 const OBJETOS_PROHIBIDOS = ['Combatiente', 'Arquero gnoll'];
 
+// Matriz de pesos ajustada (Punto 10f)
 const PESOS = {
     'Emblemas Únicos': { 
         'Emblemas Únicos': 3, 
@@ -237,7 +242,9 @@ const PESOS = {
     'Box 10k': { 
         'Box 10k': 1, 
         'Azules': 1,
-        'Cajas 20k': 2.0 
+        'Cajas 20k': 2.0,
+        'Emblemas Generales': 1.5,
+        'Emblemas Únicos': 3.0
     }
 };
 
