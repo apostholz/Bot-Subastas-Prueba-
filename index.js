@@ -191,13 +191,6 @@ function formatearUltimoDias(fecha) {
     return `hace ${d} días`;
 }
 
-// Helpers para Punto 2 y Punto 6
-function mismoJugador(a, b, miembros) {
-    const ka = utils.claveJugador(utils.parsearGanador(a).nombre, miembros);
-    const kb = utils.claveJugador(utils.parsearGanador(b).nombre, miembros);
-    return ka === kb;
-}
-
 function limpiarListasCruzadas(ganadores, perdedores, miembros) {
     const gKeys = new Set((ganadores || []).map(g => utils.claveJugador(utils.parsearGanador(g).nombre, miembros)));
     return (perdedores || []).filter(p => !gKeys.has(utils.claveJugador(utils.parsearGanador(p).nombre, miembros)));
@@ -226,14 +219,30 @@ function dividirTexto(texto, max = 1900) {
     return chunks;
 }
 
+// FIX PUNTO 4: manejo de deferred/replied
 async function enviarPrioridadLarga(interaction, content, components, ephemeral = true) {
     const chunks = dividirTexto(content, 1900);
     if (chunks.length === 0) chunks.push(' ');
-    await interaction.reply({
-        content: chunks[0],
-        components: chunks.length === 1 ? components : [],
-        ephemeral
-    });
+
+    if (interaction.deferred) {
+        await interaction.editReply({
+            content: chunks[0],
+            components: chunks.length === 1 ? components : []
+        });
+    } else if (interaction.replied) {
+        await interaction.followUp({
+            content: chunks[0],
+            components: chunks.length === 1 ? components : [],
+            ephemeral
+        });
+    } else {
+        await interaction.reply({
+            content: chunks[0],
+            components: chunks.length === 1 ? components : [],
+            ephemeral
+        });
+    }
+
     for (let i = 1; i < chunks.length; i++) {
         await interaction.followUp({
             content: chunks[i],
@@ -1366,7 +1375,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const comandosAdmin = ['backup', 'sync', 'registro-rapido'];
         const comandosLider = ['miembros', 'catalogo', 'control-boss'];
-        const comandosHelper = ['borrar', 'editar', 'sub', 'subf'];
+        const comandosHelper = ['borrar', 'editar', 'sub', 'subf', 'pesos'];
 
         if (comandosAdmin.includes(interaction.commandName) || comandosLider.includes(interaction.commandName) || comandosHelper.includes(interaction.commandName)) {
             const esDueño = interaction.guild && interaction.guild.ownerId === interaction.user.id;
@@ -1764,6 +1773,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.reply({ content: render.content, components: [row], ephemeral });
         }
 
+        if (interaction.commandName === 'pesos') {
+            await interaction.deferReply({ ephemeral: true });
+
+            const categoriasAMostrar = Object.keys(utils.PESOS);
+
+            let out = '⚖️ **Tabla de Pesos de Impacto**\n\n';
+            out += '_Para comprar X, estos son los pesos de lo que hayas ganado antes:_\n\n';
+
+            for (const cat of categoriasAMostrar) {
+                const afectantes = [];
+                for (const origen of Object.keys(utils.PESOS)) {
+                    const peso = utils.PESOS[origen]?.[cat];
+                    if (peso !== undefined) afectantes.push({ origen, peso });
+                }
+                if (afectantes.length === 0) continue;
+
+                afectantes.sort((a, b) => b.peso - a.peso);
+
+                out += `**Afectan a ${cat}:**\n`;
+                for (const a of afectantes) {
+                    out += `- ${a.origen}: **${a.peso}**\n`;
+                }
+                out += '\n';
+            }
+
+            return logic.responderLargo(interaction, out.trimEnd(), true);
+        }
+
         if (interaction.commandName === 'perdedores') {
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
             const ephemeral = visibilidad === 'Privado';
@@ -1820,28 +1857,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
         }
 
-        if (interaction.commandName === 'pesos') {
-            const catFiltro = interaction.options.getString('categoria');
-            await interaction.deferReply({ ephemeral: true });
-            let out = '⚖️ **Tabla de Pesos de Impacto**\n\n';
-            const cats = catFiltro ? [catFiltro] : Object.keys(utils.PESOS);
-            
-            for (const cat of cats) {
-                if (!utils.PESOS[cat]) continue;
-                out += `**${cat}** afecta a:\n`;
-                const entries = Object.entries(utils.PESOS[cat]);
-                for (const [target, weight] of entries) {
-                    out += `- ${target}: **${weight}**\n`;
-                }
-                out += '\n';
-            }
-            return logic.responderLargo(interaction, out.trimEnd(), true);
-        }
-
         if (interaction.commandName === 'alertas') {
             const visibilidad = interaction.options.getString('visibilidad') || 'Privado';
             const ephemeral = visibilidad === 'Privado';
             await interaction.deferReply({ ephemeral });
+
             const recientes = utils.filtrarPorPeriodo(db.compras, '7d');
             const conteos = {};
             for (const c of recientes) for (const g of c.ganadores) {
@@ -1851,15 +1871,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (!conteos[key]) { conteos[key] = { nombre: utils.aplicarCanonico(nombre, miembros) }; for (const cat of utils.CATEGORIAS) conteos[key][cat] = 0; }
                 if (conteos[key][c.categoria] !== undefined) conteos[key][c.categoria] += cantidad;
             }
-            const UMBRALES = { 'Emblemas Únicos': 3, 'Emblemas Generales': 5, 'Cajas 20k': 4, 'Accesorios': 3, 'Equipo': 3 };
+
+            const UMBRALES = {
+                'Emblemas Únicos': 3,
+                'Emblemas Generales': 5,
+                'Cajas 20k': 4,
+                'Accesorios': 3,
+                'Equipo': 3,
+                'Azules': 8,
+                'Box 10k': 6
+            };
+
             let out = `🚨 **Alertas (últimos 7d)**\n`;
             let total = 0;
+
             for (const [cat, umbral] of Object.entries(UMBRALES)) {
-                const superan = Object.values(conteos).filter(v => (v[cat] || 0) >= umbral).sort((a, b) => b[cat] - a[cat]);
-                if (superan.length === 0) continue;
-                total += superan.length;
-                out += `\n**${cat}** (umbral ${umbral}):\n` + superan.map(v => `   ${v.nombre}: ${v[cat]}`).join('\n') + '\n';
+                const superan = Object.values(conteos)
+                    .filter(v => (v[cat] || 0) >= umbral)
+                    .sort((a, b) => b[cat] - a[cat]);
+
+                out += `\n**${cat}** (umbral ${umbral}):\n`;
+                if (superan.length === 0) {
+                    out += `   Nadie\n`;
+                } else {
+                    total += superan.length;
+                    out += superan.map(v => `   ${v.nombre}: ${v[cat]}`).join('\n') + '\n';
+                }
             }
+
             if (total === 0) out += `\n✅ Nadie supera los umbrales.`;
             return logic.responderLargo(interaction, out, ephemeral);
         }
