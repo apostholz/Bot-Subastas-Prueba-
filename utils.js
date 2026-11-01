@@ -14,7 +14,6 @@ const ROL_OFICIAL = '1564961258061566082';
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-// ====== DB ======
 function cargarDB() {
     if (fs.existsSync(DB_FILE)) return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     return { compras: [], nextId: 1 };
@@ -23,7 +22,6 @@ function guardarDB(db) {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
-// ====== MIEMBROS ======
 function cargarMiembros() {
     if (fs.existsSync(MIEMBROS_FILE)) {
         try {
@@ -39,7 +37,6 @@ function guardarMiembros(m) {
     fs.writeFileSync(MIEMBROS_FILE, JSON.stringify(m, null, 2));
 }
 
-// ====== CATALOGO ======
 function cargarCatalogo() {
     if (fs.existsSync(CATALOGO_FILE)) {
         try { return JSON.parse(fs.readFileSync(CATALOGO_FILE, 'utf8')); }
@@ -91,7 +88,6 @@ function esExcluido(nombre, miembros) {
     return miembros.excluidos.some(e => claveJugador(e, miembros) === key);
 }
 
-// ====== GANADORES ======
 function contarGanador(ganadores, jugador, miembros) {
     const jk = claveJugador(jugador, miembros);
     for (const g of ganadores) {
@@ -221,7 +217,8 @@ const PESOS = {
     'Emblemas Generales': { 
         'Emblemas Únicos': 3, 
         'Cajas 20k': 2, 
-        'Emblemas Generales': 1 
+        'Emblemas Generales': 1,
+        'Box 10k': 0.25
     },
     'Equipo': { 
         'Equipo': 1.0, 
@@ -235,7 +232,7 @@ const PESOS = {
     },
     'Azules': { 
         'Azules': 1, 
-        'Box 10k': 1 
+        'Box 10k': 0.5
     },
     'Box 10k': { 
         'Box 10k': 1, 
@@ -264,8 +261,6 @@ function nombreBonitoEvento(evento) {
     if (n.includes('banquete')) return 'Banquete';
     return evento;
 }
-
-// NUEVO PUNTO 3: Nombre corto del evento
 function nombreCortoEvento(evento) {
     const n = normalizar(evento);
     if (!evento || n === 'manual' || n === 'hoy') return 'Sin evento';
@@ -274,7 +269,6 @@ function nombreCortoEvento(evento) {
     if (n.includes('banquete')) return 'Banquete';
     return evento;
 }
-
 function ordenEvento(evento) {
     const idx = ORDEN_EVENTOS.indexOf(normalizar(evento));
     return idx === -1 ? 999 : idx;
@@ -296,7 +290,6 @@ function bloqueDeCategoria(evento, categoria) {
     return null;
 }
 
-// ====== ORDEN CRONOLÓGICO DESCENDENTE ======
 function ordenarComprasDesc(a, b) {
     const f = (b.fecha || '').localeCompare(a.fecha || '');
     if (f !== 0) return f;
