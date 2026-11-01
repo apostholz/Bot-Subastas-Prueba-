@@ -33,7 +33,6 @@ function ordenarCategoriasVisual(cats) {
     });
 }
 
-// PUNTO 10: Matriz de visualización
 function obtenerCategoriasParaMostrar(categoriaElegida) {
     const todas = ['Emblemas Únicos', 'Cajas 20k', 'Emblemas Generales', 'Equipo', 'Accesorios', 'Azules', 'Box 10k'];
     
@@ -101,7 +100,6 @@ function mergeCSVEnDB(contenidoCSV, db) {
     return { agregadas };
 }
 
-// Mutex para evitar condiciones de carrera en GitHub
 let sincronizandoGitHub = false;
 const colaSincronizacion = [];
 
@@ -317,6 +315,7 @@ function compararPrioridad(a, b) {
     return 0;
 }
 
+// PUNTO 5: Az y B10k NO suman al total
 function construirRanking(comprasFiltradas, categoriaFiltro, miembros) {
     const ranking = {};
     for (const c of comprasFiltradas) {
@@ -330,7 +329,9 @@ function construirRanking(comprasFiltradas, categoriaFiltro, miembros) {
             }
             if (ranking[key][c.categoria] !== undefined) {
                 ranking[key][c.categoria] += cantidad;
-                ranking[key].total += cantidad;
+                if (c.categoria !== 'Azules' && c.categoria !== 'Box 10k') {
+                    ranking[key].total += cantidad;
+                }
             }
         }
     }
@@ -342,7 +343,6 @@ function obtenerCategoriasAfectantes(categoria) {
     return obtenerCategoriasParaMostrar(categoria);
 }
 
-// ====== INFERIR CATEGORÍA ======
 function inferirCategoria(objeto, db) {
     const key = utils.normalizar(objeto);
 
@@ -437,6 +437,7 @@ function formatearBloqueCompra(entrada, miembros, opciones = {}) {
     return out;
 }
 
+// PUNTO 5: separar Az y B10k con **|**
 function renderPrioridad(payload, miembros) {
     const { categoria, resultados } = payload;
     let out = `🏆 **Prioridad — ${categoria}**\n\n`;
@@ -448,9 +449,25 @@ function renderPrioridad(payload, miembros) {
             if (partes.length > 0) desgloseStr = ` (${partes.join(', ')})`;
         }
 
-        const histPartes = Object.entries(r.historicoTotal).filter(([cat, n]) => n > 0 && cat !== 'Sin Categoría').map(([cat, n]) => `${utils.ABREVIATURAS[cat] || cat}: ${n}`);
-        const sumaHist = Object.entries(r.historicoTotal).filter(([cat, n]) => cat !== 'Sin Categoría').reduce((a, [_, n]) => a + n, 0);
-        const histTotalStr = histPartes.length > 0 ? `Total histórico (${sumaHist}): ${histPartes.join(', ')}` : 'Total histórico: —';
+        const catsMain = Object.entries(r.historicoTotal)
+            .filter(([cat, n]) => n > 0 && cat !== 'Sin Categoría' && cat !== 'Azules' && cat !== 'Box 10k');
+        const catsExtra = Object.entries(r.historicoTotal)
+            .filter(([cat, n]) => n > 0 && (cat === 'Azules' || cat === 'Box 10k'));
+
+        const sumaHist = catsMain.reduce((a, [_, n]) => a + n, 0);
+        const histMain = catsMain.map(([cat, n]) => `${utils.ABREVIATURAS[cat] || cat}: ${n}`);
+        const histExtra = catsExtra.map(([cat, n]) => `${utils.ABREVIATURAS[cat] || cat}: ${n}`);
+
+        let histTotalStr;
+        if (histMain.length === 0 && histExtra.length === 0) {
+            histTotalStr = 'Total histórico: —';
+        } else if (histExtra.length === 0) {
+            histTotalStr = `Total histórico (${sumaHist}): ${histMain.join(', ')}`;
+        } else if (histMain.length === 0) {
+            histTotalStr = `Total histórico (0): **|** ${histExtra.join(', ')}`;
+        } else {
+            histTotalStr = `Total histórico (${sumaHist}): ${histMain.join(', ')} **|** ${histExtra.join(', ')}`;
+        }
 
         out += `**${i + 1}. ${utils.aplicarCanonico(r.jugador, miembros)}**\n`;
         out += `   Impacto reciente: ${r.impacto.toFixed(2)}\n`;
@@ -483,6 +500,7 @@ function renderPrioridad(payload, miembros) {
     return { content: out, components: [] };
 }
 
+// PUNTO 5: separar Az y B10k con **|**
 function renderRankingPagina(payload) {
     const { jugadores, periodo, categoria, pagina } = payload;
     const porPagina = categoria === 'Todas' ? 10 : 15;
@@ -496,8 +514,11 @@ function renderRankingPagina(payload) {
     else {
         slice.forEach((d, i) => {
             const num = inicio + i + 1;
-            if (categoria === 'Todas') out += `${num}. **${d.nombre}** · ${d.total} | 20k: ${d['Cajas 20k']} | Ún: ${d['Emblemas Únicos']} | Gen: ${d['Emblemas Generales']} | Eq: ${d['Equipo']} | Acc: ${d['Accesorios']} | Az: ${d['Azules']} | B10k: ${d['Box 10k']}\n`;
-            else out += `${num}. **${d.nombre}** · ${d[categoria]}\n`;
+            if (categoria === 'Todas') {
+                out += `${num}. **${d.nombre}** · ${d.total} | 20k: ${d['Cajas 20k']} | Ún: ${d['Emblemas Únicos']} | Gen: ${d['Emblemas Generales']} | Eq: ${d['Equipo']} | Acc: ${d['Accesorios']} **|** B10k: ${d['Box 10k']}, Az: ${d['Azules']}\n`;
+            } else {
+                out += `${num}. **${d.nombre}** · ${d[categoria]}\n`;
+            }
         });
     }
     return { content: out.trimEnd(), totalPaginas, paginaActual };
@@ -546,7 +567,6 @@ function renderCategoriaPagina(payload, miembros) {
     return { content: out.trimEnd(), totalPaginas, paginaActual };
 }
 
-// PUNTO 5: responderLargo mejorado (divide por bloques y maneja deferred/replied)
 async function responderLargo(interaction, texto, ephemeral = false) {
     const bloques = texto.split(/\n\n+/).filter(b => b.trim());
     const chunks = [];
