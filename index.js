@@ -304,6 +304,7 @@ async function asegurarArchivosDesdeGitHub() {
     }
 }
 
+// ====== BACKUP ======
 function cargarBackupConfig() {
     if (!fs.existsSync(BACKUP_CONFIG_FILE)) return { channelId: process.env.BACKUP_CHANNEL_ID || null };
     try {
@@ -616,14 +617,14 @@ function construirBotonesListaDados(threadId) {
     );
 
     const session = obtenerSessionActiva(threadId);
-    if (session) {
-        row.addComponents(
-            new ButtonBuilder()
-                .setCustomId(`panel_btn:dados:${session.id}:lista`)
-                .setLabel('Dados')
-                .setStyle(ButtonStyle.Secondary)
-        );
-    }
+    const sessionId = session ? session.id : 'sin_sesion';
+    
+    row.addComponents(
+        new ButtonBuilder()
+            .setCustomId(`panel_btn:dados:${sessionId}:lista`)
+            .setLabel('Dados')
+            .setStyle(ButtonStyle.Secondary)
+    );
 
     return row;
 }
@@ -642,12 +643,16 @@ async function actualizarMensajeListaDados(client, threadId) {
         const canal = await client.channels.fetch(threadId);
         try {
             const msg = await canal.messages.fetch(entry.messageId);
-            await msg.delete();
-        } catch {}
-
-        const nuevo = await canal.send({ embeds: [embed], components: [row] });
-        entry.messageId = nuevo.id;
-        guardarMensajesDados(mensajes);
+            await msg.edit({ embeds: [embed], components: [row] });
+        } catch (e) {
+            if (e.code === 10008) {
+                const nuevo = await canal.send({ embeds: [embed], components: [row] });
+                entry.messageId = nuevo.id;
+                guardarMensajesDados(mensajes);
+            } else {
+                throw e;
+            }
+        }
     } catch (e) {
         delete mensajes[threadId];
         guardarMensajesDados(mensajes);
@@ -750,15 +755,15 @@ setInterval(async () => {
 
             try {
                 const canal = await client.channels.fetch(threadId);
-                try {
-                    const viejo = await canal.messages.fetch(entry.messageId);
-                    await viejo.delete();
-                } catch {}
-
                 const embed = generarEmbedListaDados(threadId, miembros);
                 const row = construirBotonesListaDados(threadId);
-                const nuevo = await canal.send({ embeds: [embed], components: [row] });
-                entry.messageId = nuevo.id;
+                try {
+                    const viejo = await canal.messages.fetch(entry.messageId);
+                    await viejo.edit({ embeds: [embed], components: [row] });
+                } catch (e) {
+                    const nuevo = await canal.send({ embeds: [embed], components: [row] });
+                    entry.messageId = nuevo.id;
+                }
                 cambios = true;
             } catch (e) {
                 delete mensajes[threadId];
@@ -815,8 +820,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
                 } else {
                     const nombres = logic.obtenerNombresUnicos(db, miembros);
-                    const q = utils.normalizar(focused.value);
-                    return interaction.respond(nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
+                    return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres, miembros));
                 }
             }
 
@@ -832,19 +836,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     return interaction.respond(filtrados.map(n => ({ name: n, value: n })));
                 } else {
                     const nombres = logic.obtenerNombresUnicos(db, miembros);
-                    const q = utils.normalizar(focused.value);
-                    return interaction.respond(nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
+                    return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres, miembros));
                 }
             }
 
             if (cmd === 'dados' && focused.name === 'jugadores') {
                 const nombres = logic.obtenerNombresUnicos(db, miembros);
-                return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+                return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres, miembros));
             }
 
             if (['jugadores', 'ganadores', 'perdedores', 'quitar', 'poner', 'por'].includes(focused.name)) {
                 const nombres = logic.obtenerNombresUnicos(db, miembros);
-                return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+                return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres, miembros));
             }
 
             if (cmd === 'miembros' && focused.name === 'nombre') {
@@ -855,13 +858,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     return interaction.respond(keys.filter(k => utils.normalizar(k).includes(q) || utils.normalizar(miembros.canonicos[k]).includes(q)).slice(0, 25).map(k => ({ name: k, value: k })));
                 } else {
                     const nombres = logic.obtenerNombresUnicos(db, miembros);
-                    return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+                    return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres, miembros));
                 }
             }
 
             if (focused.name === 'jugador' || (cmd === 'editar')) {
                 const nombres = logic.obtenerNombresUnicos(db, miembros);
-                return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+                return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres, miembros));
             }
             return;
         }
@@ -885,7 +888,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     guardarMensajesDados(mensajes);
                 }
 
-                await interaction.update({ components: [] });
+                // FIX: Mantener el botón de "Dados" al pausar el refresh
+                const session = obtenerSessionActiva(interaction.channelId);
+                const sessionId = session ? session.id : 'sin_sesion';
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`panel_btn:dados:${sessionId}:lista`)
+                        .setLabel('Dados')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+                
+                await interaction.update({ components: [row] });
                 return interaction.followUp({ content: '⏸️ Refresh pausado.', ephemeral: true });
             }
 
@@ -1038,8 +1051,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     await actualizarMensajePanel(client, session, funciones);
                     await actualizarMensajeListaDados(client, threadId);
                     
-                    const listaResultados = resultados.map(r => `• **${r.nombre}**: 🎲 ${r.valor}`).join('\n');
-                    await interaction.channel.send(`🎲 **Dados tirados para todos (${resultados.length} interesados)**\n${listaResultados}`);
+                    const listaResultados = resultados.map(r => `• ${r.nombre}: 🎲 **${r.valor}**`).join('\n');
+                    await interaction.channel.send(`✨ **Dice roll for everyone (${resultados.length} interested)**\n${listaResultados}`);
 
                     pendingActions.delete(id);
                     return interaction.editReply({ content: '✅ Acción completada. Revisá el mensaje en el canal.', components: [] });
@@ -1094,10 +1107,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
                             if (match) tKey = match;
                         }
                         const val = session && session.dados && session.dados[tKey] ? session.dados[tKey].historial.slice(-1)[0] : '?';
-                        return `• **${nCanon}**: 🎲 ${val}`;
+                        return `• ${nCanon}: 🎲 **${val}**`;
                     }).join('\n');
                     
-                    await interaction.channel.send(`🎲 **Dados tirados para varios**\n${listaResultados}`);
+                    await interaction.channel.send(`✨ **Dice roll for multiple players**\n${listaResultados}`);
 
                     pendingActions.delete(id);
                     return interaction.editReply({ content: '✅ Acción completada. Revisá el mensaje en el canal.', components: [] });
@@ -1377,7 +1390,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 if (!esConfirm) return interaction.update({ content: '❌ Aviso cancelado.', components: [] });
 
                 await interaction.update({ content: '✅ Aviso enviado.', components: [] });
-                await interaction.channel.send(`🔔 Notice for: ${p.payload.menciones.join(', ')}`);
+                await interaction.channel.send(`🔔 Ping for: ${p.payload.menciones.join(', ')}`);
                 return;
             }
 
@@ -1790,6 +1803,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             await interaction.deferReply({ ephemeral: true });
 
             const categoriasAMostrar = Object.keys(utils.PESOS);
+
             let out = '⚖️ **Tabla de Pesos de Impacto**\n\n';
             out += '_Para comprar X, estos son los pesos de lo que hayas ganado antes:_\n\n';
 
@@ -1803,6 +1817,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 
                 if (afectantes.length === 0) continue;
+
                 afectantes.sort((a, b) => b.peso - a.peso);
 
                 out += `**Afectan a ${cat}:**\n`;
@@ -1811,6 +1826,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 out += '\n';
             }
+
             return logic.responderLargo(interaction, out.trimEnd(), true);
         }
 
@@ -2435,7 +2451,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     "`/panel crear` · crear panel en un thread\n" +
                     "`/panel ver` · mostrar panel nuevamente\n" +
                     "`/panel objeto` · cambiar objeto del panel\n" +
-                    "`/panel interesado` · añadir/quitar interesados";
+                    "`/panel interesado` · añadir interesados";
                 if (esAuctionMod) {
                     paneles += "\n`/panel indice` · crear/actualizar índice de subastas activas";
                 }
@@ -2501,7 +2517,8 @@ const funciones = {
     formatearPingGanadores: logic.formatearPingGanadores,
     ROL_LIDER: utils.ROL_LIDER,
     ROL_HELPER: utils.ROL_HELPER,
-    ROL_OFICIAL: utils.ROL_OFICIAL
+    ROL_OFICIAL: utils.ROL_OFICIAL,
+    actualizarMensajeListaDados: actualizarMensajeListaDados // <--- AGREGADO AQUÍ
 };
 
 setupPanel(client, funciones);
