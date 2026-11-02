@@ -1512,7 +1512,7 @@ function setupPanel(client, funciones) {
                     );
                     
                     return interaction.reply({ 
-                        content: `📋 **Añadir interesado**\n\nPara autocompletar nombres, tocá acá: ${mention} (elegí el subcomando **interesado**).\n\n*Tip: para agregar varios, escribí el primer nombre, una coma `,` y el siguiente. El autocompletado te irá sugiriendo a medida que escribas.*\n\nSi el nombre es nuevo y no está en la lista, usá el botón de abajo:`,
+                        content: `📋 **Añadir interesado**\n\nPara autocompletar nombres, tocá acá: ${mention} (elegí el subcomando **interesado**).\n\n*Tip: para agregar varios, escribí el primer nombre, una coma "," y el siguiente. El autocompletado te irá sugiriendo a medida que escribas.*\n\nSi el nombre es nuevo y no está en la lista, usá el botón de abajo:`,
                         components: [rowBtn], 
                         ephemeral: true 
                     });
