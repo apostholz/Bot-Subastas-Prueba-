@@ -1501,19 +1501,8 @@ function setupPanel(client, funciones) {
                 }
                 if (campo === 'objeto') return interaction.reply({ content: 'Para cambiar el objeto usá el comando `/panel objeto` (tocalo para copiar).', ephemeral: true });
                 if (campo === 'agregar_interesado') {
-                    const cmdPanel = client.application.commands.cache.find(c => c.name === 'panel');
-                    const mention = cmdPanel ? `</panel:${cmdPanel.id}>` : '`/panel interesado`';
-                    
-                    const rowBtn = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`panel_modal_btn:agregar_manual:${sessionId}`)
-                            .setLabel('✍️ Escribir manualmente')
-                            .setStyle(ButtonStyle.Secondary)
-                    );
-                    
                     return interaction.reply({ 
-                        content: `📋 **Añadir interesado**\n\nPara autocompletar nombres, tocá acá: ${mention} (elegí el subcomando **interesado**).\n\n*Tip: para agregar varios, escribí el primer nombre, una coma "," y el siguiente. El autocompletado te irá sugiriendo a medida que escribas.*\n\nSi el nombre es nuevo y no está en la lista, usá el botón de abajo:`,
-                        components: [rowBtn], 
+                        content: `📋 **Añadir interesado**\n\nPara anotar nombres, utiliza este comando de acá: \`/panel interesado\` (Presiona para copiarlo)\n\n* **Tip**: para agregar varios, escribí el primer nombre, una coma "," y el siguiente.*`,
                         ephemeral: true 
                     });
                 }
@@ -1524,22 +1513,6 @@ function setupPanel(client, funciones) {
                         new StringSelectMenuBuilder().setCustomId(`panel_sel_quitar:${sessionId}`).setPlaceholder('Elegí a quién(es) quitar').setMinValues(1).setMaxValues(Math.min(opciones.length, 25)).addOptions(opciones)
                     );
                     return interaction.reply({ content: 'Elegí a quién(es) quitar:', components: [row], ephemeral: true });
-                }
-            }
-
-            if (interaction.isButton() && interaction.customId.startsWith('panel_modal_btn:')) {
-                if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
-                const [, accion, sessionId] = interaction.customId.split(':');
-                const subastas = cargarSubastas();
-                const session = subastas[sessionId];
-                if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado.', ephemeral: true });
-
-                if (accion === 'agregar_manual') {
-                    const modal = new ModalBuilder().setCustomId(`panel_modal:agregar_interesado:${sessionId}`).setTitle('Escribir nombre manualmente');
-                    modal.addComponents(new ActionRowBuilder().addComponents(
-                        new TextInputBuilder().setCustomId('jugador').setLabel('Nombre(s), separados por coma').setStyle(TextInputStyle.Short).setRequired(true)
-                    ));
-                    return interaction.showModal(modal);
                 }
             }
 
