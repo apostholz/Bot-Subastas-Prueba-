@@ -858,7 +858,7 @@ function setupPanel(client, funciones) {
                 }
                 if (focused.name === 'jugador') {
                     const nombres = funciones.obtenerNombresUnicos(db, miembros);
-                    return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
+                    return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres, miembros));
                 }
                 return;
             }
@@ -968,21 +968,6 @@ function setupPanel(client, funciones) {
                 if (sub === 'interesado') {
                     if (!esOficial(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Oficiales/Auction Mod/Líderes/Admins.', ephemeral: true });
                     const jugadorRaw = interaction.options.getString('jugador');
-                    const accion = interaction.options.getString('accion') || 'añadir';
-
-                    if (accion === 'quitar') {
-                        const miembros = funciones.cargarMiembros();
-                        const canon = funciones.aplicarCanonico(jugadorRaw, miembros);
-                        const idx = session.interesados.findIndex(i => utils.claveJugador(i, miembros) === utils.claveJugador(canon, miembros));
-                        if (idx === -1) return interaction.reply({ content: 'ℹ️ No está anotado.', ephemeral: true });
-                        session.interesados.splice(idx, 1);
-                        pushHistorial(session, interaction, `Quitó a ${canon}`);
-                        const subastasActualizadas = cargarSubastas();
-                        subastasActualizadas[session.id] = session;
-                        guardarSubastas(subastasActualizadas);
-                        await refrescarTodo(client, funciones);
-                        return interaction.reply({ content: `✅ **${canon}** quitado.`, ephemeral: true });
-                    }
                     return mostrarConfirmacionAgregar(interaction, session, jugadorRaw, funciones);
                 }
             }
@@ -1045,10 +1030,17 @@ function setupPanel(client, funciones) {
             }
 
             if (interaction.isButton() && interaction.customId.startsWith('panel_btn:')) {
-                const [, accion, sessionId] = interaction.customId.split(':');
+                const partes = interaction.customId.split(':');
+                const accion = partes[1];
+                const sessionId = partes[2];
+                const origen = partes[3]; // 'lista' o undefined
+
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
-                if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado o inexistente.', ephemeral: true });
+                
+                if (accion !== 'dados' && (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada'))) {
+                    return interaction.reply({ content: '❌ Panel cerrado o inexistente.', ephemeral: true });
+                }
 
                 const db = funciones.cargarDB();
                 const miembros = funciones.cargarMiembros();
@@ -1135,8 +1127,7 @@ function setupPanel(client, funciones) {
 
                 if (accion === 'dados') {
                     if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
-                    if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
-
+                    
                     const rowA = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_dados:tirar_todos:${sessionId}`).setLabel('Tirar para todos').setStyle(ButtonStyle.Success),
                         new ButtonBuilder().setCustomId(`panel_dados:tirar_varios:${sessionId}`).setLabel('Tirar para varios').setStyle(ButtonStyle.Primary),
@@ -1195,22 +1186,34 @@ function setupPanel(client, funciones) {
                 const [, subaccion, sessionId] = interaction.customId.split(':');
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
-                if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado o inexistente.', ephemeral: true });
+                if (sessionId !== 'sin_sesion' && (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada'))) return interaction.reply({ content: '❌ Panel cerrado o inexistente.', ephemeral: true });
+                
                 const miembros = funciones.cargarMiembros();
+                const threadId = interaction.channelId;
 
                 if (subaccion === 'tirar_todos') {
-                    if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
-                    const id = guardarPendientePanel('dados_tirar_todos', { sessionId: session.id }, interaction.user.id);
+                    const cantInteresados = session ? session.interesados.length : 0;
+                    const id = guardarPendientePanel('dados_tirar_todos', { sessionId: sessionId }, interaction.user.id);
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
                         new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
                     );
-                    return interaction.reply({ content: `⚠️ **¿Tirar dados para los ${session.interesados.length} interesados?**`, components: [row], ephemeral: true });
+                    const msg = session ? `⚠️ **¿Tirar dados para los ${cantInteresados} interesados?**` : `⚠️ **¿Tirar dados para todos los jugadores en la lista?**`;
+                    return interaction.reply({ content: msg, components: [row], ephemeral: true });
                 }
 
                 if (subaccion === 'tirar_varios') {
-                    if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
-                    const opciones = session.interesados.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    let opciones = [];
+                    if (session) {
+                        opciones = session.interesados.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    } else {
+                        const pendientes = cargarDadosPendientes();
+                        const nombres = [...new Set(pendientes.filter(p => p.threadId === threadId).map(p => p.nombre))];
+                        opciones = nombres.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    }
+                    
+                    if (opciones.length === 0) return interaction.reply({ content: 'ℹ️ No hay jugadores en la lista.', ephemeral: true });
+
                     const row = new ActionRowBuilder().addComponents(
                         new StringSelectMenuBuilder().setCustomId(`panel_dados_sel:tirar_varios:${sessionId}`).setPlaceholder('Elegí jugadores').setMinValues(1).setMaxValues(Math.min(opciones.length, 25)).addOptions(opciones)
                     );
@@ -1218,7 +1221,7 @@ function setupPanel(client, funciones) {
                 }
 
                 if (subaccion === 'limpiar_todos') {
-                    const id = guardarPendientePanel('dados_limpiar_todos', { sessionId: session.id }, interaction.user.id);
+                    const id = guardarPendientePanel('dados_limpiar_todos', { sessionId: sessionId }, interaction.user.id);
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, limpiar todos').setStyle(ButtonStyle.Danger),
                         new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Secondary)
@@ -1227,8 +1230,17 @@ function setupPanel(client, funciones) {
                 }
 
                 if (subaccion === 'limpiar_jugadores') {
-                    if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
-                    const opciones = session.interesados.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    let opciones = [];
+                    if (session) {
+                        opciones = session.interesados.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    } else {
+                        const pendientes = cargarDadosPendientes();
+                        const nombres = [...new Set(pendientes.filter(p => p.threadId === threadId).map(p => p.nombre))];
+                        opciones = nombres.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    }
+                    
+                    if (opciones.length === 0) return interaction.reply({ content: 'ℹ️ No hay jugadores en la lista.', ephemeral: true });
+
                     const row = new ActionRowBuilder().addComponents(
                         new StringSelectMenuBuilder().setCustomId(`panel_dados_sel:limpiar_jugadores:${sessionId}`).setPlaceholder('Elegí jugadores').setMinValues(1).setMaxValues(Math.min(opciones.length, 25)).addOptions(opciones)
                     );
@@ -1236,8 +1248,17 @@ function setupPanel(client, funciones) {
                 }
 
                 if (subaccion === 'borrar_valor') {
-                    if (session.interesados.length === 0) return interaction.reply({ content: 'ℹ️ No hay interesados.', ephemeral: true });
-                    const opciones = session.interesados.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    let opciones = [];
+                    if (session) {
+                        opciones = session.interesados.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    } else {
+                        const pendientes = cargarDadosPendientes();
+                        const nombres = [...new Set(pendientes.filter(p => p.threadId === threadId).map(p => p.nombre))];
+                        opciones = nombres.slice(0, 25).map(n => ({ label: funciones.aplicarCanonico(n, miembros), value: n }));
+                    }
+                    
+                    if (opciones.length === 0) return interaction.reply({ content: 'ℹ️ No hay jugadores en la lista.', ephemeral: true });
+
                     const row = new ActionRowBuilder().addComponents(
                         new StringSelectMenuBuilder().setCustomId(`panel_dados_sel:borrar_valor_jugador:${sessionId}`).setPlaceholder('Elegí jugador').addOptions(opciones)
                     );
@@ -1245,20 +1266,14 @@ function setupPanel(client, funciones) {
                 }
 
                 if (subaccion === 'bloquear') {
-                    const expiraEn = bloquearDados(session.threadId, 60);
-                    pushHistorial(session, interaction, 'Bloqueó /dado por 60 min');
-                    const subastasActualizadas = cargarSubastas();
-                    subastasActualizadas[session.id] = session;
-                    guardarSubastas(subastasActualizadas);
+                    const expiraEn = bloquearDados(interaction.channelId, 60);
+                    if (session) pushHistorial(session, interaction, 'Bloqueó /dado por 60 min');
                     return interaction.reply({ content: `🔒 Dados bloqueados por 60 min. Expira <t:${Math.floor(expiraEn / 1000)}:R>.` });
                 }
 
                 if (subaccion === 'desbloquear') {
-                    desbloquearDados(session.threadId);
-                    pushHistorial(session, interaction, 'Desbloqueó /dado');
-                    const subastasActualizadas = cargarSubastas();
-                    subastasActualizadas[session.id] = session;
-                    guardarSubastas(subastasActualizadas);
+                    desbloquearDados(interaction.channelId);
+                    if (session) pushHistorial(session, interaction, 'Desbloqueó /dado');
                     return interaction.reply({ content: '🔓 Dados desbloqueados.' });
                 }
             }
@@ -1270,12 +1285,12 @@ function setupPanel(client, funciones) {
                 const sessionId = partes[2];
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
-                if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) return interaction.reply({ content: '❌ Panel cerrado o inexistente.', ephemeral: true });
+                if (sessionId !== 'sin_sesion' && (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada'))) return interaction.reply({ content: '❌ Panel cerrado o inexistente.', ephemeral: true });
                 const miembros = funciones.cargarMiembros();
 
                 if (subaccion === 'tirar_varios') {
                     const jugadores = interaction.values;
-                    const id = guardarPendientePanel('dados_tirar_varios', { sessionId: session.id, jugadores }, interaction.user.id);
+                    const id = guardarPendientePanel('dados_tirar_varios', { sessionId: sessionId, jugadores }, interaction.user.id);
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
                         new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger)
@@ -1285,7 +1300,7 @@ function setupPanel(client, funciones) {
 
                 if (subaccion === 'limpiar_jugadores') {
                     const jugadores = interaction.values;
-                    const id = guardarPendientePanel('dados_limpiar_jugadores', { sessionId: session.id, jugadores }, interaction.user.id);
+                    const id = guardarPendientePanel('dados_limpiar_jugadores', { sessionId: sessionId, jugadores }, interaction.user.id);
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, limpiar').setStyle(ButtonStyle.Danger),
                         new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Secondary)
@@ -1297,14 +1312,19 @@ function setupPanel(client, funciones) {
                     const jugador = interaction.values[0];
                     const keyJugador = utils.claveJugador(jugador, miembros);
                     let historial = [];
-                    if (session.dados) {
+                    
+                    if (session && session.dados) {
                         for (const nombre in session.dados) {
                             if (utils.claveJugador(nombre, miembros) === keyJugador) {
                                 historial = session.dados[nombre].historial || [];
                                 break;
                             }
                         }
+                    } else {
+                        const pendientes = cargarDadosPendientes();
+                        historial = pendientes.filter(p => p.threadId === interaction.channelId && utils.claveJugador(p.nombre, miembros) === keyJugador).map(p => p.valor);
                     }
+
                     if (historial.length === 0) return interaction.reply({ content: 'ℹ️ Ese jugador no tiene dados registrados.', ephemeral: true });
                     const opciones = historial.map(v => ({ label: String(v), value: String(v) }));
                     const row = new ActionRowBuilder().addComponents(
@@ -1317,7 +1337,7 @@ function setupPanel(client, funciones) {
                     const jugador = decodeURIComponent(partes[3] || '');
                     const valores = interaction.values.map(v => parseInt(v, 10)).filter(n => !isNaN(n));
                     if (valores.length === 0) return interaction.reply({ content: '❌ Valores inválidos.', ephemeral: true });
-                    const id = guardarPendientePanel('dados_borrar_valor', { sessionId: session.id, jugador, valores }, interaction.user.id);
+                    const id = guardarPendientePanel('dados_borrar_valor', { sessionId: sessionId, jugador, valores }, interaction.user.id);
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId(`panel_pending_confirm:${id}`).setLabel('Sí, borrar').setStyle(ButtonStyle.Danger),
                         new ButtonBuilder().setCustomId(`panel_pending_cancel:${id}`).setLabel('Cancelar').setStyle(ButtonStyle.Secondary)
@@ -1659,67 +1679,120 @@ function setupPanel(client, funciones) {
 
                 const subastas = cargarSubastas();
                 const session = subastas[p.payload.sessionId];
-                if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) { pendingPanel.delete(id); return interaction.editReply({ content: '❌ El panel ya no está activo.', components: [] }); }
+                const sessionId = p.payload.sessionId;
                 const miembros = funciones.cargarMiembros();
+                const threadId = interaction.channelId;
 
                 if (p.tipo === 'dados_tirar_todos') {
-                    if (!session.dados) session.dados = {};
                     const resultados = [];
-                    for (const interesado of session.interesados) {
-                        const valor = Math.floor(Math.random() * 25) + 1;
-                        const nombreCanon = funciones.aplicarCanonico(interesado, miembros);
-                        if (!session.dados[interesado]) session.dados[interesado] = { historial: [], propio: false };
-                        session.dados[interesado].historial.push(valor);
-                        resultados.push({ nombre: nombreCanon, valor });
+                    if (session) {
+                        if (!session.dados) session.dados = {};
+                        for (const interesado of session.interesados) {
+                            const valor = Math.floor(Math.random() * 25) + 1;
+                            const nombreCanon = funciones.aplicarCanonico(interesado, miembros);
+                            if (!session.dados[interesado]) session.dados[interesado] = { historial: [], propio: false };
+                            session.dados[interesado].historial.push(valor);
+                            resultados.push({ nombre: nombreCanon, valor });
+                        }
+                        pushHistorial(session, interaction, `Tiró dados para todos (${resultados.length} interesados)`);
+                        const subastasActualizadas = cargarSubastas();
+                        subastasActualizadas[session.id] = session;
+                        guardarSubastas(subastasActualizadas);
+                    } else {
+                        const pendientes = cargarDadosPendientes();
+                        const nombres = [...new Set(pendientes.filter(x => x.threadId === threadId).map(x => x.nombre))];
+                        for (const jugador of nombres) {
+                            const valor = Math.floor(Math.random() * 25) + 1;
+                            const nombreCanon = funciones.aplicarCanonico(jugador, miembros);
+                            pendientes.push({
+                                threadId,
+                                targetKey: nombreCanon,
+                                nombre: nombreCanon,
+                                valor,
+                                propio: false,
+                                creadoEn: Date.now(),
+                                expiraEn: Date.now() + 60 * 60 * 1000
+                            });
+                            resultados.push({ nombre: nombreCanon, valor });
+                        }
+                        guardarDadosPendientes(pendientes);
                     }
-                    pushHistorial(session, interaction, `Tiró dados para todos (${resultados.length} interesados)`);
-                    const subastasActualizadas = cargarSubastas();
-                    subastasActualizadas[session.id] = session;
-                    guardarSubastas(subastasActualizadas);
-                    await actualizarMensajePanel(client, session, funciones);
                     
-                    const listaResultados = resultados.map(r => `• **${r.nombre}**: 🎲 ${r.valor}`).join('\n');
-                    await interaction.channel.send(`🎲 **Dados tirados para todos (${resultados.length} interesados)**\n${listaResultados}`);
+                    if (session) await actualizarMensajePanel(client, session, funciones);
+                    if (funciones.actualizarMensajeListaDados) await funciones.actualizarMensajeListaDados(client, threadId);
                     
+                    const listaResultados = resultados.map(r => `• ${r.nombre}: 🎲 **${r.valor}**`).join('\n');
+                    await interaction.channel.send(`✨ **Dice roll for everyone (${resultados.length} interested)**\n${listaResultados}`);
+
                     pendingPanel.delete(id);
                     return interaction.editReply({ content: '✅ Acción completada. Revisá el mensaje en el canal.', components: [] });
                 }
 
                 if (p.tipo === 'dados_tirar_varios') {
-                    if (!session.dados) session.dados = {};
                     const jugadores = p.payload.jugadores;
                     const resultados = [];
-                    for (const jugador of jugadores) {
-                        const valor = Math.floor(Math.random() * 25) + 1;
-                        const nombreCanon = funciones.aplicarCanonico(jugador, miembros);
-                        const keyJugador = utils.claveJugador(nombreCanon, miembros);
-                        let targetKey = nombreCanon;
-                        const match = session.interesados.find(i => utils.claveJugador(i, miembros) === keyJugador);
-                        if (match) targetKey = match;
-                        if (!session.dados[targetKey]) session.dados[targetKey] = { historial: [], propio: false };
-                        session.dados[targetKey].historial.push(valor);
-                        resultados.push({ nombre: nombreCanon, valor });
-                    }
-                    pushHistorial(session, interaction, `Tiró dados para: ${resultados.map(r => `${r.nombre} (${r.valor})`).join(', ')}`);
-                    const subastasActualizadas = cargarSubastas();
-                    subastasActualizadas[session.id] = session;
-                    guardarSubastas(subastasActualizadas);
-                    await actualizarMensajePanel(client, session, funciones);
                     
-                    const listaResultados = resultados.map(r => `• **${r.nombre}**: 🎲 ${r.valor}`).join('\n');
-                    await interaction.channel.send(`🎲 **Dados tirados para varios**\n${listaResultados}`);
+                    if (session) {
+                        if (!session.dados) session.dados = {};
+                        for (const jugador of jugadores) {
+                            const valor = Math.floor(Math.random() * 25) + 1;
+                            const nombreCanon = funciones.aplicarCanonico(jugador, miembros);
+                            const keyJugador = utils.claveJugador(nombreCanon, miembros);
+                            let targetKey = nombreCanon;
+                            const match = session.interesados.find(i => utils.claveJugador(i, miembros) === keyJugador);
+                            if (match) targetKey = match;
+                            if (!session.dados[targetKey]) session.dados[targetKey] = { historial: [], propio: false };
+                            session.dados[targetKey].historial.push(valor);
+                            resultados.push({ nombre: nombreCanon, valor });
+                        }
+                        pushHistorial(session, interaction, `Tiró dados para: ${resultados.map(r => `${r.nombre} (${r.valor})`).join(', ')}`);
+                        const subastasActualizadas = cargarSubastas();
+                        subastasActualizadas[session.id] = session;
+                        guardarSubastas(subastasActualizadas);
+                    } else {
+                        const pendientes = cargarDadosPendientes();
+                        for (const jugador of jugadores) {
+                            const valor = Math.floor(Math.random() * 25) + 1;
+                            const nombreCanon = funciones.aplicarCanonico(jugador, miembros);
+                            pendientes.push({
+                                threadId,
+                                targetKey: nombreCanon,
+                                nombre: nombreCanon,
+                                valor,
+                                propio: false,
+                                creadoEn: Date.now(),
+                                expiraEn: Date.now() + 60 * 60 * 1000
+                            });
+                            resultados.push({ nombre: nombreCanon, valor });
+                        }
+                        guardarDadosPendientes(pendientes);
+                    }
+
+                    if (session) await actualizarMensajePanel(client, session, funciones);
+                    if (funciones.actualizarMensajeListaDados) await funciones.actualizarMensajeListaDados(client, threadId);
+                    
+                    const listaResultados = resultados.map(r => `• ${r.nombre}: 🎲 **${r.valor}**`).join('\n');
+                    await interaction.channel.send(`✨ **Dice roll for multiple players**\n${listaResultados}`);
 
                     pendingPanel.delete(id);
                     return interaction.editReply({ content: '✅ Acción completada. Revisá el mensaje en el canal.', components: [] });
                 }
 
                 if (p.tipo === 'dados_limpiar_todos') {
-                    session.dados = {};
-                    pushHistorial(session, interaction, 'Limpió todos los dados del thread');
-                    const subastasActualizadas = cargarSubastas();
-                    subastasActualizadas[session.id] = session;
-                    guardarSubastas(subastasActualizadas);
-                    await actualizarMensajePanel(client, session, funciones);
+                    if (session) {
+                        session.dados = {};
+                        pushHistorial(session, interaction, 'Limpió todos los dados del thread');
+                        const subastasActualizadas = cargarSubastas();
+                        subastasActualizadas[session.id] = session;
+                        guardarSubastas(subastasActualizadas);
+                        await actualizarMensajePanel(client, session, funciones);
+                    } else {
+                        let pendientes = cargarDadosPendientes();
+                        pendientes = pendientes.filter(x => x.threadId !== threadId);
+                        guardarDadosPendientes(pendientes);
+                    }
+                    
+                    if (funciones.actualizarMensajeListaDados) await funciones.actualizarMensajeListaDados(client, threadId);
                     pendingPanel.delete(id);
                     return interaction.editReply({ content: '🧹 Se borraron todos los dados.', components: [] });
                 }
@@ -1727,14 +1800,23 @@ function setupPanel(client, funciones) {
                 if (p.tipo === 'dados_limpiar_jugadores') {
                     const jugadores = p.payload.jugadores;
                     const keys = jugadores.map(j => utils.claveJugador(j, miembros));
-                    for (const nombre in session.dados) {
-                        if (keys.includes(utils.claveJugador(nombre, miembros))) delete session.dados[nombre];
+                    
+                    if (session) {
+                        for (const nombre in session.dados) {
+                            if (keys.includes(utils.claveJugador(nombre, miembros))) delete session.dados[nombre];
+                        }
+                        pushHistorial(session, interaction, `Limpió dados de: ${jugadores.join(', ')}`);
+                        const subastasActualizadas = cargarSubastas();
+                        subastasActualizadas[session.id] = session;
+                        guardarSubastas(subastasActualizadas);
+                        await actualizarMensajePanel(client, session, funciones);
+                    } else {
+                        let pendientes = cargarDadosPendientes();
+                        pendientes = pendientes.filter(x => !(x.threadId === threadId && keys.includes(utils.claveJugador(x.nombre, miembros))));
+                        guardarDadosPendientes(pendientes);
                     }
-                    pushHistorial(session, interaction, `Limpió dados de: ${jugadores.join(', ')}`);
-                    const subastasActualizadas = cargarSubastas();
-                    subastasActualizadas[session.id] = session;
-                    guardarSubastas(subastasActualizadas);
-                    await actualizarMensajePanel(client, session, funciones);
+                    
+                    if (funciones.actualizarMensajeListaDados) await funciones.actualizarMensajeListaDados(client, threadId);
                     pendingPanel.delete(id);
                     return interaction.editReply({ content: '🧹 Dados borrados.', components: [] });
                 }
@@ -1743,19 +1825,30 @@ function setupPanel(client, funciones) {
                     const { jugador, valores } = p.payload;
                     const keyJugador = utils.claveJugador(jugador, miembros);
                     let eliminados = 0;
-                    for (const nombre in session.dados) {
-                        if (utils.claveJugador(nombre, miembros) === keyJugador) {
-                            const antes = session.dados[nombre].historial.length;
-                            session.dados[nombre].historial = session.dados[nombre].historial.filter(v => !valores.includes(v));
-                            eliminados += antes - session.dados[nombre].historial.length;
-                            if (session.dados[nombre].historial.length === 0) delete session.dados[nombre];
+                    
+                    if (session && session.dados) {
+                        for (const nombre in session.dados) {
+                            if (utils.claveJugador(nombre, miembros) === keyJugador) {
+                                const antes = session.dados[nombre].historial.length;
+                                session.dados[nombre].historial = session.dados[nombre].historial.filter(v => !valores.includes(v));
+                                eliminados += antes - session.dados[nombre].historial.length;
+                                if (session.dados[nombre].historial.length === 0) delete session.dados[nombre];
+                            }
                         }
+                        pushHistorial(session, interaction, `Borró valores ${valores.join(', ')} de ${jugador}`);
+                        const subastasActualizadas = cargarSubastas();
+                        subastasActualizadas[session.id] = session;
+                        guardarSubastas(subastasActualizadas);
+                        await actualizarMensajePanel(client, session, funciones);
+                    } else {
+                        let pendientes = cargarDadosPendientes();
+                        const antes = pendientes.length;
+                        pendientes = pendientes.filter(x => !(x.threadId === threadId && utils.claveJugador(x.nombre, miembros) === keyJugador && valores.includes(x.valor)));
+                        eliminados = antes - pendientes.length;
+                        guardarDadosPendientes(pendientes);
                     }
-                    pushHistorial(session, interaction, `Borró valores ${valores.join(', ')} de ${jugador}`);
-                    const subastasActualizadas = cargarSubastas();
-                    subastasActualizadas[session.id] = session;
-                    guardarSubastas(subastasActualizadas);
-                    await actualizarMensajePanel(client, session, funciones);
+
+                    if (funciones.actualizarMensajeListaDados) await funciones.actualizarMensajeListaDados(client, threadId);
                     pendingPanel.delete(id);
                     return interaction.editReply({ content: `🧹 Se borraron ${eliminados} valores.`, components: [] });
                 }
