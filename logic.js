@@ -315,7 +315,6 @@ function compararPrioridad(a, b) {
     return 0;
 }
 
-// PUNTO 5: Az y B10k NO suman al total
 function construirRanking(comprasFiltradas, categoriaFiltro, miembros) {
     const ranking = {};
     for (const c of comprasFiltradas) {
@@ -375,7 +374,6 @@ function inferirCategoria(objeto, db) {
     return 'Sin Categoría';
 }
 
-// ====== RENDERIZADO ======
 function construirBotonesPaginacion(prefijo, id, paginaActual, totalPaginas) {
     const alInicio = paginaActual <= 1;
     const alFinal = paginaActual >= totalPaginas;
@@ -636,13 +634,21 @@ function obtenerObjetosUnicos(db) {
     return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
 }
 
+// FIX 4: Mejorar sugerencia múltiple para no borrar prefijos
 function sugerirNombresMultiples(valorActual, nombres) {
     const valor = valorActual || '';
     const partes = valor.split(',');
-    const prefijo = partes.slice(0, -1).map(s => s.trim()).filter(Boolean);
-    const ultima = (partes[partes.length - 1] || '').trim();
+    const ultimaRaw = partes[partes.length - 1] || '';
+    const ultima = ultimaRaw.trim();
+    
+    // Guarda el prefijo exacto (ej: "Exodia, " o "Exodia,")
+    const prefijo = valor.substring(0, valor.length - ultimaRaw.length);
     const q = utils.normalizar(ultima);
-    return nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: [...prefijo, n].join(', ') }));
+    
+    return nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ 
+        name: n, 
+        value: `${prefijo}${n}` 
+    }));
 }
 
 function formatearPingGanadores(ganadores, resultados, miembros, guild, membersOverride = null) {
