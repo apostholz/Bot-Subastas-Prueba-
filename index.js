@@ -219,7 +219,6 @@ function dividirTexto(texto, max = 1900) {
     return chunks;
 }
 
-// FIX PUNTO 4: manejo de deferred/replied
 async function enviarPrioridadLarga(interaction, content, components, ephemeral = true) {
     const chunks = dividirTexto(content, 1900);
     if (chunks.length === 0) chunks.push(' ');
@@ -305,7 +304,6 @@ async function asegurarArchivosDesdeGitHub() {
     }
 }
 
-// ====== BACKUP ======
 function cargarBackupConfig() {
     if (!fs.existsSync(BACKUP_CONFIG_FILE)) return { channelId: process.env.BACKUP_CHANNEL_ID || null };
     try {
@@ -472,7 +470,6 @@ setInterval(async () => {
     await ejecutarBackupDiario(client);
 }, 60 * 1000);
 
-// ====== LÓGICA DE DADOS ======
 function cargarDadosPendientes() {
     if (!fs.existsSync(DADOS_PENDIENTES_FILE)) return [];
     try { return JSON.parse(fs.readFileSync(DADOS_PENDIENTES_FILE, 'utf8')); } catch { return []; }
@@ -864,9 +861,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             if (focused.name === 'jugador' || (cmd === 'editar')) {
                 const nombres = logic.obtenerNombresUnicos(db, miembros);
-                if (cmd === 'editar') return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
-                const q = utils.normalizar(focused.value);
-                return interaction.respond(nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ name: n, value: n })));
+                return interaction.respond(logic.sugerirNombresMultiples(focused.value, nombres));
             }
             return;
         }
@@ -1043,8 +1038,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     await actualizarMensajePanel(client, session, funciones);
                     await actualizarMensajeListaDados(client, threadId);
                     
+                    const listaResultados = resultados.map(r => `• **${r.nombre}**: 🎲 ${r.valor}`).join('\n');
+                    await interaction.channel.send(`🎲 **Dados tirados para todos (${resultados.length} interesados)**\n${listaResultados}`);
+
                     pendingActions.delete(id);
-                    return interaction.editReply({ content: '✅ Dados tirados para todos.', components: [] });
+                    return interaction.editReply({ content: '✅ Acción completada. Revisá el mensaje en el canal.', components: [] });
                 }
 
                 if (p.tipo === 'dados_tirar_varios') {
@@ -1086,8 +1084,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     }
 
                     await actualizarMensajeListaDados(client, threadId);
+                    
+                    const listaResultados = jugadores.map(j => {
+                        const nCanon = utils.aplicarCanonico(j, miembros);
+                        const key = utils.claveJugador(nCanon, miembros);
+                        let tKey = nCanon;
+                        if (session) {
+                            const match = session.interesados.find(i => utils.claveJugador(i, miembros) === key);
+                            if (match) tKey = match;
+                        }
+                        const val = session && session.dados && session.dados[tKey] ? session.dados[tKey].historial.slice(-1)[0] : '?';
+                        return `• **${nCanon}**: 🎲 ${val}`;
+                    }).join('\n');
+                    
+                    await interaction.channel.send(`🎲 **Dados tirados para varios**\n${listaResultados}`);
+
                     pendingActions.delete(id);
-                    return interaction.editReply({ content: '✅ Dados tirados.', components: [] });
+                    return interaction.editReply({ content: '✅ Acción completada. Revisá el mensaje en el canal.', components: [] });
                 }
 
                 if (p.tipo === 'dados_limpiar') {
@@ -1777,18 +1790,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
             await interaction.deferReply({ ephemeral: true });
 
             const categoriasAMostrar = Object.keys(utils.PESOS);
-
             let out = '⚖️ **Tabla de Pesos de Impacto**\n\n';
             out += '_Para comprar X, estos son los pesos de lo que hayas ganado antes:_\n\n';
 
             for (const cat of categoriasAMostrar) {
                 const afectantes = [];
-                for (const origen of Object.keys(utils.PESOS)) {
-                    const peso = utils.PESOS[origen]?.[cat];
-                    if (peso !== undefined) afectantes.push({ origen, peso });
+                const pesosDeEstaCategoria = utils.PESOS[cat] || {};
+                
+                for (const origen of Object.keys(pesosDeEstaCategoria)) {
+                    const peso = pesosDeEstaCategoria[origen];
+                    afectantes.push({ origen, peso });
                 }
+                
                 if (afectantes.length === 0) continue;
-
                 afectantes.sort((a, b) => b.peso - a.peso);
 
                 out += `**Afectan a ${cat}:**\n`;
@@ -1797,7 +1811,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
                 out += '\n';
             }
-
             return logic.responderLargo(interaction, out.trimEnd(), true);
         }
 
