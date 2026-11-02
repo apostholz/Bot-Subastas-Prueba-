@@ -156,9 +156,8 @@ const commandsData = [
         .addSubcommand(sub => sub.setName('ver').setDescription('Mostrar el panel activo de este thread'))
         .addSubcommand(sub => sub.setName('objeto').setDescription('Cambiar el objeto del panel activo')
             .addStringOption(o => o.setName('nombre').setDescription('Nuevo nombre del objeto').setRequired(true).setAutocomplete(true)))
-        .addSubcommand(sub => sub.setName('interesado').setDescription('Añadir o quitar interesado')
-            .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true))
-            .addStringOption(o => o.setName('accion').setDescription('Añadir o Quitar').setRequired(false).addChoices({ name: 'Añadir', value: 'añadir' }, { name: 'Quitar', value: 'quitar' })))
+        .addSubcommand(sub => sub.setName('interesado').setDescription('Añadir interesado')
+            .addStringOption(o => o.setName('jugador').setDescription('Nombre del jugador').setRequired(true).setAutocomplete(true)))
         .addSubcommand(sub => sub.setName('indice').setDescription('Crear/actualizar índice privado en este canal')),
 
     new SlashCommandBuilder().setName('control').setDescription('Gestionar el Panel de Control de Subastas')
