@@ -344,7 +344,6 @@ function obtenerCategoriasAfectantes(categoria) {
 
 function inferirCategoria(objeto, db) {
     const key = utils.normalizar(objeto);
-
     const catalogo = utils.cargarCatalogo();
     const catEncontrada = Object.keys(catalogo).find(k => utils.normalizar(k) === key);
     if (catEncontrada) return catalogo[catEncontrada];
@@ -435,7 +434,6 @@ function formatearBloqueCompra(entrada, miembros, opciones = {}) {
     return out;
 }
 
-// PUNTO 5: separar Az y B10k con **|**
 function renderPrioridad(payload, miembros) {
     const { categoria, resultados } = payload;
     let out = `🏆 **Prioridad — ${categoria}**\n\n`;
@@ -498,7 +496,6 @@ function renderPrioridad(payload, miembros) {
     return { content: out, components: [] };
 }
 
-// PUNTO 5: separar Az y B10k con **|**
 function renderRankingPagina(payload) {
     const { jugadores, periodo, categoria, pagina } = payload;
     const porPagina = categoria === 'Todas' ? 10 : 15;
@@ -634,18 +631,73 @@ function obtenerObjetosUnicos(db) {
     return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
 }
 
-// FIX 4: Mejorar sugerencia múltiple para no borrar prefijos
-function sugerirNombresMultiples(valorActual, nombres) {
+// Función de Levenshtein para búsqueda difusa
+function levenshtein(a, b) {
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+    const matrix = [];
+    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+    for (let i = 1; i <= b.length; i++) {
+        for (let j = 1; j <= a.length; j++) {
+            if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                matrix[i][j] = matrix[i - 1][j - 1];
+            } else {
+                matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1));
+            }
+        }
+    }
+    return matrix[b.length][a.length];
+}
+
+function sugerirNombresMultiples(valorActual, nombres, miembros = { canonicos: {} }) {
     const valor = valorActual || '';
     const partes = valor.split(',');
     const ultimaRaw = partes[partes.length - 1] || '';
     const ultima = ultimaRaw.trim();
     
-    // Guarda el prefijo exacto (ej: "Exodia, " o "Exodia,")
     const prefijo = valor.substring(0, valor.length - ultimaRaw.length);
     const q = utils.normalizar(ultima);
-    
-    return nombres.filter(n => utils.normalizar(n).includes(q)).slice(0, 25).map(n => ({ 
+
+    if (!q) {
+        return nombres.slice(0, 25).map(n => ({ name: n, value: `${prefijo}${n}` }));
+    }
+
+    const matches = new Map(); // Map<canonicalName, { score: number }>
+    const canonicos = miembros.canonicos || {};
+
+    // 1. Búsqueda Exacta / Includes
+    for (const n of nombres) {
+        if (utils.normalizar(n).includes(q)) matches.set(n, { score: 0 });
+    }
+    for (const [alias, canonical] of Object.entries(canonicos)) {
+        if (utils.normalizar(alias).includes(q)) {
+            matches.set(canonical, { score: 0 });
+        }
+    }
+
+    // 2. Levenshtein (solo si no hay demasiados matches exactos)
+    if (matches.size < 10) {
+        for (const n of nombres) {
+            if (matches.has(n)) continue;
+            const dist = levenshtein(utils.normalizar(n), q);
+            if (dist <= 2) matches.set(n, { score: 1 }); // score 1 para que aparezcan después de los exactos
+        }
+        for (const [alias, canonical] of Object.entries(canonicos)) {
+            if (matches.has(canonical)) continue;
+            const dist = levenshtein(utils.normalizar(alias), q);
+            if (dist <= 2) matches.set(canonical, { score: 1 });
+        }
+    }
+
+    const resultados = Array.from(matches.keys()).sort((a, b) => {
+        const scoreA = matches.get(a).score;
+        const scoreB = matches.get(b).score;
+        if (scoreA !== scoreB) return scoreA - scoreB;
+        return a.localeCompare(b);
+    });
+
+    return resultados.slice(0, 25).map(n => ({ 
         name: n, 
         value: `${prefijo}${n}` 
     }));
