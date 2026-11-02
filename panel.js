@@ -63,6 +63,15 @@ function cargarThreadsFijos() {
 function guardarThreadsFijos(d) { guardarJSON(THREADS_FILE, d); }
 function generarId() { return Math.random().toString(36).slice(2, 10); }
 
+// === FIX: Funciones de dados pendientes faltantes ===
+function cargarDadosPendientes() {
+    return cargarJSON(DADOS_PENDIENTES_FILE, []);
+}
+function guardarDadosPendientes(d) {
+    guardarJSON(DADOS_PENDIENTES_FILE, d);
+}
+// ===================================================
+
 async function enviarAuditoria(client, contenido) {
     if (!AUDIT_CHANNEL_ID) return;
     try {
@@ -1033,7 +1042,6 @@ function setupPanel(client, funciones) {
                 const partes = interaction.customId.split(':');
                 const accion = partes[1];
                 const sessionId = partes[2];
-                const origen = partes[3]; // 'lista' o undefined
 
                 const subastas = cargarSubastas();
                 const session = subastas[sessionId];
@@ -1128,14 +1136,22 @@ function setupPanel(client, funciones) {
                 if (accion === 'dados') {
                     if (!esAuctionMod(interaction.member, funciones)) return interaction.reply({ content: '❌ Solo Auction Mod/Líderes/Admins.', ephemeral: true });
                     
+                    let hayJugadores = false;
+                    if (session) {
+                        hayJugadores = session.interesados.length > 0;
+                    } else {
+                        const pendientes = cargarDadosPendientes();
+                        hayJugadores = pendientes.some(p => p.threadId === interaction.channelId);
+                    }
+
                     const rowA = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder().setCustomId(`panel_dados:tirar_todos:${sessionId}`).setLabel('Tirar para todos').setStyle(ButtonStyle.Success),
-                        new ButtonBuilder().setCustomId(`panel_dados:tirar_varios:${sessionId}`).setLabel('Tirar para varios').setStyle(ButtonStyle.Primary),
-                        new ButtonBuilder().setCustomId(`panel_dados:limpiar_todos:${sessionId}`).setLabel('Limpiar todos').setStyle(ButtonStyle.Danger),
-                        new ButtonBuilder().setCustomId(`panel_dados:limpiar_jugadores:${sessionId}`).setLabel('Limpiar jugador(es)').setStyle(ButtonStyle.Danger)
+                        new ButtonBuilder().setCustomId(`panel_dados:tirar_todos:${sessionId}`).setLabel('Tirar para todos').setStyle(ButtonStyle.Success).setDisabled(!hayJugadores),
+                        new ButtonBuilder().setCustomId(`panel_dados:tirar_varios:${sessionId}`).setLabel('Tirar para varios').setStyle(ButtonStyle.Primary).setDisabled(!hayJugadores),
+                        new ButtonBuilder().setCustomId(`panel_dados:limpiar_todos:${sessionId}`).setLabel('Limpiar todos').setStyle(ButtonStyle.Danger).setDisabled(!hayJugadores),
+                        new ButtonBuilder().setCustomId(`panel_dados:limpiar_jugadores:${sessionId}`).setLabel('Limpiar jugador(es)').setStyle(ButtonStyle.Danger).setDisabled(!hayJugadores)
                     );
                     const rowB = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder().setCustomId(`panel_dados:borrar_valor:${sessionId}`).setLabel('Borrar valor').setStyle(ButtonStyle.Secondary),
+                        new ButtonBuilder().setCustomId(`panel_dados:borrar_valor:${sessionId}`).setLabel('Borrar valor').setStyle(ButtonStyle.Secondary).setDisabled(!hayJugadores),
                         new ButtonBuilder().setCustomId(`panel_dados:bloquear:${sessionId}`).setLabel('Bloquear dados').setStyle(ButtonStyle.Secondary),
                         new ButtonBuilder().setCustomId(`panel_dados:desbloquear:${sessionId}`).setLabel('Desbloquear dados').setStyle(ButtonStyle.Secondary)
                     );
