@@ -39,7 +39,7 @@ const BACKUP_DIR_LOCAL = path.join(DATA_DIR, 'backups');
 
 const AUDIT_CHANNEL_ID = process.env.AUDIT_CHANNEL_ID || null;
 
-const DADOS_LISTA_DURACION = 30 * 60 * 1000;
+const DADOS_LISTA_DURACION = 60 * 60 * 1000; // 60 minutos
 const DADOS_LISTA_REFRESCO = 2 * 60 * 1000;
 
 const pendingActions = new Map();
@@ -488,12 +488,13 @@ function cargarMensajesDados() {
 
         for (const [threadId, valor] of Object.entries(raw)) {
             if (typeof valor === 'string') {
-                out[threadId] = { messageId: valor, expiraEn: Date.now() + DADOS_LISTA_DURACION };
+                out[threadId] = { messageId: valor, expiraEn: Date.now() + DADOS_LISTA_DURACION, paused: false };
                 migrado = true;
             } else if (valor && valor.messageId) {
                 out[threadId] = {
                     messageId: valor.messageId,
-                    expiraEn: valor.expiraEn || (Date.now() + DADOS_LISTA_DURACION)
+                    expiraEn: valor.expiraEn || (Date.now() + DADOS_LISTA_DURACION),
+                    paused: valor.paused || false
                 };
             }
         }
@@ -608,12 +609,12 @@ function generarEmbedListaDados(threadId, miembros) {
     return embed;
 }
 
-function construirBotonesListaDados(threadId) {
+function construirBotonesListaDados(threadId, paused = false) {
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId('dados_lista_cancelar')
-            .setLabel('⏸️ Pausar refresh')
-            .setStyle(ButtonStyle.Danger)
+            .setCustomId(paused ? 'dados_lista_reanudar' : 'dados_lista_cancelar')
+            .setLabel(paused ? '▶️ Reanudar refresh' : '⏸️ Pausar refresh')
+            .setStyle(paused ? ButtonStyle.Success : ButtonStyle.Danger)
     );
 
     const session = obtenerSessionActiva(threadId);
@@ -637,7 +638,7 @@ async function actualizarMensajeListaDados(client, threadId) {
 
     const miembros = utils.cargarMiembros();
     const embed = generarEmbedListaDados(threadId, miembros);
-    const row = construirBotonesListaDados(threadId);
+    const row = construirBotonesListaDados(threadId, entry.paused);
 
     try {
         const canal = await client.channels.fetch(threadId);
@@ -753,10 +754,12 @@ setInterval(async () => {
                 continue;
             }
 
+            if (entry.paused) continue;
+
             try {
                 const canal = await client.channels.fetch(threadId);
                 const embed = generarEmbedListaDados(threadId, miembros);
-                const row = construirBotonesListaDados(threadId);
+                const row = construirBotonesListaDados(threadId, false);
                 try {
                     const viejo = await canal.messages.fetch(entry.messageId);
                     await viejo.edit({ embeds: [embed], components: [row] });
@@ -872,7 +875,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.isButton()) {
             const cid = interaction.customId;
 
-            if (cid === 'dados_lista_cancelar') {
+            if (cid === 'dados_lista_cancelar' || cid === 'dados_lista_reanudar') {
                 const esLider = interaction.member.id === interaction.guild.ownerId ||
                     interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
                     interaction.member.roles.cache.has(utils.ROL_LIDER) ||
@@ -883,23 +886,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
 
                 const mensajes = cargarMensajesDados();
-                if (mensajes[interaction.channelId]) {
-                    delete mensajes[interaction.channelId];
-                    guardarMensajesDados(mensajes);
-                }
-
-                // FIX: Mantener el botón de "Dados" al pausar el refresh
-                const session = obtenerSessionActiva(interaction.channelId);
-                const sessionId = session ? session.id : 'sin_sesion';
-                const row = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`panel_btn:dados:${sessionId}:lista`)
-                        .setLabel('Dados')
-                        .setStyle(ButtonStyle.Secondary)
-                );
+                const entry = mensajes[interaction.channelId];
                 
-                await interaction.update({ components: [row] });
-                return interaction.followUp({ content: '⏸️ Refresh pausado.', ephemeral: true });
+                if (entry) {
+                    const pausar = cid === 'dados_lista_cancelar';
+                    entry.paused = pausar;
+                    if (!pausar) {
+                        // Al reanudar, reiniciamos el contador de 60 mins por si acaso
+                        entry.expiraEn = Date.now() + DADOS_LISTA_DURACION; 
+                    }
+                    guardarMensajesDados(mensajes);
+
+                    const miembros = utils.cargarMiembros();
+                    const embed = generarEmbedListaDados(interaction.channelId, miembros);
+                    const row = construirBotonesListaDados(interaction.channelId, pausar);
+                    
+                    await interaction.update({ embeds: [embed], components: [row] });
+                    return interaction.followUp({ content: pausar ? '⏸️ Refresh pausado (sigue activo por 60m).' : '▶️ Refresh reanudado.', ephemeral: true });
+                } else {
+                    return interaction.reply({ content: '❌ No hay lista activa en este thread.', ephemeral: true });
+                }
             }
 
             if (cid.startsWith('prio_')) {
@@ -1438,9 +1444,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const mensajes = cargarMensajesDados();
                 const existente = mensajes[threadId];
 
-                const expiraEn = (existente && existente.expiraEn > ahora)
-                    ? existente.expiraEn
-                    : ahora + DADOS_LISTA_DURACION;
+                const expiraEn = ahora + DADOS_LISTA_DURACION;
 
                 if (existente && existente.messageId) {
                     try {
@@ -1450,10 +1454,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
 
                 const embed = generarEmbedListaDados(threadId, miembros);
-                const row = construirBotonesListaDados(threadId);
+                const row = construirBotonesListaDados(threadId, false);
                 const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
 
-                mensajes[threadId] = { messageId: msg.id, expiraEn };
+                mensajes[threadId] = { messageId: msg.id, expiraEn, paused: false };
                 guardarMensajesDados(mensajes);
                 return;
             }
@@ -2518,7 +2522,7 @@ const funciones = {
     ROL_LIDER: utils.ROL_LIDER,
     ROL_HELPER: utils.ROL_HELPER,
     ROL_OFICIAL: utils.ROL_OFICIAL,
-    actualizarMensajeListaDados: actualizarMensajeListaDados // <--- AGREGADO AQUÍ
+    actualizarMensajeListaDados: actualizarMensajeListaDados
 };
 
 setupPanel(client, funciones);
