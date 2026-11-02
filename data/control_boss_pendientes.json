@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "id": "9ifwoqse",
+    "messageId": "1566849953559740436",
+    "channelId": "1547595718343000135",
+    "slot": 1,
+    "objeto": "Lagarto del Trueno Sombrío",
+    "categoria": "Emblemas Generales",
+    "cantidad": 2,
+    "texto": "Shadow Thunderlizard",
+    "imagen": "slot1_1792871974088.png",
+    "creadoPor": "261987767771201539",
+    "creadoEn": 1793636540261,
+    "expiraEn": 1793636720261,
+    "estado": "pendiente"
+  }
+]
