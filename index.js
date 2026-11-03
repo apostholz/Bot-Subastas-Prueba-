@@ -892,7 +892,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     const pausar = cid === 'dados_lista_cancelar';
                     entry.paused = pausar;
                     if (!pausar) {
-                        // Al reanudar, reiniciamos el contador de 60 mins por si acaso
                         entry.expiraEn = Date.now() + DADOS_LISTA_DURACION; 
                     }
                     guardarMensajesDados(mensajes);
@@ -1022,10 +1021,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const esConfirm = cid.startsWith('pend_confirm_') && !esAnunciar;
                 const id = cid.replace('pend_confirm_anunciar_', '').replace('pend_confirm_', '').replace('pend_cancel_', '');
                 const p = pendingActions.get(id);
+                
                 if (!p) return interaction.update({ content: '❌ La sesión expiró.', components: [] });
                 if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien ejecutó el comando puede confirmar.', ephemeral: true });
+                
+                // PUNTO 1: Eliminar inmediatamente para evitar doble clic
+                pendingActions.delete(id);
+
                 if (!esConfirm && !esAnunciar) {
-                    pendingActions.delete(id);
                     return interaction.update({ content: '❌ Acción cancelada.', components: [] });
                 }
 
@@ -1040,7 +1043,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     const session = Object.values(subastas).find(s => s.threadId === threadId && (s.estado === 'abierta' || s.estado === 'bloqueada'));
 
                     if (!session) {
-                        pendingActions.delete(id);
                         return interaction.editReply({ content: '❌ No hay subasta activa en este thread.', components: [] });
                     }
 
@@ -1060,7 +1062,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     const listaResultados = resultados.map(r => `• ${r.nombre}: 🎲 **${r.valor}**`).join('\n');
                     await interaction.channel.send(`✨ **Dice roll for everyone (${resultados.length} interested)**\n${listaResultados}`);
 
-                    pendingActions.delete(id);
                     return interaction.editReply({ content: '✅ Acción completada. Revisá el mensaje en el canal.', components: [] });
                 }
 
@@ -1118,7 +1119,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     
                     await interaction.channel.send(`✨ **Dice roll for multiple players**\n${listaResultados}`);
 
-                    pendingActions.delete(id);
                     return interaction.editReply({ content: '✅ Acción completada. Revisá el mensaje en el canal.', components: [] });
                 }
 
@@ -1152,7 +1152,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     }
 
                     await actualizarMensajeListaDados(client, threadId);
-                    pendingActions.delete(id);
                     return interaction.editReply({ content: '🧹 Lista limpiada.', components: [] });
                 }
 
@@ -1185,7 +1184,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                     }
 
                     await actualizarMensajeListaDados(client, threadId);
-                    pendingActions.delete(id);
                     return interaction.editReply({ content: `🧹 Se borraron ${eliminados} valores.`, components: [] });
                 }
 
@@ -1224,16 +1222,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
                     const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
                     
+                    // PUNTO 2: Formato detallado para el borrado
                     resultado = `🗑️ Se borraron **${borradas.length}** entradas:\n\n`;
                     borradas.forEach(c => {
-                        resultado += `**${c.cantidad}x ${c.objeto}**\n${c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie'}\n\n`;
+                        const fechaStr = utils.formatearFecha(c.fecha);
+                        const eventoStr = utils.nombreBonitoEvento(c.evento);
+                        const gStr = c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie';
+                        resultado += `**#${c.id}** · ${eventoStr} · ${fechaStr} · ${c.cantidad}x ${c.objeto} (${c.categoria})\n🏆 ${gStr}\n\n`;
                     });
                     resultado += `-# Deleted by ${nombreUsuario}`;
                     
                     requiereSync = true;
 
                     if (borradas.length > 0) {
-                        const lista = borradas.slice(0, 10).map(c => `• #${c.id} · ${c.cantidad}x ${c.objeto} (${c.categoria})`).join('\n');
+                        const lista = borradas.slice(0, 10).map(c => {
+                            const fechaStr = utils.formatearFecha(c.fecha);
+                            const gStr = c.ganadores.map(g => utils.formatearNombreConCantidad(g, miembros)).join(', ') || 'nadie';
+                            return `• #${c.id} · ${c.evento} · ${fechaStr} · ${c.cantidad}x ${c.objeto} (${c.categoria}) [Ganadores: ${gStr}]`;
+                        }).join('\n');
                         const extra = borradas.length > 10 ? `\n... y ${borradas.length - 10} más.` : '';
                         await enviarAuditoria(client, `🗑️ **Compras borradas**\n👤 Borrada por: **${nombreUsuario}**\n📦 ${borradas.length} entrada(s):\n${lista}${extra}\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
                     }
@@ -1334,7 +1340,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
                 resultado = resultado.trimEnd();
 
-                pendingActions.delete(id);
                 if (requiereSync) {
                     const syncRes = await logic.sincronizarConGitHub(false);
                     resultado += textoEstadoSync(syncRes);
