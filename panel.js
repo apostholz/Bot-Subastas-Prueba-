@@ -63,14 +63,14 @@ function cargarThreadsFijos() {
 function guardarThreadsFijos(d) { guardarJSON(THREADS_FILE, d); }
 function generarId() { return Math.random().toString(36).slice(2, 10); }
 
-// === FIX: Funciones de dados pendientes faltantes ===
+// === FIX: Funciones de dados pendientes ===
 function cargarDadosPendientes() {
     return cargarJSON(DADOS_PENDIENTES_FILE, []);
 }
 function guardarDadosPendientes(d) {
     guardarJSON(DADOS_PENDIENTES_FILE, d);
 }
-// ===================================================
+// ============================================
 
 async function enviarAuditoria(client, contenido) {
     if (!AUDIT_CHANNEL_ID) return;
@@ -776,7 +776,10 @@ function renderHistorialCategoria(session, categoria, page, db, miembros, funcio
             } else {
                 for (const c of ultimas) {
                     const n = utils.contarGanador(c.ganadores, t.jugador, miembros);
-                    out += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${utils.nombreBonitoEvento(c.evento)} · ${n}x ${c.objeto}\n`;
+                    // PUNTO 3: Ocultar evento si es de hace más de 2 días
+                    const dias = utils.diasDesde(c.fecha);
+                    const eventoStr = dias <= 2 ? ` · ${utils.nombreBonitoEvento(c.evento)}` : '';
+                    out += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)}${eventoStr} · ${n}x ${c.objeto}\n`;
                 }
             }
             out += `\n`;
@@ -1398,7 +1401,10 @@ function setupPanel(client, funciones) {
                             else {
                                 for (const c of ultimas) {
                                     const n = utils.contarGanador(c.ganadores, t.jugador, miembros);
-                                    out += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${utils.nombreBonitoEvento(c.evento)} · ${n}x ${c.objeto} (${c.categoria})\n`;
+                                    // PUNTO 3: Ocultar evento si es de hace más de 2 días
+                                    const dias = utils.diasDesde(c.fecha);
+                                    const eventoStr = dias <= 2 ? ` · ${utils.nombreBonitoEvento(c.evento)}` : '';
+                                    out += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)}${eventoStr} · ${n}x ${c.objeto} (${c.categoria})\n`;
                                 }
                             }
                             out += `\n`;
@@ -1498,7 +1504,10 @@ function setupPanel(client, funciones) {
                     out += `**${cat}** (últimas ${filtradas.length}):\n`;
                     for (const c of filtradas) {
                         const n = utils.contarGanador(c.ganadores, t.jugador, miembros);
-                        out += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)} · ${utils.nombreBonitoEvento(c.evento)} · ${n}x ${c.objeto}\n`;
+                        // PUNTO 3: Ocultar evento si es de hace más de 2 días
+                        const dias = utils.diasDesde(c.fecha);
+                        const eventoStr = dias <= 2 ? ` · ${utils.nombreBonitoEvento(c.evento)}` : '';
+                        out += `#${c.id} · ${utils.formatearFecha(c.fecha)} ${utils.etiquetaDias(c.fecha)}${eventoStr} · ${n}x ${c.objeto}\n`;
                     }
                     out += `\n`;
                 }
@@ -1689,12 +1698,18 @@ function setupPanel(client, funciones) {
                 const p = pendingPanel.get(id);
                 if (!p) return interaction.update({ content: '❌ La sesión expiró.', components: [] });
                 if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien inició la acción puede confirmar.', ephemeral: true });
-                if (!esConfirm) { pendingPanel.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
+                
+                // PUNTO 1: Eliminar inmediatamente para evitar doble clic
+                pendingPanel.delete(id);
+
+                if (!esConfirm) { return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
 
                 try { await interaction.deferUpdate(); } catch {}
 
                 const subastas = cargarSubastas();
                 const session = subastas[p.payload.sessionId];
+                if (!session || !session.item || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) { return interaction.editReply({ content: '❌ El panel ya no está activo o ya fue procesado.', components: [] }); }
+                
                 const sessionId = p.payload.sessionId;
                 const miembros = funciones.cargarMiembros();
                 const threadId = interaction.channelId;
@@ -1740,7 +1755,6 @@ function setupPanel(client, funciones) {
                     const listaResultados = resultados.map(r => `• ${r.nombre}: 🎲 **${r.valor}**`).join('\n');
                     await interaction.channel.send(`✨ **Dice roll for everyone (${resultados.length} interested)**\n${listaResultados}`);
 
-                    pendingPanel.delete(id);
                     return interaction.editReply({ content: '✅ Acción completada. Revisá el mensaje en el canal.', components: [] });
                 }
 
@@ -1790,7 +1804,6 @@ function setupPanel(client, funciones) {
                     const listaResultados = resultados.map(r => `• ${r.nombre}: 🎲 **${r.valor}**`).join('\n');
                     await interaction.channel.send(`✨ **Dice roll for multiple players**\n${listaResultados}`);
 
-                    pendingPanel.delete(id);
                     return interaction.editReply({ content: '✅ Acción completada. Revisá el mensaje en el canal.', components: [] });
                 }
 
@@ -1809,7 +1822,6 @@ function setupPanel(client, funciones) {
                     }
                     
                     if (funciones.actualizarMensajeListaDados) await funciones.actualizarMensajeListaDados(client, threadId);
-                    pendingPanel.delete(id);
                     return interaction.editReply({ content: '🧹 Se borraron todos los dados.', components: [] });
                 }
 
@@ -1833,7 +1845,6 @@ function setupPanel(client, funciones) {
                     }
                     
                     if (funciones.actualizarMensajeListaDados) await funciones.actualizarMensajeListaDados(client, threadId);
-                    pendingPanel.delete(id);
                     return interaction.editReply({ content: '🧹 Dados borrados.', components: [] });
                 }
 
@@ -1865,7 +1876,6 @@ function setupPanel(client, funciones) {
                     }
 
                     if (funciones.actualizarMensajeListaDados) await funciones.actualizarMensajeListaDados(client, threadId);
-                    pendingPanel.delete(id);
                     return interaction.editReply({ content: `🧹 Se borraron ${eliminados} valores.`, components: [] });
                 }
 
@@ -1884,7 +1894,6 @@ function setupPanel(client, funciones) {
                         guardarSubastas(subastasActualizadas);
                         await refrescarTodo(client, funciones);
                     }
-                    pendingPanel.delete(id);
                     let txt = `✅ **Agregados:** ${ag.map(n => `**${n}**`).join(', ') || 'ninguno'}`;
                     if (p.payload.yaEstaban.length > 0) txt += `\nℹ️ Ya estaban: ${p.payload.yaEstaban.join(', ')}`;
                     return interaction.editReply({ content: txt, components: [] });
@@ -1906,7 +1915,6 @@ function setupPanel(client, funciones) {
                         guardarSubastas(subastasActualizadas);
                         await refrescarTodo(client, funciones);
                     }
-                    pendingPanel.delete(id);
                     return interaction.editReply({ content: `✅ **Quitados:** ${quitados.map(j => funciones.aplicarCanonico(j, miembros)).join(', ')}`, components: [] });
                 }
 
@@ -1961,7 +1969,6 @@ function setupPanel(client, funciones) {
                     msg += `\n\n-# Registered by ${session.registradoPor}`;
                     if (!syncRes.ok) msg += `\n\n⚠️ Sync falló: ${syncRes.motivo}`;
 
-                    pendingPanel.delete(id);
                     await interaction.editReply({ content: '✅ Acción completada.', components: [] });
                     await interaction.followUp({ content: msg, ephemeral: false });
 
@@ -2054,7 +2061,6 @@ function setupPanel(client, funciones) {
 
                     await limpiarSlotBossPorThread(session.threadId, client);
                     await refrescarTodo(client, funciones);
-                    pendingPanel.delete(id);
 
                     await enviarAuditoria(client, `🗑️ **Subasta cancelada desde panel**\n👤 Cancelada por: **${nombreUsuario}**\n📦 Objeto: **${objeto}**\n🔢 Cantidad: **${cantidad}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n♻️ Conservada: **${conservar ? 'Sí' : 'No'}**\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
 
@@ -2144,7 +2150,11 @@ function setupPanel(client, funciones) {
                 const p = pendingPanel.get(id);
                 if (!p) return interaction.update({ content: '❌ La sesión expiró.', components: [] });
                 if (p.userId !== interaction.user.id) return interaction.reply({ content: '❌ Solo quien inició la acción puede confirmar.', ephemeral: true });
-                if (!esConfirm) { pendingPanel.delete(id); return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
+                
+                // PUNTO 1: Eliminar inmediatamente para evitar doble clic
+                pendingPanel.delete(id);
+
+                if (!esConfirm) { return interaction.update({ content: '❌ Acción cancelada.', components: [] }); }
 
                 try { await interaction.deferUpdate(); } catch {}
 
@@ -2192,13 +2202,12 @@ function setupPanel(client, funciones) {
                         }
                     }
                     await refrescarTodo(client, funciones);
-                    pendingPanel.delete(id);
                     return interaction.editReply({ content: `✅ Se abrieron **${abiertas}** subastas. Se omitieron **${omitidas}**.`, components: [] });
                 }
 
                 const subastas = cargarSubastas();
                 const session = subastas[p.payload.sessionId];
-                if (!session || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) { pendingPanel.delete(id); return interaction.editReply({ content: '❌ El panel ya no está activo.', components: [] }); }
+                if (!session || !session.item || (session.estado !== 'abierta' && session.estado !== 'bloqueada')) { return interaction.editReply({ content: '❌ El panel ya no está activo o ya fue procesado.', components: [] }); }
 
                 if (p.tipo === 'control_cancelar_subasta') {
                     const nombreUsuario = interaction.member?.displayName || interaction.user.username || 'Desconocido';
@@ -2244,7 +2253,6 @@ function setupPanel(client, funciones) {
 
                     await limpiarSlotBossPorThread(session.threadId, client);
                     await refrescarTodo(client, funciones);
-                    pendingPanel.delete(id);
 
                     await enviarAuditoria(client, `🗑️ **Subasta cancelada desde Control de Invasión**\n👤 Cancelada por: **${nombreUsuario}**\n📦 Objeto: **${objeto}**\n🔢 Cantidad: **${cantidad}**\n👥 Interesados: **${interesados}**\n🧵 Thread: <#${threadId}>\n♻️ Conservada: **${conservar ? 'Sí' : 'No'}**\n🕒 <t:${Math.floor(Date.now() / 1000)}:f>`);
 
