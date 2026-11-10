@@ -120,6 +120,20 @@ client.once(Events.ClientReady, async (c) => {
     console.log(`Bot listo como ${c.user.tag}`);
     logic.leerCSVInicial();
 
+    // --- INICIO CÓDIGO TEMPORAL PARA VER SERVIDORES Y EXPULSAR ---
+console.log('--- LISTA DE SERVIDORES ---');
+client.guilds.cache.forEach(guild => {
+    console.log(`Servidor: ${guild.name} | ID: ${guild.id}`);
+    
+    // ⚠️ ACÁ PONES EL ID DEL SERVIDOR DEL QUE QUIERES QUE SE SALGA
+    // Borra las dos barras "//" de la línea de abajo y pon el ID entre las comillas.
+    // if (guild.id === 'PEGA_EL_ID_AQUI') {
+    //     guild.leave().then(() => console.log(`✅ Expulsado de: ${guild.name}`));
+    // }
+});
+console.log('---------------------------');
+// --- FIN CÓDIGO TEMPORAL ---
+
     try {
         const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
         await rest.put(
